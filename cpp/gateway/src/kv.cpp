@@ -5,7 +5,6 @@
 #include "uos/rt/crypto.hpp"
 #include "uos/rt/error.hpp"
 #include "uos/rt/number.hpp"
-#include "uos/storage/kv.hpp"
 
 #include <array>
 #include <cstdint>
@@ -15,7 +14,7 @@
 
 namespace uos::kv {
   namespace {
-    rt::Task<std::shared_ptr<rt::Kv>> openDefaultKv() { return storage::kv::openKv(); }
+    rt::Task<std::shared_ptr<rt::Kv>> openDefaultKv() { throw rt::JsError("Native KV must be initialized before use"); }
 
     struct State {
       KvOpener selectedOpener = openDefaultKv;

@@ -1,5 +1,7 @@
 # Design: a durable C++ KV store for the production Bun database
 
+This is the historical design memo. The linked C++ store is the current implementation. [Durable KV](kv-durable.md)
+
 Status: implemented as option C (`rt::SqliteKv`, `rt::kvJscDeserialize`); `kv-durable.md` says
 what was built, how it differs from this plan (the queue is kept and written, not refused) and the
 compatibility evidence. This page stays as the design record.

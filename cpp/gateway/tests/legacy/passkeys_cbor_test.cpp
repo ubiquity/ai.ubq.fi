@@ -1,7 +1,7 @@
 // Exercise the production codec used by attestation and authenticator data.
 // Links: tests/helpers/passkeys_harness.cpp src/auth/passkeys.cpp src/auth/relay.cpp src/http.cpp src/request.cpp
 //   src/utils.cpp src/kv.cpp src/storage/kv.cpp src/release.cpp src/storage/sqlite_readonly.cpp
-//   src/storage/native_kv.cpp src/storage/native_addon.cpp src/config.cpp src/provider/cerebras_rate_limits.cpp
+//   src/storage/native_kv.cpp src/config.cpp src/provider/cerebras_rate_limits.cpp
 #include "uos/rt/base64.hpp"
 #include "uos/rt/limits.hpp"
 #include "uos/rt/test.hpp"

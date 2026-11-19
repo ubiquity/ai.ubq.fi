@@ -35,7 +35,7 @@
 //   src/provider/claude_code_usage_schema.cpp src/provider/health.cpp src/provider/metered.cpp src/provider/selection.cpp src/provider/surplus.cpp
 //   src/provider/surplus_claude_chat_request.cpp src/provider/surplus_claude_request.cpp src/release.cpp src/responses_stream.cpp
 //   src/runtime/http.cpp src/runtime/http_body.cpp src/runtime/http_early_sse.cpp src/runtime/http_tasks.cpp src/runtime/http_upgrade.cpp
-//   src/runtime/websocket.cpp src/runtime_config.cpp src/storage/key_compatibility.cpp src/storage/kv.cpp src/storage/native_addon.cpp
+//   src/runtime/websocket.cpp src/runtime_config.cpp src/storage/key_compatibility.cpp src/storage/kv.cpp
 //   src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp src/storage/value_compatibility.cpp src/types.cpp src/utils.cpp
 #include "uos/analytics.hpp"
 #include "uos/api_keys.hpp"

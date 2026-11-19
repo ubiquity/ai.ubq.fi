@@ -11,8 +11,4 @@ namespace uos::runtime::startup {
   // Owns verified resources, fixture routing and the real durable store for the
   // full source-faithful serve/shutdown lifetime.
   rt::Task<void> run(std::string manifestPath);
-
-  // Separate immutable-only policy for explicitly invoked offline conversion
-  // tools: preserve caller cwd/argv and the pinned helper's process permissions.
-  void prepareOfflineCli(int argc, const char* const* argv);
 }

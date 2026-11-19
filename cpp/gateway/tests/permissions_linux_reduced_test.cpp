@@ -1,7 +1,6 @@
 // Links: src/runtime/permissions_linux.cpp
 #include "uos/runtime/permissions_linux.hpp"
 
-#include "uos/rt/crypto.hpp"
 #include "uos/rt/fs.hpp"
 #include "uos/rt/process.hpp"
 #include "uos/rt/test.hpp"
@@ -78,17 +77,14 @@ namespace {
     std::string root = rt::fs::mkdtempSync(rt::os::tmpdir() + "/uos-permissions-reduced-");
     std::string writable = root + "/writable";
     std::string outside = root + "/outside";
-    LinuxPermissionsArtifact artifact{root + "/linux-arm64.node", {}};
 
     Fixture() {
-      rt::fs::writeFileSync(artifact.path, "fixture permissions bytes");
-      artifact.sha256 = rt::crypto::createHash("sha256").update(rt::fs::readFileSync(artifact.path)).digest("hex");
       rt::fs::mkdirSync(writable);
       rt::fs::mkdirSync(outside);
     }
     ~Fixture() { rt::fs::rmSync(root, {.recursive = true, .force = true}); }
 
-    LinuxPermissions permissions() const { return {{artifact.path, writable}, {writable}}; }
+    LinuxPermissions permissions() const { return {{writable}, {writable}}; }
   };
 
   template <class Body> void inChild(const Body& body) {
@@ -145,9 +141,9 @@ TEST("a capped kernel refuses the default policy and an opt-in below the floor b
   const Fixture fixture;
   inChild([&] {
     auto permissions = fixture.permissions();
-    EXPECT_THROWS_MESSAGE(detail::applyLinuxPermissionsWithAbiCap(permissions, fixture.artifact, 3), rt::JsError, strictRefusal);
+    EXPECT_THROWS_MESSAGE(detail::applyLinuxPermissionsWithAbiCap(permissions, 3), rt::JsError, strictRefusal);
     permissions.allowReducedConfinement = LinuxPermissionsTcpPorts{0};
-    EXPECT_THROWS_MESSAGE(detail::applyLinuxPermissionsWithAbiCap(permissions, fixture.artifact, 2), rt::JsError, reducedRefusal);
+    EXPECT_THROWS_MESSAGE(detail::applyLinuxPermissionsWithAbiCap(permissions, 2), rt::JsError, reducedRefusal);
     EXPECT_EQ(tryWrite(fixture.outside + "/unconfined"), 0);
   });
 }
@@ -160,7 +156,7 @@ TEST("reduced enforcement refuses to leave an existing thread outside Landlock")
     });
     auto permissions = fixture.permissions();
     permissions.allowReducedConfinement = LinuxPermissionsTcpPorts{0};
-    EXPECT_THROWS_MESSAGE(detail::applyLinuxPermissionsWithAbiCap(permissions, fixture.artifact, 3), rt::JsError,
+    EXPECT_THROWS_MESSAGE(detail::applyLinuxPermissionsWithAbiCap(permissions, 3), rt::JsError,
                           "Reduced Landlock confinement requires exactly one thread during bootstrap");
     EXPECT_EQ(tryWrite(fixture.outside + "/unconfined"), 0);
   });
@@ -168,7 +164,7 @@ TEST("reduced enforcement refuses to leave an existing thread outside Landlock")
 
 TEST("capped children enforce filesystem rights, seccomp and available TCP controls") {
   const Fixture fixture;
-  const auto support = getLinuxPermissionsSupport(fixture.artifact);
+  const auto support = getLinuxPermissionsSupport();
   ASSERT(support.seccomp && support.landlockAbi >= 3);
   for (int abi = 3; abi <= std::min(8, static_cast<int>(support.landlockAbi)); ++abi) {
     LoopbackListener allowed, denied;
@@ -177,7 +173,7 @@ TEST("capped children enforce filesystem rights, seccomp and available TCP contr
     inChild([&] {
       auto permissions = fixture.permissions();
       permissions.allowReducedConfinement = LinuxPermissionsTcpPorts{0, {ntohs(allowed.address.sin_port)}};
-      const auto receipt = detail::applyLinuxPermissionsWithAbiCap(permissions, fixture.artifact, abi);
+      const auto receipt = detail::applyLinuxPermissionsWithAbiCap(permissions, abi);
       EXPECT_EQ(receipt.landlockAbi, support.landlockAbi);
       EXPECT(receipt.processThreadSync);
       EXPECT_EQ(receipt.filesystemThreadSync, abi >= 8);

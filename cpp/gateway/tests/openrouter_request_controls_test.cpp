@@ -1,7 +1,7 @@
 // Links: tests/openrouter_request_controls_test.cpp src/provider/openrouter_request_controls.cpp src/provider/openrouter.cpp src/provider/selection.cpp src/models/openrouter_models.cpp
 //        src/kv.cpp src/openai_schema.cpp src/utils.cpp src/http.cpp
 //        src/storage/kv.cpp src/auth/relay.cpp src/storage/sqlite_readonly.cpp src/config.cpp
-//        src/provider/cerebras_rate_limits.cpp src/release.cpp src/storage/native_addon.cpp src/storage/native_kv.cpp
+//        src/provider/cerebras_rate_limits.cpp src/release.cpp src/storage/native_kv.cpp
 // Direct cache-control contracts from tests/public-provider-cache-controls.test.ts; public route integration awaits the handlers.
 #include "uos/provider/openrouter_request_controls.hpp"
 #include "uos/provider/openrouter.hpp"

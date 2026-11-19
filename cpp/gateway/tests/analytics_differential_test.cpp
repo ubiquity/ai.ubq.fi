@@ -5,7 +5,7 @@
 // sequence of record/update writes (merges, missing rows, blank keys, id fallbacks, expiry, an
 // invalid expireIn and a store whose commits always conflict) with the rows each step leaves.
 // Links: tests/analytics_differential_test.cpp src/analytics.cpp src/types.cpp src/kv.cpp src/storage/kv.cpp src/release.cpp
-//   src/storage/sqlite_readonly.cpp src/storage/native_kv.cpp src/storage/native_addon.cpp
+//   src/storage/sqlite_readonly.cpp src/storage/native_kv.cpp
 #include "uos/analytics.hpp"
 #include "uos/kv.hpp"
 

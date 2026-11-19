@@ -271,7 +271,6 @@ def run_test(selected, runtime, build, compiler, flags, libraries, environment, 
                 if name in ("HOME", "TMPDIR", "PATH") or re.search(r"(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTH|PROVIDER)", name, re.I):
                     raise RuntimeError("credential/provider environment entry refused for " + test)
                 isolated[name] = value.replace("${SCRATCH}", "/tmp")
-            isolated["BUN_CONFIG_NO_CLEAR_TERMINAL"] = "1"
             if "-fsanitize=address,undefined" in flags:
                 isolated["ASAN_OPTIONS"] = "detect_leaks=1:abort_on_error=1"
                 isolated["UBSAN_OPTIONS"] = "halt_on_error=1:print_stacktrace=1"

@@ -2,7 +2,7 @@
 // Links: tests/handler_terminal_usage_rollup_test.cpp
 // src/kv.cpp src/config.cpp src/release.cpp src/openai_telemetry.cpp
 // src/cache/prompt_analytics_queue.cpp src/provider/removed_provider_telemetry.cpp src/cache/prompt_analytics_core.cpp src/storage/kv.cpp
-// src/storage/native_addon.cpp src/handler/terminal_log.cpp src/sentinel/replay_store.cpp src/sentinel/replay_envelope.cpp
+// src/handler/terminal_log.cpp src/sentinel/replay_store.cpp src/sentinel/replay_envelope.cpp
 // src/storage/sqlite_readonly.cpp src/sentinel/upstream_capture.cpp src/sentinel/replay_observation.cpp src/runtime/http_tasks.cpp
 // src/sentinel/incident_outbox.cpp src/paid_fallback/rollups.cpp src/utils.cpp src/sentinel/replay_read.cpp
 // src/optional_telemetry_queue.cpp src/sentinel/replay_model.cpp src/authority/native_paid.cpp src/sentinel/replay_retention_schema.cpp

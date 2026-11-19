@@ -16,9 +16,8 @@
 //        src/provider/claude_code_usage_schema.cpp src/provider/health.cpp src/provider/selection.cpp src/release.cpp
 //        src/runtime/http.cpp src/runtime/http_body.cpp src/runtime/http_early_sse.cpp src/runtime/http_tasks.cpp
 //        src/runtime/http_upgrade.cpp src/runtime/websocket.cpp src/storage/key_compatibility.cpp src/storage/kv.cpp
-//        src/storage/native_addon.cpp src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp src/storage/value_compatibility.cpp
-//        src/types.cpp src/utils.cpp tests/helpers/linked_native_kv.cpp src/provider/claude_code_usage_refresh.cpp
-#include "tests/helpers/linked_native_kv.hpp"
+// src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp src/storage/value_compatibility.cpp
+//        src/types.cpp src/utils.cpp src/provider/claude_code_usage_refresh.cpp
 #include "uos/config.hpp"
 #include "uos/kv.hpp"
 #include "uos/provider/claude_code_accounts.hpp"
@@ -89,7 +88,7 @@ ASYNC_TEST("an account removed or replaced during direct collection cannot publi
   }
 }
 ASYNC_TEST("direct usage quota and history survive native close and reopen") {
-  Isolated scope; uos::tests::helpers::linked_native_kv::prepareOnce(); const std::string directory = rt::fs::mkdtempSync(rt::path::join(rt::os::tmpdir(), "w05c7-direct-")); const std::string path = rt::path::join(directory, "usage.fixture"); std::shared_ptr<rt::Kv> kv;
+  Isolated scope; const std::string directory = rt::fs::mkdtempSync(rt::path::join(rt::os::tmpdir(), "w05c7-direct-")); const std::string path = rt::path::join(directory, "usage.fixture"); std::shared_ptr<rt::Kv> kv;
   const auto cleanup = rt::scopeExit([&] { if (kv) kv->close(); rt::fs::rmSync(directory, {.recursive = true, .force = true}); }); auto opening = uos::storage::kv::openKv(path); kv = co_await std::move(opening); AWAIT(account, binding(kv)); const double now = rt::dateNow(); const auto configured = options(now, success()); AWAIT(first, refresh::refreshClaudeCodeUsage(kv, account, configured)); EXPECT_EQ(kind(first), std::string("completed")); kv->close(); opening = uos::storage::kv::openKv(path); kv = co_await std::move(opening);
   AWAIT(state, quota::loadClaudeCodeQuotaState(kv, account)); ASSERT(state && state->usage); EXPECT_EQ(state->usage->state, std::string("ok")); ASSERT(state->windows.get("5h")); EXPECT_EQ(state->windows.get("5h")->utilization, std::optional<double>(0.42)); AWAIT(retained, history::readClaudeCapacityHistory(kv, now + 1'000)); ASSERT(!retained.points.empty()); EXPECT_EQ(retained.points[0].windows.five_hour->used_percent, std::optional<double>(42));
 }

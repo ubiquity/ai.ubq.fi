@@ -21,52 +21,6 @@ defaults:
     shell: bash
 
 jobs:
-  format:
-    name: Format changed files
-    runs-on: ubuntu-24.04-arm
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Select changed files
-        id: select
-        env:
-          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: |
-          base=$BASE
-          if [[ -z $base || $base =~ ^0+$ ]]; then
-            base=$(git rev-parse HEAD^)
-          elif ! git cat-file -e "$base^{commit}"; then
-            git fetch --no-tags origin "$base"
-          fi
-          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
-            base=$(git merge-base "$base" HEAD)
-          fi
-          git diff --check "$base" HEAD
-          git diff --name-only --diff-filter=ACMR -z "$base" HEAD > "$RUNNER_TEMP/changed-paths"
-          while IFS= read -r -d '' file; do
-            case "$file" in
-              *.ts|*.tsx|*.mjs|*.cjs|*.js|*.jsx|*.json|*.jsonc|*.md|*.css|*.html|*.yml|*.yaml)
-                printf '%s\0' "$file" >> "$RUNNER_TEMP/format-paths" ;;
-            esac
-          done < "$RUNNER_TEMP/changed-paths"
-          if [[ -s "$RUNNER_TEMP/format-paths" ]]; then
-            echo 'format=true' >> "$GITHUB_OUTPUT"
-          fi
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
-        if: steps.select.outputs.format == 'true'
-        with:
-          bun-version: 1.4.0
-      - name: Check formatting with the frozen tool
-        if: steps.select.outputs.format == 'true'
-        run: |
-          test -f bun.lock
-          bun --no-env-file install --frozen-lockfile --ignore-scripts
-          mapfile -d '' -t files < "$RUNNER_TEMP/format-paths"
-          bun --no-env-file --no-install run format:check -- "${files[@]}"
-
   suite:
     name: ${{ matrix.config }} suite (shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-26.04-arm

@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import sys
 
-EXPECTED_PORTED_MODULES = 325
+EXPECTED_PORTED_MODULES = 320
 CUSTOM_MODULE_KEYS = {
     "cpp/gateway/src/admin/gemini_quota.cpp",
     "cpp/gateway/src/provider/gemini.cpp",
@@ -18,7 +18,7 @@ def main():
     modules = manifest["modules"]
     ported = {line.strip() for line in (root / "PORTED.txt").read_text().splitlines() if line.strip()}
     if len(ported) != EXPECTED_PORTED_MODULES:
-        raise RuntimeError("PORTED.txt is incomplete; expected all 325 TypeScript modules")
+        raise RuntimeError(f"PORTED.txt is incomplete; expected {EXPECTED_PORTED_MODULES} ported modules")
     if set(modules) - ported != CUSTOM_MODULE_KEYS or ported - set(modules):
         raise RuntimeError("Port manifest must contain PORTED.txt plus the two registered C++ adapter modules")
     if manifest["summary"]["modules"] != len(ported) + len(CUSTOM_MODULE_KEYS) or manifest["summary"]["ported_modules"] != len(modules):

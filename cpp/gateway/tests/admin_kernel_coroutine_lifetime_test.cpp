@@ -21,7 +21,7 @@
 // src/provider/claude_code_accounts.cpp src/provider/surplus_claude_chat_request.cpp src/provider/claude_capacity_history.cpp src/models/codex_models_fetch.cpp
 // src/cache/prompt_analytics_core.cpp src/provider/claude_code_credentials.cpp src/codex/account_routing.cpp src/codex/routing_serial.cpp
 // src/auth/relay.cpp src/codex/auth_refresh.cpp src/provider/selection.cpp src/authority/native_codex_evaluation.cpp
-// src/codex/native_auth_transport.cpp src/bounded_response_body.cpp src/provider/claude_code_usage_schema.cpp src/storage/native_addon.cpp
+// src/codex/native_auth_transport.cpp src/bounded_response_body.cpp src/provider/claude_code_usage_schema.cpp
 // src/models/codex_models.cpp src/codex/routing_evaluation.cpp src/models/codex_models_availability.cpp src/authority/native_codex.cpp
 // src/storage/sqlite_readonly.cpp src/storage/native_kv.cpp src/runtime_config.cpp src/runtime/websocket.cpp
 // Post-fix functional ownership regression for the actual policy-queue handler.

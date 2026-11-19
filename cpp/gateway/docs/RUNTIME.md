@@ -1,45 +1,28 @@
-# Native runtime and uninstalled package
+# Native runtime and package
 
-The native release targets ARM64, starting with the Arch Linux ARM VPS. The Apple Silicon development run passed 441 of 441 binaries and 5,029 of 5,029 cases at commit `c6cd29f9e9743e37c4eca1a0313194fd3279ba9e` with Apple Clang 21 and libc++ on macOS 26.7.2. A separate Darwin fallback-loader run passed four binaries and 91 cases. macOS packaging and service startup still need qualification. The Raspberry Pi OS, loader and available memory are unknown. The source checkout has more detail in `cpp/gateway/docs/MACOS.md`.
-
-The preserved Linux ARM64 GCC 16 package passed 441/441 binaries, 5,024/5,024 cases, scoped startup and conversion controls, and paired authenticated loopback smoke. The earlier 5,023-case build and ARM64 25-binary sanitizer run at `e800a36b1` are comparison evidence. The selected-vendor ARM64 sanitizer run passed 25/25 at `5b4a66941`. [Package and platform receipts](BUILD.md#selected-linux-arm64-release)
+The C++20 gateway serves on Linux ARM64. The portable archive targets ARMv8-A with glibc 2.36 or newer.
+The Apple Silicon archive supplies the offline version check and native development build. [Release packages](RELEASES.md)
 
 ## Build and package
 
-The primary configuration uses GCC 16.1, Boost 1.92 and direct host OpenSSL 3.6.5, SQLite 3.54.0, zlib 1.3.2, Brotli 1.2.0, Zstd 1.5.7 and ICU 78.3. The preserved package statically links simdjson 5.2.0 for DOM parsing with its historical fallback and simdutf 9.4.0 for Base64 encoding. On Assignment 3 Linux ARM64 checkpoints, simdjson is the sole JSON parser, Boost.JSON 1.92 handles serialization primitives, and simdutf extends to UTF validation and transcoding. Those focused receipts and binaries are recorded separately from the complete package qualification. [Library checkpoints](BUILD.md#assignment-3-library-checkpoints) [Deviations](DEVIATIONS-FROM-BUN.md)
-
-The independent Clang 23 profile uses libstdc++. SQLite, gzip and fetch decompression use installed C declarations and direct symbol addresses under `UOS_GATEWAY_NATIVE_LIBRARIES`. The explicit `setZlibLibraryForTest` override exercises loader failure. The retained GCC 12 SDK keeps its comparison profile and coroutine constraints.
-
-`tools/runtime-manifest.py` uses `readelf` to record each executable hash, interpreter, direct `DT_NEEDED` names, transitive canonical host-library paths and hashes, GLIBC/GLIBCXX/CXXABI symbol versions and permitted system-only DSO runpaths in `runtime-closure.json`. It refuses executable RPATH/RUNPATH and missing host libraries. The earlier VPS package recorded 16 canonical host libraries and `GLIBCXX_3.4.31` in its executables. All three selected executables use `/lib/ld-linux-aarch64.so.1` and reach `GLIBC_2.38`, `GLIBCXX_3.4.32` and `CXXABI_1.3.15` in their imports. The earlier host closure's recorded symbol versions reached `GLIBC_2.43`. Shared libraries stay on the host. A Debian or Raspberry Pi image with older symbols cannot load these executables, and any target also needs the recorded host-library paths and hashes and the required Linux confinement support. A different host closure or changed library hash requires a fresh package and qualification.
-
-Keep compiler work within two global slots and one full release build at a time. Link admission requires 3.5 GiB of `MemAvailable`, compile and archive admission require 3 GiB, and other build operations require 2 GiB. The live hard stop is below 2 GiB. Compiler wrappers keep the 3 GiB link and 2 GiB compile address-space caps. An admission deferral waits 30 seconds between attempts for up to 20 minutes per target. Build admission also requires more than 8 GiB of free disk.
-
-During the final bounded CMake configure for `release`, set `UOS_PACKAGE_NATIVE_KV_DIR`, `UOS_PACKAGE_NATIVE_KV_INPUTS`, `UOS_PACKAGE_NATIVE_KV_PROVENANCE_SHA256`, `UOS_PACKAGE_PERMISSIONS_DIR` and `UOS_PACKAGE_OUTPUT` explicitly. Set the last value to a new directory under the worktree's canonical `.data`. After sealing the three primary executable hashes, check the generated `package` target's arguments and confirm that the prerequisites are up to date. Run the bounded target from the source checkout with the reviewed supervisor resource log under umask `077`.
+Follow [CI.md](CI.md) to prepare the dependencies and run scoped release tests in Linux namespaces. To build an
+installable archive from a committed Linux ARM64 checkout with Docker Buildx, use a new path outside the checkout.
 
 ```sh
-/usr/bin/python3 cpp/gateway/tools/build.py native release package --supervisor-log "$supervisor_log"
+bash cpp/gateway/packaging/portable/build.sh /var/tmp/uos-gateway-linux-arm64.tar.gz
+bash cpp/gateway/packaging/portable/verify.sh /var/tmp/uos-gateway-linux-arm64.tar.gz /var/tmp/uos-gateway-proof
 ```
 
-The target depends on `uos_gateway`, `uos_kv_convert` and `uos_kv_proof` and runs the package producer with the configured inputs. For the second pass, use umask `022` and supply the same paths and provenance hash with a second new output directory.
+The archive contains the C++ executable, browser assets, both favicons, licenses, the launcher and package metadata.
+On the target host, `seal.py` verifies the payload and binds the canonical loader and shared libraries to the release.
+The local Arch CMake `package` target binds the building host instead. It takes a qualified release build and a new
+`UOS_PACKAGE_OUTPUT` below the checkout's canonical `.data`. [Native build profile](BUILD.md) · [Install and seal](RELEASES.md)
 
-```sh
-/usr/bin/python3 cpp/gateway/tools/package.py \
-  --build-dir "$build_dir" \
-  --profile-manifest "$build_dir/profile-owner.json" \
-  --native-kv "$native_kv_dir" \
-  --native-kv-inputs "$native_kv_inputs" \
-  --native-kv-provenance-sha256 "$native_kv_provenance_sha256" \
-  --permissions "$permissions_dir" \
-  --output "$second_output_dir"
-```
-
-The package producer verifies successful native KV provenance against the frozen `@deno/kv` 0.14.0 inputs at source commit `9fe65cc`, including the hashes, AArch64 ELF and Node-API registration. It also checks the AArch64 confinement artifact against its manifest. Missing or corrupt inputs refuse publication. If copying has started, the producer retains the partial directory for diagnosis.
-
-The package layout is `bin/{uos-gateway,uos-kv-convert,uos-kv-proof}`, `static/**`, `favicon.png`, `favicon-32.png`, `native/kv/{native-kv.node,native-kv.provenance.json,inputs.json}`, `native/permissions/{linux-arm64.node,manifest.json}`, `runtime/{launch-schema.json,offline-schema.json}`, `src/kv-conversion/{v8-helper.mjs,typed-value.ts}`, `licenses/<vendor>/{LICENSE,NOTICE}`, `build-profile.json`, `runtime-closure.json`, `operator-closure.json`, `package.json`, `manifest.sha256`, `README.md` and `ops/**`. The producer copies this document into `README.md`, so finalize it before packaging. `manifest.sha256` lists every other regular file once, sorted by its full relative POSIX path. Modes are fixed and timestamps are set to epoch zero. The earlier two-pass package under umasks `077` and `022` matched in bytes, modes and timestamps across all 59 regular files, including its manifest. Verify the same properties on fresh output for new artifacts. The draft launcher uses `/bin/sh` builtins and `/usr/bin/env`, with their host programs and dependencies recorded in `operator-closure.json`. The producer uses Python and `readelf` at package construction.
-
-The package carries the original licenses for simdjson, simdutf, llhttp, Ada, QCBOR and QuickJS-ng libregexp.
-The build verifies each vendor license against the selected source registry. Additional notices cover the
-linked native dependencies and runtime artifacts. [Release packages](RELEASES.md) · [Vendor registry](../cmake/vendors.json)
+The sealed directory contains `bin/uos-gateway`, `static/`, the favicons, `licenses/`, `ops/launch-native.sh`,
+`runtime/launch-schema.json`, `package-info.json`, `build-profile.json`, `runtime-closure.json`,
+`operator-closure.json` and `manifest.sha256`. The manifest covers every other regular file in relative path order.
+The package metadata binds the build profile. The runtime closure records the interpreter, library paths and hashes,
+and ELF version requirements. Seal into a new directory after a shared-library change. [Vendor registry](../cmake/vendors.json)
 
 ## Input limits
 
@@ -62,25 +45,25 @@ The WebSocket limit fixture sets a 1,024-byte message budget and verifies zero d
 
 After each integration, update its row with the actual source entry point, effective limits and exception, boundary-test outcome and exact binary or tree. The final package includes the resulting table. [v40 implementation scope](/tmp/claude-1002/prod/assignment3/runtime/limits-v40/runtime-table.md)
 
-## Launch and offline tools
+## Launch and state
 
-The real gateway executable accepts exactly `--runtime-manifest <absolute-path>`. There is no default source-checkout or development-port fallback. The closed JSON schema is `runtime/launch-schema.json`: required fields are `schema:"uos-gateway-launch-v1"`, canonical `packageRoot`, canonical private `stateRoot`, lowercase `packageManifestSha256`, lowercase `nativeKvProvenanceSha256`, `hostname:"127.0.0.1"` and integer `port`. Candidate startup refuses7999/8000. The manifest is an owner-private regular file, not a symlink or hard link. Both stateRoot and its pre-existing `.data` directory must be canonical and owner-private; immutable package and mutable state roots must be disjoint.
-
-Both packaged offline executables require the prefix `--runtime-manifest <absolute-path>` before their original arguments. Their separate closed schema is `uos-gateway-offline-v1` with only `schema`, `packageRoot`, `packageManifestSha256` and `nativeKvProvenanceSha256`; see `runtime/offline-schema.json`. Preflight verifies the immutable package, the actual selected CLI binary, host closure and genuine native backend, then prepares that backend and selects the immutable resource root. It opens no source/destination database, creates no state, preserves the caller's cwd and argv0, and removes only the two prefix tokens before the unchanged CLI argument parser. Relative data/proof paths keep their original meaning. The codec helper URL uses resourceRoot while existing unconfigured module tests retain cwd behavior.
-
-Offline conversion/proof is a separate executable policy: the gateway's exec-denying seccomp filter is not applied to these explicitly invoked offline tools, because their original contract launches the independently hash-pinned Deno V8 helper. The original helper version/hash checks, stopped-source/new-destination/receipt checks and Deno permission flags remain authoritative. `v8-helper.mjs` and its only first-party file import, `typed-value.ts`, are packaged unchanged; `node:v8` and `node:buffer` are Deno builtins. No application TypeScript compilation, automatic dependency install or fallback application runtime is added. Data conversion and production state custody remain separately authorized operations; task acceptance uses only disposable synthetic inputs under the real outer network boundary.
+The executable accepts exactly `--runtime-manifest <absolute-path>`. The launch manifest selects
+`uos-gateway-launch-v1`, the canonical `packageRoot` and private `stateRoot`, the lowercase
+`packageManifestSha256`, `hostname` equal to `127.0.0.1`, and an integer `port` other than 7999 or 8000.
+Use disjoint package and state roots. The launch file must be owner-private, regular and singly linked. The
+state root and its existing `.data` directory must be canonical and owner-private. [Launch schema](../runtime/launch-schema.json)
 
 ### Linux confinement
 
-The synchronous bootstrap verifies the launch and package manifests, the executing binary, the host-library closure, and the native KV and permissions artifacts. It loads the configured TLS trust stores and installs Landlock and the existing seccomp filter before starting the HTTP transport, event loop, or SQLite worker. The package and the existing host runtime paths are readable. By default, only `stateRoot/.data` is writable. Seccomp is thread-synchronized and denies subprocess execution by default. The reviewed launcher and its environment control the resources available before enforcement.
+The synchronous bootstrap verifies the launch and package manifests, the executing binary, and the host-library closure. It loads the configured TLS trust stores and installs Landlock and the existing seccomp filter before starting the HTTP transport, event loop, or SQLite worker. The package and the existing host runtime paths are readable. By default, only `stateRoot/.data` is writable. Seccomp is thread-synchronized and denies subprocess execution by default. The reviewed launcher and its environment control the resources available before enforcement.
 
-The default policy requires Linux ARM64 with Landlock ABI 8 or newer and applies the existing filesystem policy using Landlock thread synchronization. For a 64-bit Raspberry Pi OS installation with Landlock ABI 3–7, set the following environment variable on the native launcher. Landlock must be enabled in the kernel, and seccomp with thread synchronization is required.
+The default policy requires Linux ARM64 with Landlock ABI 8 or newer and applies the existing filesystem policy using Landlock thread synchronization. On a host with ABI 3–7, the operator can explicitly enable the reduced policy. Landlock must be enabled in the kernel, and seccomp with thread synchronization is required.
 
 ```sh
 UOS_GATEWAY_ALLOW_REDUCED_CONFINEMENT=1 /absolute/path/to/package/ops/launch-native.sh /absolute/path/to/launch.json
 ```
 
-For a systemd launch, set `Environment=UOS_GATEWAY_ALLOW_REDUCED_CONFINEMENT=1` in the gateway unit's `[Service]` section. If the unit uses `env -i` to construct the launcher environment, include the assignment there. The launcher reads the exact value `1` from its process environment during bootstrap. It queries the ABI from Landlock itself, so kernel backports and kernel configuration determine the available controls.
+For a service launch, put the assignment in the approved `EnvironmentFile=`. For a fixture unit that constructs its environment with `env -i`, supply the assignment explicitly. The launcher reads the exact value `1` from its process environment during bootstrap. It queries the ABI from Landlock itself, so kernel backports and kernel configuration determine the available controls.
 
 | Landlock ABI | First Linux release | Protections with the opt-in                                                                                        |
 | -----------: | ------------------: | ------------------------------------------------------------------------------------------------------------------ |
@@ -97,11 +80,36 @@ On ABI 3–7, the bootstrap verifies in `/proc/self/task` that it is the sole th
 
 The startup log and `LinuxPermissionsReceipt` report the queried ABI, active controls, and missing controls. A Pi with ABI 3 reports the filesystem filter, thread inheritance, and seccomp TSYNC as active. It reports TCP port controls, device `ioctl` restrictions, Unix socket controls, signal scoping, and Landlock TSYNC as missing. [Linux Landlock documentation](https://docs.kernel.org/userspace-api/landlock.html)
 
-After validation/enforcement, cwd becomes stateRoot, `SQLITE_TMPDIR` is explicitly set to that same private `.data`, and immutable static resources use packageRoot. `src/static.cpp` otherwise retains cwd behavior for original module tests. Native-KV preparation supplies explicit packaged inputs so compile-time `__FILE__` development bootstrap paths are never selected by this entrypoint. The linked `rt::SqliteKv` opens the actual `.data/kv-bun.sqlite3`, verifies the Bun/JSC marker before adoption, initializes the shared handle, then enters the real authenticated application callbacks. Normal launch requires an existing private database; no implicit conversion or legacy `.data/kv.sqlite3` adoption occurs. The source serve lifecycle drains requests, closes optional telemetry and closes KV after SIGTERM/SIGINT; durable accounting and reopened-state acceptance still require actual smoke evidence.
+After enforcement, the gateway changes cwd to `stateRoot`, sets `SQLITE_TMPDIR` to the private `.data`, and
+serves immutable assets from `packageRoot`. The linked C++ SQLite store opens the existing
+`.data/kv-bun.sqlite3` after startup checks privacy and the store checks the `bun-jsc-v1` marker. The legacy
+`.data/kv.sqlite3` stays in its original custody. SIGTERM or SIGINT drains requests and durable writes, then
+closes telemetry and KV. [Durable KV](rt/kv-durable.md)
 
-The only optional manifest field is `fixture:{syntheticOrigin:"http://127.0.0.1:<assigned-port>"}`. It requires a non-deploy runtime, gatewayport0, a real no-outbound network namespace, private task state and a loopback scripted upstream. `DENO_TIMELINE=production` is permitted inside these fences so the fixture exercises ordinary authentication instead of the source's legacy local-hostname bypass; deployment markers remain forbidden. The fixed DeepSeek completion URL maps to `/chat/completions`, Codex maps to `/codex`, and live WebSocket sideband maps to `/live`. The real transport rejects unmapped initial destinations and forces the existing `redirect:"error"` mode for every fixture fetch, so a scripted-upstream redirect cannot introduce a second destination. Normal transport redirect behavior is unchanged. Provider request schemas and authentication are unchanged. Routing ownership lasts through the full serve lifetime. An initial fixture requires an empty `.data`; after all immutable and OS checks it exclusively writes a0600 binding marker. Reopen requires that exact owner-private marker binding schema, package-manifest hash, stateRoot and syntheticOrigin. Markerless nonempty state is refused. This provides no authority to read production state.
+The only optional manifest field is `fixture:{syntheticOrigin:"http://127.0.0.1:<assigned-port>"}`. It requires a non-deploy runtime, gateway port 0, a real no-outbound network namespace, private task state and a loopback scripted upstream. `DENO_TIMELINE=production` is permitted inside these fences so the fixture exercises ordinary authentication instead of the source's legacy local-hostname bypass; deployment markers remain forbidden. The fixed DeepSeek completion URL maps to `/chat/completions`, Codex maps to `/codex`, and live WebSocket sideband maps to `/live`. The real transport rejects unmapped initial destinations and forces the existing `redirect:"error"` mode for every fixture fetch, so a scripted-upstream redirect cannot introduce a second destination. Normal transport redirect behavior is unchanged. Provider request schemas and authentication are unchanged. Routing ownership lasts through the full serve lifetime. An initial fixture requires an empty `.data`; after all immutable and OS checks it exclusively writes a mode-0600 binding marker. Reopen requires that exact owner-private marker binding schema, package-manifest hash, stateRoot and syntheticOrigin. Markerless nonempty state is refused. This provides no authority to read production state.
 
-The binary performs no automatic dotenv discovery and reads the existing environment contract. Configuration includes `DENO_TIMELINE`, deployment identity markers, `UOS_AI_TOKEN`, `DENO_DEPLOY_TOKEN`, `CODEX_AUTH_JSON_B64`, existing native-home selectors and provider-specific options; no new credential variable is introduced. Tests use an explicit sparse environment with isolated HOME/TMPDIR and synthetic tokens only. Standard runtime reads include canonical host libraries, TLS trust, resolver/hosts/localtime data, random devices and `/proc/self`, matching the Linux launcher's required OS surface. The draft operator environment-file behavior remains a documented difference from Bun's explicit repository-root dotenv loader and requires separate cutover review.
+## Environment
+
+The gateway reads the process environment supplied by the approved launcher. For systemd, use an explicit
+owner-controlled `EnvironmentFile=`. The binary does not discover dotenv files. The following switches include
+the process flags and the environment read by the native build and test tooling.
+
+| Switch | Default | Effect |
+| --- | --- | --- |
+| `UOS_GATEWAY_ALLOW_REDUCED_CONFINEMENT` | Unset | Exact value `1` opts in to the available Landlock policy starting at ABI 3. Startup still requires seccomp TSYNC. |
+| `UOS_GATEWAY_ENABLE_ANTIGRAVITY` | Unset | Exact value `1` opts in to the owner-installed Antigravity CLI integration and its child-process profile when the CLI passes validation. |
+| `UOS_GATEWAY_ACTIVE_BUILD` | Set by `build.py` (compiler wrapper falls back to its working directory) | Locates the active profile owner and generated test registry. |
+| `UOS_GATEWAY_BUILD_DIR` | Set by the native build owner | Selects the CMake presets' build directory. |
+| `UOS_GATEWAY_BUILD_EVIDENCE` | Required and set by the build owner | Locates native build receipts and instruction snapshots. CMake refuses direct configuration without it. |
+| `UOS_GATEWAY_BUILD_PROFILE` | Set by the native build owner | Identifies the selected profile for compiler and link admission checks. |
+| `UOS_GATEWAY_CCACHE` | Empty when the owner disables caching | Selects the ccache executable for the compiler wrapper. |
+| `UOS_GATEWAY_INSTRUCTION_SNAPSHOT` | Unset | Carries the reviewed instruction snapshot to bounded build or test subprocesses. |
+| `UOS_GATEWAY_NOTES_SHA256` | Unset (required with an inherited reviewed snapshot) | Binds the instruction snapshot to the reviewed hash. |
+| `UOS_GATEWAY_OUT` | `.data/cpp-gateway` under the repository | Selects output for the legacy single-test shell driver. |
+| `UOS_GATEWAY_RESOURCE_LOG` | Unset | Selects the supervisor resource log for build and test admission. |
+| `UOS_GATEWAY_RUN_ID` | Set by the build or test owner | Binds instructions and resource receipts to an invocation. |
+| `UOS_GATEWAY_TOOL_ROOT` | Set by the native build owner | Selects the qualified compiler and dependency root for the native CMake profile. |
+| `UOS_GATEWAY_TOOL_VIEW` | Set by the build owner | Selects the CMake profile's task-owned tool wrappers. |
 
 | Environment surface              | Existing names                                                                                                                                                                                                                                                        |
 | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -110,9 +118,9 @@ The binary performs no automatic dotenv discovery and reads the existing environ
 | Provider credentials and scope   | `DEEPSEEK_API_KEY`, `SURPLUS_API_KEY`, `METERED_API_KEY`, `OPENLUX_API_KEY`, `OPENROUTER_API_KEY`, `CEREBRAS_API_KEY`, `LITHOSAI_API_KEY`, `VOYAGEAI_API_KEY`, `CLAUDE_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CODE_WORKSPACE_ID`, `CLAUDE_CODE_ALLOWED_KEY_IDS` |
 | Capture, TLS and process helpers | `SENTINEL_REPLAY_KEY`, `SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS`, `NODE_TLS_REJECT_UNAUTHORIZED`, `PATH`, `TMPDIR`, `TMP`, `TEMP`; startup supplies the existing SQLite-library variable `SQLITE_TMPDIR`                                                                 |
 
-This inventory is from literal reads and defining constants; existing injected environment-reader interfaces can receive their caller's map, and OpenSSL retains its own standard trust-store environment behavior. None of these names grants filesystem or provider authority by itself. The C++ fetch client retains its documented HTTP/1.1-only/no-proxy limits, buffered-body chunking difference and non-identical gzip output; real provider transport, long soak, power loss and complete stopped-copy value decoding remain unproved. A cutover must validate a consistent stopped copy with the C++ reader and must never load two SQLite implementations against one file in one process.
-
-Fresh isolated Bun1.4.0/SQLite3.53.2 and the actual shared SQLite3.54.0 observations match REAL text rendering, six large-number hex forms, concat/octet_length and schema-first NOTADB. The `sqlite3` CLI embeds a separate build and is not the linked-library compile-option oracle. Actual shared-library DQS_DML/DQS_DDL are1/1, matching Bun; no DQS override is needed. Host maximum expression depth10000 differs from Bun1000; the native binding applies a per-connection1000 limit after independent before/after controls and retains the exact error regression. SDK expected literals remain unchanged in the version-marked test branches. Other compile-option and compression-byte differences are not erased by the library version number alone.
+OpenSSL also reads its standard trust-store environment. The native TLS adapter retains its existing environment
+names for client compatibility. Provider test environments use fresh home and temporary directories, synthetic
+credentials and loopback mocks. [Test isolation](CI.md)
 
 ### Enable the Gemini subscription
 
@@ -126,10 +134,6 @@ The dynamic loader can open compatible ELF files anywhere the calling process ca
 
 ## Cutover requirements
 
-The original packaged `uos-kv-proof` round trip with cyclic values failed closed on new synthetic data with `Typed-value interchange cycle has no KvValue representation`. The run kept the checkout hidden, backed homes with scratch, used a namespace with no outbound route and pinned Deno 2.9.7 by hash. It stopped before publishing a candidate or forward receipt. `src/kv_conversion/convert.cpp` materializes the graph as a `KvValue` tree, and the tree materializers in `src/kv_conversion/typed_value.cpp` and `src/rt/kv_jsc_deserialize.cpp` reject cyclic references. This is a cutover blocker. The repair must preserve node identity through conversion and pass the original proof fixture.
-
-The earlier Linux package passed 21 of 21 startup and offline CLI controls under Linux network, mount and PID isolation. Its separate supported-value round trip passed both actual conversion directions on four acyclic synthetic rows. Independent Deno readback verified keys, values and revisions, and recorded unchanged source hashes and matching absolute expiry and native revisions. The packaged smoke and load receipts from that build are historical. Refresh startup, authenticated loopback inference, durable restart and shutdown, and RSS evidence on the final package.
-
-Sparse JSC arrays are also an open storage parity issue. The current reader allocates each hole when materializing the array, so a compact stored value can use substantial memory. The planned storage repair handles sparse representation and cyclic graph identity after the final build, package, smoke and resource evidence. These defects remain open for production cutover.
-
-Cutover also needs codec and immutable-release custody reconciled with the existing deployment, a verified stopped-copy rehearsal, environment-file and credential-custody review, applicable external Sentinel-reader acceptance, and separately authorized production and client acceptance. The packaging inputs in `ops/` are an uninstalled draft.
+Verify the target host, release identity and a consistent stopped database copy. Rehearse a rollback that opens
+the latest writes. The historical conversion and round-trip tooling lives at [STATE A](https://github.com/ubiquity/ai.ubq.fi/tree/ca045a83ebaab6c50c20567d1a825638abac0891).
+Follow the owner's [cutover checklist](CUTOVER.md) and preserve the required credential, ingress and Sentinel-reader approvals.

@@ -1,4 +1,4 @@
-// Links: tests/metered_quota_test.cpp src/metered_quota.cpp src/codex/quota.cpp src/kv.cpp src/storage/kv.cpp src/storage/key_compatibility.cpp src/storage/native_addon.cpp src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp src/storage/value_compatibility.cpp src/utils.cpp
+// Links: tests/metered_quota_test.cpp src/metered_quota.cpp src/codex/quota.cpp src/kv.cpp src/storage/kv.cpp src/storage/key_compatibility.cpp src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp src/storage/value_compatibility.cpp src/utils.cpp
 // Port of tests/metered-quota.test.ts. The Codex quota header cases target src/codex/quota.ts;
 // the others target src/metered-quota.ts. The TS `MemoryKv` fake is QuotaTestKv below.
 #include "uos/codex/quota.hpp"

@@ -54,9 +54,7 @@
         "src/jev_compaction/compaction.ts",
         "src/kv.ts",
         "src/runtime/http.ts",
-        "src/runtime/native-kv-bootstrap.ts",
         "src/storage/kv.ts",
-        "src/storage/native-addon.ts",
         "src/types.ts",
         "src/utils.ts"
       ],
@@ -79,9 +77,7 @@
         "src/jev_compaction/compaction.ts",
         "src/kv.ts",
         "src/runtime/http.ts",
-        "src/runtime/native-kv-bootstrap.ts",
         "src/storage/kv.ts",
-        "src/storage/native-addon.ts",
         "src/types.ts",
         "src/utils.ts"
       ],
@@ -135,7 +131,6 @@
         "src/kv.ts",
         "src/paid-fallback/ledger-backfill.ts",
         "src/runtime/http.ts",
-        "src/runtime/native-kv-bootstrap.ts",
         "src/storage/kv.ts"
       ],
       "header": "cpp/gateway/include/uos/serve.hpp",
@@ -3202,18 +3197,9 @@
       "ported": true,
       "tests": ["tests/admin-kernel-coverage.test.ts", "tests/kernel-usage-coverage.test.ts"]
     },
-    "src/kv-conversion/cli.ts": {
-      "deps": ["src/kv-conversion/convert.ts", "src/kv-conversion/cursors.ts"],
-      "header": "cpp/gateway/include/uos/kv_conversion/cli.hpp",
-      "impl": "cpp/gateway/src/kv_conversion/cli.cpp",
-      "loc": 43,
-      "ported": true,
-      "tests": []
-    },
     "src/kv-conversion/convert.ts": {
       "deps": [
         "src/kv-conversion/cursors.ts",
-        "src/kv-conversion/legacy-codec.ts",
         "src/kv-conversion/native-schema.ts",
         "src/kv-conversion/typed-value.ts",
         "src/storage/kv.ts"
@@ -3235,14 +3221,6 @@
         "tests/native-capture-operator.test.ts",
         "tests/private-bun-copy.test.ts"
       ]
-    },
-    "src/kv-conversion/legacy-codec.ts": {
-      "deps": ["src/kv-conversion/typed-value.ts"],
-      "header": "cpp/gateway/include/uos/kv_conversion/legacy_codec.hpp",
-      "impl": "cpp/gateway/src/kv_conversion/legacy_codec.cpp",
-      "loc": 86,
-      "ported": true,
-      "tests": ["tests/kv-runtime-conversion.test.ts"]
     },
     "src/kv-conversion/native-schema.ts": {
       "deps": [],
@@ -3269,20 +3247,6 @@
         "tests/kv-migration.test.ts",
         "tests/kv-runtime-conversion.test.ts"
       ]
-    },
-    "src/kv-conversion/proof.ts": {
-      "deps": [
-        "src/kv-conversion/convert.ts",
-        "src/kv-conversion/legacy-codec.ts",
-        "src/kv-conversion/typed-value.ts",
-        "src/runtime/native-kv-bootstrap.ts",
-        "src/storage/kv.ts"
-      ],
-      "header": "cpp/gateway/include/uos/kv_conversion/proof.hpp",
-      "impl": "cpp/gateway/src/kv_conversion/proof.cpp",
-      "loc": 178,
-      "ported": true,
-      "tests": []
     },
     "src/kv-conversion/typed-value.ts": {
       "deps": [],
@@ -5098,14 +5062,6 @@
         "tests/vps-deploy-ingress.test.ts"
       ]
     },
-    "src/runtime/native-kv-bootstrap.ts": {
-      "deps": ["src/storage/native-addon.ts"],
-      "header": "cpp/gateway/include/uos/runtime/native_kv_bootstrap.hpp",
-      "impl": "cpp/gateway/src/runtime/native_kv_bootstrap.cpp",
-      "loc": 103,
-      "ported": true,
-      "tests": ["tests/runtime-native-startup.test.ts"]
-    },
     "src/runtime/permissions-linux.ts": {
       "deps": [],
       "header": "cpp/gateway/include/uos/runtime/permissions_linux.hpp",
@@ -5393,7 +5349,6 @@
     "src/storage/kv.ts": {
       "deps": [
         "src/storage/key-compatibility.ts",
-        "src/storage/native-addon.ts",
         "src/storage/native-kv.ts",
         "src/storage/sqlite-readonly.ts",
         "src/storage/value-compatibility.ts"
@@ -5538,14 +5493,6 @@
         "tests/usage-optimization-measurement.test.ts",
         "tests/vps-deploy-guards.test.ts"
       ]
-    },
-    "src/storage/native-addon.ts": {
-      "deps": [],
-      "header": "cpp/gateway/include/uos/storage/native_addon.hpp",
-      "impl": "cpp/gateway/src/storage/native_addon.cpp",
-      "loc": 126,
-      "ported": true,
-      "tests": ["tests/runtime-native-startup.test.ts", "tests/storage-bun-kv.test.ts"]
     },
     "src/storage/native-kv.ts": {
       "deps": [],
@@ -5743,9 +5690,9 @@
     }
   },
   "summary": {
-    "loc": 113485,
-    "modules": 327,
-    "ported_loc": 113485,
-    "ported_modules": 327
+    "loc": 112949,
+    "modules": 322,
+    "ported_loc": 112949,
+    "ported_modules": 322
   }
 }

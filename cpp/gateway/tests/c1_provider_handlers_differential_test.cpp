@@ -19,7 +19,7 @@
 // src/codex/routing_state.cpp src/responses_stream.cpp src/inference_deadline.cpp src/lib/jev_compaction/compact.cpp
 // src/provider/lithos_rate_limits.cpp src/storage/native_kv.cpp src/authority/native_codex_mutations.cpp src/provider/removed_provider_telemetry.cpp
 // src/authority/native_codex_capacity.cpp src/codex/native_auth_transport.cpp src/provider/surplus_claude_chat_request.cpp src/provider/capacity.cpp
-// src/codex/rate_limit_429.cpp src/storage/native_addon.cpp src/provider/capacity_analytics.cpp src/provider/claude_capacity_rollups.cpp
+// src/codex/rate_limit_429.cpp src/provider/capacity_analytics.cpp src/provider/claude_capacity_rollups.cpp
 // src/provider/capacity_history.cpp src/provider/claude_capacity_history.cpp src/codex/experiment.cpp src/provider/capacity_parse.cpp
 // src/provider/anthropic_chat_responses.cpp src/authority/native_codex_evaluation.cpp src/paid_fallback/ledger_stats.cpp src/provider/capacity_rollups.cpp
 // src/authority/native_codex_429.cpp src/metered_quota.cpp src/codex/account_routing.cpp src/codex/routing_evaluation.cpp

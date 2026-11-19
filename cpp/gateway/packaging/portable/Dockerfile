@@ -11,6 +11,8 @@ RUN bash /usr/local/bin/portable-dependencies "$JOBS"
 
 FROM toolchain AS cpp
 ARG JOBS=4
+ARG SOURCE_COMMIT
+RUN printf '%s' "$SOURCE_COMMIT" | grep -Eq '^[0-9a-f]{40}$'
 RUN apt-get update && apt-get install -y --no-install-recommends ccache && rm -rf /var/lib/apt/lists/*
 WORKDIR /source
 COPY cpp/gateway/CMakeLists.txt cpp/gateway/PORT-MANIFEST.json cpp/gateway/PORTED.txt cpp/gateway/
@@ -33,34 +35,23 @@ RUN --network=none --mount=type=cache,target=/var/cache/ccache \
     UOS_GATEWAY_BUILD_EVIDENCE=bookworm-arm64 UOS_GATEWAY_TOOL_ROOT=/opt/uos \
     cmake -S cpp/gateway -B /build -G Ninja -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 -DUOS_GATEWAY_FRAME_RECYCLING_DISABLED=ON \
+      -DUOS_GATEWAY_GIT_COMMIT="$SOURCE_COMMIT" \
       -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
       '-DCMAKE_C_FLAGS=-march=armv8-a -ffile-prefix-map=/source=.' \
       '-DCMAKE_CXX_FLAGS=-march=armv8-a -isystem /opt/uos/include -ffile-prefix-map=/source=. --warning-suppression-mappings=/opt/uos/clang-warnings.txt' \
       '-DCMAKE_C_FLAGS_RELEASE=-O2 -g0' '-DCMAKE_CXX_FLAGS_RELEASE=-O2 -g0' \
       '-DCMAKE_EXE_LINKER_FLAGS=-L/opt/uos/lib -static-libstdc++ -static-libgcc' \
       '-DCMAKE_CXX_STANDARD_LIBRARIES=/opt/uos/lib/libicudata.a -lm' \
-    && cmake --build /build --parallel "$JOBS" --target uos_gateway uos_kv_convert uos_kv_proof \
+    && cmake --build /build --parallel "$JOBS" --target uos_gateway \
     && ccache --show-stats
 
-FROM base AS native
-RUN apt-get update && apt-get install -y --no-install-recommends libnode-dev patch unzip xz-utils \
-    && rm -rf /var/lib/apt/lists/*
-COPY cpp/gateway/packaging/portable/native.sh /usr/local/bin/portable-native
-COPY cpp/gateway/packaging/portable/native-receipt.py /usr/local/bin/portable-native-receipt
-COPY cpp/gateway/packaging/portable/licenses /usr/local/share/uos-crate-licenses
-COPY cpp/gateway/packaging/native-kv /source/cpp/gateway/packaging/native-kv
-COPY cpp/gateway/packaging/confinement/permissions-native.c /source/cpp/gateway/packaging/confinement/
-RUN bash /usr/local/bin/portable-native
-
 FROM cpp AS assemble
-COPY --from=native /native /native
 COPY static static
 COPY favicon.png favicon-32.png ./
-COPY cpp/gateway/packaging/native-kv/inputs.json cpp/gateway/packaging/native-kv/
 COPY cpp/gateway/docs/licenses cpp/gateway/docs/licenses
 COPY cpp/gateway/docs/RASPBERRY-PI.md cpp/gateway/docs/
 COPY cpp/gateway/ops/launch-native.sh cpp/gateway/ops/
-COPY cpp/gateway/packaging/SQLITE-LICENSE cpp/gateway/packaging/
+COPY cpp/gateway/packaging/SQLITE-LICENSE cpp/gateway/packaging/DENOKV-LICENSE cpp/gateway/packaging/
 COPY cpp/gateway/packaging/portable cpp/gateway/packaging/portable
 ARG SOURCE_COMMIT
 ARG SOURCE_TREE

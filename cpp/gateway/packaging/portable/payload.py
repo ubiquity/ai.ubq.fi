@@ -19,14 +19,12 @@ from seal import EXECUTABLES, manifest, require_portable
 
 
 def main(commit, tree, epoch):
+    if len(commit) != 40 or any(character not in "0123456789abcdef" for character in commit):
+        raise ValueError("The portable package requires the full lowercase Git commit")
+    if len(tree) != 40 or any(character not in "0123456789abcdef" for character in tree):
+        raise ValueError("The portable package requires the full lowercase Git tree")
     payload = OUTPUT / "payload"
     payload.mkdir(parents=True)
-    kv = Path("/native/kv")
-    permissions = Path("/native/permissions")
-    provenance = Path("/native/kv-provenance-sha256").read_text().strip()
-    inputs = GATEWAY / "packaging/native-kv/inputs.json"
-    native.verify_native_kv(kv, inputs, provenance)
-    native.verify_permissions(permissions)
     for name in EXECUTABLES:
         binary = Path("/build") / Path(name).name.replace("-", "_")
         target = payload / name
@@ -41,25 +39,15 @@ def main(commit, tree, epoch):
             native.copy_file(asset, payload / asset.relative_to(ROOT))
     for name in ("favicon.png", "favicon-32.png"):
         native.copy_file(ROOT / name, payload / name)
-    for name in ("v8-helper.mjs", "typed-value.ts"):
-        native.copy_file(GATEWAY / "runtime/legacy-codec" / name, payload / "src/kv-conversion" / name)
-    for name in ("launch-schema.json", "offline-schema.json"):
-        native.copy_file(GATEWAY / "runtime" / name, payload / "runtime" / name)
+    native.copy_file(GATEWAY / "runtime/launch-schema.json", payload / "runtime/launch-schema.json")
     native.copy_file(GATEWAY / "ops/launch-native.sh", payload / "ops/launch-native.sh", executable=True)
-    for name in ("native-kv.node", "native-kv.provenance.json", "build-commands.jsonl"):
-        native.copy_file(kv / name, payload / "native/kv" / name)
-    native.copy_file(inputs, payload / "native/kv/inputs.json")
-    for name in ("linux-arm64.node", "manifest.json"):
-        native.copy_file(permissions / name, payload / "native/permissions" / name)
 
     vendored_versions = native.copy_vendor_licenses(payload)
-    native.copy_file(kv / "LICENSE", payload / "licenses/native-kv/LICENSE")
-    shutil.copytree("/native/kv-licenses", payload / "licenses/native-kv", dirs_exist_ok=True)
     shutil.copytree("/opt/uos/licenses", payload / "licenses", dirs_exist_ok=True)
     native.copy_file(GATEWAY / "packaging/SQLITE-LICENSE", payload / "licenses/sqlite/LICENSE")
+    native.copy_file(GATEWAY / "packaging/DENOKV-LICENSE", payload / "licenses/denokv/LICENSE")
     native.copy_file(Path("/usr/share/common-licenses/GPL-3"), payload / "licenses/gcc/GPL-3")
     packages = ["libc6", "clang-21", "libstdc++-12-dev", "libgcc-12-dev", "libssl-dev", "zlib1g-dev", "libbrotli-dev", "libzstd-dev", "mold"]
-    kv_inputs = native.read_json(inputs)
     profile = {
         "schema": "uos-gateway-portable-build-v1", "gitCommit": commit, "gitTree": tree,
         "buildDate": datetime.fromtimestamp(int(epoch), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -68,13 +56,12 @@ def main(commit, tree, epoch):
         "debianPackages": dict(line.split("\t", 1) for line in subprocess.check_output(
             ["dpkg-query", "-W", "-f=${Package}\t${Version}\n", *packages], text=True).splitlines()),
         "static": {"Boost": "1.92.0", "SQLite": "3.54.0", "ICU": "78.3", **vendored_versions},
-        "nativeKv": kv_inputs["sdk"] | {"toolchain": kv_inputs["toolchain"]["rustcVersion"]},
         "linkFlags": ["-static-libstdc++", "-static-libgcc"],
     }
     native.write_json(payload / "build-profile.json", profile)
     native.write_json(OUTPUT / "VERSION", profile)
-    native.write_json(payload / "package.json", {"schema": "uos-native-package-v1", "platform": "linux", "architecture": "arm64",
-                      "nativeKvProvenanceSha256": provenance, "profileSha256": native.runtime.digest(payload / "build-profile.json")})
+    native.write_json(payload / "package-info.json", {"schema": "uos-native-package-v1", "platform": "linux", "architecture": "arm64",
+                      "profileSha256": native.runtime.digest(payload / "build-profile.json")})
     (payload / "manifest.sha256").write_text(manifest(payload))
     native.copy_file(GATEWAY / "docs/RASPBERRY-PI.md", OUTPUT / "README.md")
     native.copy_file(GATEWAY / "packaging/portable/INSTALL.md", OUTPUT / "INSTALL.md")

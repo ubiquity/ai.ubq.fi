@@ -41,16 +41,17 @@ are unqualified. Keep the existing Linux GCC coroutine rules even when Apple Cla
 
 ## Prepare a clean development machine
 
+The paired comparison with the TypeScript gateway lives at [commit `ca045a83ebaab6c50c20567d1a825638abac0891`](https://github.com/ubiquity/ai.ubq.fi/tree/ca045a83ebaab6c50c20567d1a825638abac0891/cpp/gateway/conformance).
+
 With Xcode Command Line Tools already available, install dependencies explicitly before building:
 
 ```sh
 HOMEBREW_NO_AUTO_UPDATE=1 brew install boost openssl@3 sqlite zlib icu4c@78 brotli zstd cmake ninja python pkgconf
 xcrun clang++ --version
 sw_vers
-bun --version # must be 1.4.0 for the Bun comparison fixtures
 ```
 
-The build driver never installs or downloads dependencies. Bun was already pinned on the job runner.
+The build driver never installs or downloads dependencies.
 No application TypeScript compilation or TypeScript tests are needed for this C++ qualification.
 Keep all dependency preparation, object files, archives, executables and logs outside the checkout.
 
@@ -134,7 +135,7 @@ when launching the platform boundary binary.
 The external build root contains the following artifacts and receipts.
 
 - `libuos_gateway.a`, the six vendor archives, and `obj/` with per-object compiler logs and input hashes.
-- `runs/<id>/{uos-gateway,uos-kv-convert,uos-kv-proof}` and their link logs.
+- `runs/<id>/uos-gateway` and their link logs.
 - `runs/<id>/provenance.json` with toolchain, dependency, input and executable identities.
 - `runs/<id>/{production,runtime,gateway}-compile.json` with per-source build outcomes.
 - `runs/<id>/results.json` and per-binary logs with harness counts and failures.

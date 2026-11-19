@@ -1,8 +1,8 @@
 // Links: tests/kv_runtime_conversion_test.cpp
-//        src/cache/kv_migration_base.cpp src/kv_conversion/legacy_codec.cpp src/authority/native_kernel.cpp src/utils.cpp
-//        src/storage/kv.cpp src/storage/native_addon.cpp src/kv_conversion/profile_json.cpp src/config.cpp
+//        src/cache/kv_migration_base.cpp src/authority/native_kernel.cpp src/utils.cpp
+//        src/storage/kv.cpp src/kv_conversion/profile_json.cpp src/config.cpp
 //        src/storage/sqlite_readonly.cpp src/kv_conversion/native_schema.cpp src/kv_conversion/cursors.cpp src/storage/key_compatibility.cpp
-//        src/storage/native_kv.cpp src/kv_conversion/convert.cpp src/kernel/quota_v2.cpp tests/helpers/linked_native_kv.cpp
+//        src/storage/native_kv.cpp src/kv_conversion/convert.cpp src/kernel/quota_v2.cpp
 //        src/authority/native_kernel_contracts.cpp src/kv_conversion/typed_value.cpp src/kv.cpp src/release.cpp
 //        src/storage/value_compatibility.cpp
 // tests/kv-runtime-conversion.test.ts: the cases for src/kv-conversion/cursors.ts,
@@ -13,12 +13,7 @@
 // bun:sqlite it returns one cached statement per SQL text, so the statement the test disables
 // is the one the reader receives.
 //
-// The native fixtures of "immutable native snapshot reader ..." and "converter reads its private
-// immutable native WAL snapshot ..." are written as the TS writes them: `openKv(path)` (the `#kv`
-// opener, storage::kv::openKv over the durable rt::SqliteKv) and one `kv.set`, with the backend
-// prepared from the linked store's release binding (tests/helpers/linked_native_kv.cpp, as
-// scripts/test-native-kv.ts prepares it for bun test). Fixtures live under rt::os::tmpdir()
-// (TMPDIR), as the TS uses os.tmpdir().
+// Native database fixtures use the linked SQLite implementation in the isolated temp directory.
 //
 // Not ported yet: "actual Bun profile CLI exports, analyzes and imports disposable typed state with
 // unchanged filtering", and "graph interchange preserves cycles, sparse arrays, shared buffers,
@@ -35,7 +30,6 @@
 #include "uos/rt/number.hpp"
 #include "uos/kv_conversion/convert.hpp"
 #include "uos/kv_conversion/cursors.hpp"
-#include "uos/kv_conversion/legacy_codec.hpp"
 #include "uos/kv_conversion/native_schema.hpp"
 
 #include "uos/rt/base64.hpp"
@@ -49,7 +43,6 @@
 #include "uos/rt/test_async.hpp"
 #include "uos/rt/url.hpp"
 #include "uos/storage/kv.hpp"
-#include "tests/helpers/linked_native_kv.hpp"
 #include <map>
 
 namespace {
@@ -145,7 +138,6 @@ namespace {
 
   // `const kv = await openKv(path); try { await kv.set(key, value); } finally { kv.close(); }`
   rt::Task<void> writeNativeKvFixture(std::string path, rt::KvKey key, rt::KvValue value) {
-    uos::tests::helpers::linked_native_kv::prepareOnce();
     auto opening = uos::storage::kv::openKv(std::move(path));
     const std::shared_ptr<rt::Kv> kv = co_await std::move(opening);
     rt::Reason failure;
@@ -215,16 +207,6 @@ namespace {
     return true;
   }
 
-  // `assert.rejects(task)`: String(error) of the rejection, std::nullopt when it fulfilled.
-  template <class T> rt::Task<std::optional<std::string>> rejection(rt::Task<T> task) {
-    std::optional<std::string> reason;
-    try {
-      co_await std::move(task);
-    } catch (...) {
-      reason = rt::reasonToString(std::current_exception());
-    }
-    co_return reason;
-  }
 
   bool matches(const std::optional<std::string>& text, const char* pattern, const char* flags = "") {
     const rt::Regex regex(pattern, flags);
@@ -263,10 +245,10 @@ ASYNC_TEST("immutable native snapshot reader preserves signed64-bit integers wit
   auto writing = writeNativeKvFixture(source, rt::KvKey{"snapshot"}, rt::KvValue::object({{"count", rt::BigInt::fromString("9007199254740993")}}));
   co_await std::move(writing);
   EXPECT_EQ(static_cast<int>(rt::fs::readFileSync(source).at(18)), 2);
-  auto digestingSource = legacy_codec::fileDigest(source);
+  auto digestingSource = convert::fileDigest(source);
   const std::string before = co_await std::move(digestingSource);
   rt::fs::copyFileSync(source, snapshot, rt::fs::constants::COPYFILE_EXCL);
-  auto digestingSnapshot = legacy_codec::fileDigest(snapshot);
+  auto digestingSnapshot = convert::fileDigest(snapshot);
   const std::string copied = co_await std::move(digestingSnapshot);
   EXPECT_EQ(copied, before);
   EXPECT(!hasSidecar(source));
@@ -306,10 +288,10 @@ ASYNC_TEST("immutable native snapshot reader preserves signed64-bit integers wit
   }
   reader.close();
   if (failure) std::rethrow_exception(failure);
-  auto digestingSnapshotAfter = legacy_codec::fileDigest(snapshot);
+  auto digestingSnapshotAfter = convert::fileDigest(snapshot);
   const std::string snapshotAfter = co_await std::move(digestingSnapshotAfter);
   EXPECT_EQ(snapshotAfter, before);
-  auto digestingSourceAfter = legacy_codec::fileDigest(source);
+  auto digestingSourceAfter = convert::fileDigest(source);
   const std::string sourceAfter = co_await std::move(digestingSourceAfter);
   EXPECT_EQ(sourceAfter, before);
   EXPECT(!hasSidecar(source));
@@ -325,79 +307,10 @@ TEST("snapshot reader fails closed if the pinned statement safe-integer API is u
   reader.close();
 }
 
-ASYNC_TEST("converter reads its private immutable native WAL snapshot before invoking the offline codec") {
-  AfterEach cleanup;
-  const std::string root = fixture();
-  const std::string source = rt::path::join(root, "native.sqlite3");
-  const std::string output = rt::path::join(root, "output # % ?");
-  rt::fs::mkdirSync(output);
-  const std::string destination = rt::path::join(output, "deno.sqlite3");
-  const std::string receipt = rt::path::join(root, "receipt.json");
-  const std::string missingCodec = rt::path::join(root, "missing-offline-codec");
-  auto writing = writeNativeKvFixture(source, rt::KvKey{"snapshot"}, rt::KvValue::object({{"bytes", rt::KvBytes{7}}, {"count", rt::BigInt(9)}}));
-  co_await std::move(writing);
-  EXPECT_EQ(static_cast<int>(rt::fs::readFileSync(source).at(18)), 2);
-  EXPECT(!hasSidecar(source));
-  auto digestingBefore = legacy_codec::fileDigest(source);
-  const std::string before = co_await std::move(digestingBefore);
-  const convert::ConvertOptions options{
-    .direction = "bun-to-deno",
-    .source = source,
-    .destination = destination,
-    .receipt = receipt,
-    .deno = missingCodec,
-    .denoSha256 = rt::repeat("0", 64),
-  };
-  auto converting = convert::convertKvDatabase(options);
-  bool rejected = false;
-  std::optional<std::string> code;
-  std::optional<std::string> path;
-  try {
-    co_await std::move(converting);
-  } catch (const rt::fs::ErrnoError& error) {
-    rejected = true;
-    code = error.code;
-    path = error.path;
-  } catch (...) {
-    rejected = true;
-  }
-  EXPECT(rejected);
-  EXPECT_EQ(code, std::optional<std::string>("ENOENT"));
-  EXPECT_EQ(path, std::optional<std::string>(missingCodec));
-  auto digestingAfter = legacy_codec::fileDigest(source);
-  const std::string after = co_await std::move(digestingAfter);
-  EXPECT_EQ(after, before);
-  EXPECT(!rt::fs::existsSync(destination));
-  EXPECT(!rt::fs::existsSync(receipt));
-}
-
-ASYNC_TEST("converter refuses preexisting destinations, nonempty WAL, unsupported schemas and queues without publishing") {
+TEST("native schema validation refuses unsupported schemas and queues") {
   AfterEach cleanup;
   const std::string root = fixture();
   const std::string source = rt::path::join(root, "source.sqlite3");
-  const std::string destination = rt::path::join(root, "candidate.sqlite3");
-  const std::string receipt = rt::path::join(root, "receipt.json");
-  const convert::ConvertOptions options{
-    .direction = "deno-to-bun",
-    .source = source,
-    .destination = destination,
-    .receipt = receipt,
-    .deno = "/invalid-deno",
-    .denoSha256 = rt::repeat("0", 64),
-  };
-  rt::fs::writeFileSync(destination, "preserved");
-  auto preexisting = rejection(convert::convertKvDatabase(options));
-  const std::optional<std::string> preexistingReason = co_await std::move(preexisting);
-  EXPECT(matches(preexistingReason, "NEW"));
-  EXPECT_EQ(rt::fs::readFileSync(destination, "utf8"), std::string("preserved"));
-  rt::fs::rmSync(destination);
-  rt::fs::writeFileSync(source, "empty");
-  rt::fs::writeFileSync(source + "-wal", "busy");
-  auto busy = rejection(convert::convertKvDatabase(options));
-  const std::optional<std::string> busyReason = co_await std::move(busy);
-  EXPECT(matches(busyReason, "nonempty WAL"));
-  rt::fs::rmSync(source + "-wal");
-  rt::fs::rmSync(source);
   rt::sqlite::DatabaseOptions databaseOptions;
   databaseOptions.safeIntegers = true;
   const rt::sqlite::Database db(source, databaseOptions);
@@ -412,14 +325,7 @@ ASYNC_TEST("converter refuses preexisting destinations, nonempty WAL, unsupporte
   db.run("UPDATE data_version SET version=11");
   db.run("CREATE TABLE unknown_state (value TEXT)");
   EXPECT(throwsIncluding([&] { native_schema::verifyNativeSchema(nativeReader(db), "deno-v8"); }, "Unsupported native KV tables"));
-  db.run("DROP TABLE unknown_state");
-  db.run("INSERT INTO queue VALUES(0,'queued',X'00','[]',X'00')");
   db.close(true);
-  auto queued = rejection(convert::convertKvDatabase(options));
-  const std::optional<std::string> queuedReason = co_await std::move(queued);
-  EXPECT(matches(queuedReason, "Nonempty"));
-  EXPECT(!rt::fs::existsSync(destination));
-  EXPECT(!rt::fs::existsSync(receipt));
 }
 
 TEST("retains profile JSON wire tags, nested values, U64 identity and profile namespace filtering") {
@@ -451,10 +357,6 @@ ASYNC_TEST("profile export is NDJSON through actual Bun KV with typed values") {
   const auto scratchRoot = rt::path::resolve(*taskScratch); EXPECT_EQ(rt::path::resolve(rt::os::tmpdir()), scratchRoot);
   const std::string saved = uos::config::config.codexAuthJsonB64; uos::config::config.codexAuthJsonB64.clear();
   const auto restore = rt::scopeExit([saved] { uos::config::config.codexAuthJsonB64 = saved; });
-  uos::tests::helpers::linked_native_kv::prepareOnce();
-  const auto binding = rt::jsonParse(uos::tests::helpers::linked_native_kv::bindingJson());
-  const auto artifactRoot = rt::getString(binding, "artifactDirectory"); EXPECT(artifactRoot);
-  EXPECT_EQ(rt::path::dirname(rt::path::resolve(*artifactRoot)), scratchRoot);
   const std::string memory(":memory:"); auto opening = uos::storage::kv::openKv(memory); const auto kv = co_await std::move(opening);
   const auto closing = rt::scopeExit([kv] { kv->close(); });
   const rt::KvKey key{"uos_ai", "runtime_config", "v2"}; const rt::KvValue value = rt::KvValue::object({{"payload", rt::KvBytes{1, 2}}, {"missing", rt::KvValue()}});

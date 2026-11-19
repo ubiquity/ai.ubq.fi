@@ -2,7 +2,7 @@
 //        src/sentinel/replay_envelope.cpp src/sentinel/replay_observation.cpp src/sentinel/replay_retention_schema.cpp
 //        src/sentinel/replay_model.cpp src/sentinel/upstream_capture.cpp src/sentinel/replay_limits.cpp src/request.cpp
 //        src/config.cpp src/release.cpp src/kv.cpp src/utils.cpp src/storage/key_compatibility.cpp src/storage/kv.cpp
-//        src/storage/native_addon.cpp src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp
+// src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp
 //        src/storage/value_compatibility.cpp
 // Differential cases for src/sentinel/replay-read.ts over rows written directly. The TS tests that read stored
 // captures (tests/sentinel-replay-read-coverage.test.ts: "chunk reads are paged ...", "the time-range export ...",

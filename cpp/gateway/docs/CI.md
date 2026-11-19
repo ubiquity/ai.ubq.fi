@@ -38,7 +38,7 @@ The driver validates the vendored simdjson, simdutf, llhttp, Ada, QCBOR and Quic
 
 Tests require real Linux network, mount and PID namespaces. The driver first tries unprivileged user namespaces. If those are restricted, it tries passwordless `sudo -n` for namespace setup and drops back to the invoking uid/gid before running the test. Each test gets its own loopback-only network namespace, private 512 MiB tmpfs at `/tmp`, empty `HOME=/tmp/h`, `TMPDIR=/tmp/t` and working directory `/tmp/w`. The helper proves loopback communication and an outside-route denial before executing the binary. A credential-free environment allowlist also excludes provider settings, `CODEX_HOME`, synchronized authentication locations and unknown future credential variables. Registry entries cannot override the home/temp/path isolation or introduce credential/provider variables. The tmpfs fixture preserves the full Linux timestamp range used by the Bun-recorded filesystem tests; an ext4-backed runner directory clamps those times. Unsupported isolation fails closed.
 
-The current runtime and fixtures still contain ARM64-only application contracts. A portable compilation does not mean production startup, native development bootstrap or confinement is supported on x86_64. See the findings linked below. Darwin execution needs a separately qualified OS fixture boundary and matching-platform runtime/tests; this driver currently refuses Darwin execution rather than claim an unrestricted pass.
+The current runtime and fixtures still contain ARM64-only application contracts. A portable compilation does not mean production startup or confinement is supported on x86_64. See the findings linked below. Darwin execution needs a separately qualified OS fixture boundary and matching-platform runtime/tests; this driver currently refuses Darwin execution rather than claim an unrestricted pass.
 
 ## Commands
 
@@ -79,7 +79,7 @@ These seven controls cover successful parallel environment isolation, failure co
 
 ## Runner measurements
 
-Measured on 2026-11-17: Ubuntu 26.04.1, x86_64, 4 CPUs, approximately 15 GiB RAM; GCC 15.2.0 (debug), GCC 14.3.0 (release), Clang 21.1.8, Boost 1.90, OpenSSL 3.5.5, SQLite 3.54.0 (prepared from source; distribution version was 3.46.1), ICU 78.2, zlib 1.3.1, Brotli 1.2.0, Zstd 1.5.7 and mold 2.40.4. Bun 1.4.0 is the unchanged behavior oracle.
+Measured on 2026-11-17: Ubuntu 26.04.1, x86_64, 4 CPUs, approximately 15 GiB RAM; GCC 15.2.0 (debug), GCC 14.3.0 (release), Clang 21.1.8, Boost 1.90, OpenSSL 3.5.5, SQLite 3.54.0 (prepared from source; distribution version was 3.46.1), ICU 78.2, zlib 1.3.1, Brotli 1.2.0, Zstd 1.5.7 and mold 2.40.4.
 
 | Configuration / gate                | Object build wall time | Link/test wall time | Outcome                                                                       |
 | ----------------------------------- | ---------------------- | ------------------- | ----------------------------------------------------------------------------- |

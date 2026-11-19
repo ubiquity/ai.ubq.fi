@@ -29,7 +29,7 @@
 // src/paid_fallback/index.cpp src/codex/banked_reset_claim.cpp src/storage/kv.cpp src/paid_fallback/ledger_admission.cpp
 // src/authority/native_paid.cpp src/provider/anthropic_responses.cpp src/authority/native_paid_policy.cpp src/paid_fallback/ledger_backfill.cpp
 // src/provider/anthropic_response_wire.cpp src/responses_failover_stream.cpp src/catalog/promotion.cpp src/storage/sqlite_readonly.cpp
-// src/codex/banked_reset_submission.cpp src/paid_fallback/ledger_settlement.cpp src/authority/native_codex_429.cpp src/storage/native_addon.cpp
+// src/codex/banked_reset_submission.cpp src/paid_fallback/ledger_settlement.cpp src/authority/native_codex_429.cpp
 // src/provider/removed_provider_telemetry.cpp src/codex/banked_reset_provider.cpp src/codex/native_auth_transport.cpp src/provider/anthropic_chat_stream.cpp
 // src/storage/native_kv.cpp src/codex/responses_error.cpp src/runtime/websocket.cpp src/admin/claude_code.cpp
 // Remaining catalog/admin integration cases of tests/claude-code-models.test.ts; direct discovery,

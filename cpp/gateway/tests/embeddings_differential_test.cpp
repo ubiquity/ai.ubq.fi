@@ -10,7 +10,7 @@
 // src/provider/cerebras_rate_limits.cpp src/storage/native_kv.cpp src/provider/claude_code_models.cpp src/provider/claude_code_accounts.cpp src/provider/anthropic_chat_responses.cpp
 // src/release.cpp src/models/codex_models_fetch.cpp src/provider/anthropic_response_wire.cpp src/types.cpp src/codex/dispatch.cpp
 // src/provider/metered.cpp src/provider/claude_code_credentials.cpp src/provider/health.cpp src/provider/selection.cpp src/bounded_response_body.cpp
-// src/provider/anthropic_chat_stream.cpp src/authority/native_codex_contracts.cpp src/storage/native_addon.cpp src/provider/anthropic_replay.cpp src/provider/surplus_claude_chat_request.cpp
+// src/provider/anthropic_chat_stream.cpp src/authority/native_codex_contracts.cpp src/provider/anthropic_replay.cpp src/provider/surplus_claude_chat_request.cpp
 // src/provider/lithos.cpp src/codex/auth.cpp src/models/codex_models_availability.cpp src/codex/routing_mutations.cpp src/authority/native_codex_capacity.cpp
 // src/provider/capacity_events.cpp src/authority/native_codex_mutations.cpp src/codex/capacity_routing.cpp src/codex/rate_limit_429.cpp src/codex/auth_refresh.cpp
 // src/codex/routing_state.cpp src/codex/native_auth.cpp src/codex/external_auth.cpp src/provider/claude_code.cpp src/provider/claude_code_quota.cpp

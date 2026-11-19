@@ -3,7 +3,7 @@
 // Only consumed numeric/nullish fields are in the declared return DTO contract; unused stored fields stay opaque.
 // Links: tests/paid_fallback_provider_usage_projection_test.cpp src/paid_fallback/ledger_state.cpp
 // src/authority/native_paid.cpp src/authority/native_paid_contracts.cpp src/types.cpp src/utils.cpp src/kv.cpp
-// src/storage/kv.cpp src/release.cpp src/storage/sqlite_readonly.cpp src/storage/native_kv.cpp src/storage/native_addon.cpp
+// src/storage/kv.cpp src/release.cpp src/storage/sqlite_readonly.cpp src/storage/native_kv.cpp
 #include "uos/paid_fallback/ledger_state.hpp"
 #include "uos/rt/env.hpp"
 #include "uos/rt/json.hpp"

@@ -5,7 +5,9 @@ from concurrent.futures import ThreadPoolExecutor
 import ctypes
 import json
 from pathlib import Path
+import shutil
 import statistics
+import subprocess
 import sys
 import tempfile
 import threading
@@ -14,7 +16,7 @@ import time
 sys.path.insert(0, "/workspace/cpp/gateway/tests/production_smoke")
 from cases import ADMIN_TOKEN, API_TOKEN, CATALOG_MODEL, VERSION, checked, inference_body, synthetic_auth, usage
 from client import request
-from network import sha256, write_json
+from network import sha256, sparse_environment, write_json
 from process import GatewayProcess
 from upstream import Upstream
 
@@ -99,10 +101,18 @@ def memory(gateway, phase):
     return {"sample_count": len(samples), "median_rss_bytes": statistics.median(samples), "peak_rss_bytes": max(samples)}
 
 
-def health(gateway):
+def health(gateway, expected_commit):
     result = checked(request(gateway.origin, "/health"))
     if result["json"]["status"] != "available":
         raise RuntimeError("Health did not report availability")
+    release = result["json"].get("release") or {}
+    reported = release.get("git_sha")
+    if reported != expected_commit:
+        raise RuntimeError(f"Health release commit {reported!r} does not match the packaged commit {expected_commit!r}")
+    if reported == "unknown" or len(reported) != 40 or any(character not in "0123456789abcdef" for character in reported):
+        raise RuntimeError(f"Health reported an unbound release commit: {reported!r}")
+    if result["headers"].get("x-uos-git-sha") != expected_commit:
+        raise RuntimeError("Health x-uos-git-sha header does not match the packaged commit")
     return result["json"]
 
 
@@ -130,14 +140,14 @@ def clean_shutdown(gateway):
         raise RuntimeError("Gateway did not settle naturally after SIGTERM")
 
 
-def exercise(gateway, upstream, binding):
+def exercise(gateway, upstream, binding, expected_commit):
     if Path(f"/proc/{gateway.child.pid}/exe").resolve(strict=True) != Path(binding["packageRoot"]) / "bin/uos-gateway":
         raise RuntimeError("The launched process is not the sealed gateway")
     process = status(gateway.child.pid)
     if int(process["NoNewPrivs"]) != 1 or int(process["Seccomp_filters"]) <= int(status("self")["Seccomp_filters"]):
         raise RuntimeError("Gateway did not install its seccomp filter")
     cold = gateway.idle("idle_cold")
-    initial_health = health(gateway)
+    initial_health = health(gateway, expected_commit)
     static_sha256 = favicons(gateway, Path(binding["packageRoot"]))
     body = inference_body("chat", False)
     body["model"] = MODEL
@@ -183,7 +193,7 @@ def exercise(gateway, upstream, binding):
     _, accounted = usage(gateway, key)
     if len(upstream.calls) != completed or any(call["path"] != "/codex/responses" for call in upstream.calls) or accounted != completed or upstream.failures or upstream.redirected_requests:
         raise RuntimeError(f"Expected {completed} completed and accounted chats: calls={len(upstream.calls)} usage={accounted} failures={upstream.failures}")
-    return key, {"health_initial": initial_health, "health_after_load": health(gateway), "unauthenticated_chat_status": 401,
+    return key, {"health_initial": initial_health, "health_after_load": health(gateway, expected_commit), "unauthenticated_chat_status": 401,
                  "favicon_sha256": static_sha256,
                  "completed_chat_requests": completed, "accounted_requests": accounted, "idle_cold": cold, "idle_warm": warm,
                  "eight_in_flight": concurrent, "throughput_rss": [memory(gateway, f"throughput_{trial + 1}") for trial in range(TRIALS)],
@@ -191,12 +201,43 @@ def exercise(gateway, upstream, binding):
                  "seccomp_filters": int(process["Seccomp_filters"])}
 
 
+def verify_startup_integrity(state, binding):
+    package = Path(binding["packageRoot"])
+    launch = state / "integrity.json"
+    environment = sparse_environment(state / "integrity")
+    manifest = {**binding, "schema": "uos-gateway-launch-v1", "stateRoot": str(state), "hostname": "127.0.0.1", "port": 0}
+
+    def refuse(document, root, expected):
+        write_json(launch, document)
+        result = subprocess.run([root / "ops/launch-native.sh", launch], cwd=state, env=environment,
+                                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
+        if result.returncode != 1 or expected not in result.stderr or any((state / ".data").iterdir()):
+            raise RuntimeError(f"Invalid immutable input crossed startup preflight: {result.returncode} {result.stderr}")
+
+    refuse({**manifest, "packageManifestSha256": "0" * 64}, package, "package manifest integrity check failed")
+    copy = state.parent / (state.name + "-tampered")
+    try:
+        shutil.copytree(package, copy)
+        (copy / "static/index.html").write_text("synthetic tamper\n")
+        refuse({**manifest, "packageRoot": str(copy)}, copy, "package file integrity check failed: static/index.html")
+    finally:
+        if copy.exists():
+            shutil.rmtree(copy)
+    return 2
+
+
 def run(state, cap):
     binding = json.loads((STAGED / "binding.json").read_text())
     package = Path(binding["packageRoot"])
     if sha256(package / "manifest.sha256") != binding["packageManifestSha256"]:
         raise RuntimeError("Staged package binding changed")
+    profile = json.loads((package / "build-profile.json").read_text())
+    expected_commit = profile.get("gitCommit")
+    if not isinstance(expected_commit, str) or expected_commit == "unknown" or len(expected_commit) != 40 or any(
+            character not in "0123456789abcdef" for character in expected_commit):
+        raise RuntimeError(f"Staged package has no bound Git commit: {expected_commit!r}")
     (state / ".data").mkdir(mode=0o700)
+    integrity_refusals = verify_startup_integrity(state, binding)
     startup = state / "launch.json"
     upstream = CodexUpstream()
     environment = {"DENO_TIMELINE": "production", "DENO_DEPLOY_TOKEN": ADMIN_TOKEN}
@@ -206,14 +247,14 @@ def run(state, cap):
         write_json(startup, {**binding, "schema": "uos-gateway-launch-v1", "stateRoot": str(state),
                              "hostname": "127.0.0.1", "port": 0, "fixture": {"syntheticOrigin": upstream.origin}})
         gateway = GatewayProcess(command, state, environment)
-        key, result = exercise(gateway, upstream, binding)
+        key, result = exercise(gateway, upstream, binding, expected_commit)
         clean_shutdown(gateway)
         gateway = None
         # A distinct empty HOME and TMPDIR are supplied for the reopened process.
         (state / "home").rmdir()
         (state / "tmp").rmdir()
         gateway = GatewayProcess(command, state, environment, label="reopen")
-        health(gateway)
+        health(gateway, expected_commit)
         _, reopened = usage(gateway, key)
         if reopened != result["completed_chat_requests"] or len(upstream.calls) != reopened:
             raise RuntimeError("Restart changed durable usage or dispatched a request")
@@ -229,7 +270,7 @@ def run(state, cap):
         if gateway is not None and not gateway.stop_monitor.is_set():
             gateway.close(force=True)
         upstream.close()
-    return {**result, "cap_mib": cap, "concurrency": CONCURRENCY, "reopened_accounted_requests": reopened,
+    return {**result, "cap_mib": cap, "concurrency": CONCURRENCY, "integrity_refusals": integrity_refusals, "reopened_accounted_requests": reopened,
             "binary_sha256": sha256(package / "bin/uos-gateway"), "manifest_sha256": binding["packageManifestSha256"]}
 
 

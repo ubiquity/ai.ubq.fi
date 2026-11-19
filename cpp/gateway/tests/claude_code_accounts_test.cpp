@@ -22,9 +22,9 @@
 // src/provider/metered.cpp src/provider/removed_provider_telemetry.cpp src/provider/selection.cpp src/provider/surplus.cpp
 // src/provider/surplus_claude_chat_request.cpp src/provider/surplus_claude_request.cpp src/release.cpp src/request_policy.cpp
 // src/responses_failover_stream.cpp src/responses_stream.cpp src/runtime/websocket.cpp src/runtime_config.cpp
-// src/storage/kv.cpp src/storage/native_addon.cpp src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp
+// src/storage/kv.cpp src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp
 // src/types.cpp src/upstream_wire.cpp src/utils.cpp tests/helpers/counting_kv.cpp
-// tests/helpers/linked_native_kv.cpp
+//
 // Original account, quota, health and route cases from tests/claude-code-accounts.test.ts.
 // Additional direct access-policy parser and CAS cases exercise every branch of claude-code-access.ts.
 #include "uos/provider/claude_code_access.hpp"
@@ -50,7 +50,6 @@
 #include "uos/rt/test_async.hpp"
 #include "uos/storage/kv.hpp"
 #include "helpers/counting_kv.hpp"
-#include "helpers/linked_native_kv.hpp"
 
 #include <memory>
 #include <optional>
@@ -275,10 +274,6 @@ ASYNC_TEST("durable identity/cohort and global active survive cache resets and s
 ASYNC_TEST("native persistent close/reopen retains account cohort, global active and observed quota") {
   AccountFixture f; EXPECT_EQ(rt::env::get("TMPDIR"), std::optional<std::string>(f.taskScratch));
   const auto scratchRoot = rt::path::resolve(f.taskScratch); EXPECT_EQ(rt::path::resolve(rt::os::tmpdir()), scratchRoot);
-  uos::tests::helpers::linked_native_kv::prepareOnce();
-  const auto binding = rt::jsonParse(uos::tests::helpers::linked_native_kv::bindingJson());
-  const auto artifactRoot = rt::getString(binding, "artifactDirectory"); EXPECT(artifactRoot);
-  EXPECT_EQ(rt::path::dirname(rt::path::resolve(*artifactRoot)), scratchRoot);
   const auto directory = rt::fs::mkdtempSync(rt::os::tmpdir() + "/claude-account-restart-");
   EXPECT_EQ(rt::path::dirname(directory), scratchRoot);
   const auto cleanup = rt::scopeExit([directory] { rt::fs::rmSync(directory, {.recursive = true, .force = true}); });

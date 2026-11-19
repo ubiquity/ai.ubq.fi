@@ -2,7 +2,7 @@
 //        src/sentinel/replay_retention_metadata.cpp src/sentinel/replay_read.cpp src/sentinel/replay_retention_schema.cpp
 //        src/sentinel/replay_model.cpp src/sentinel/replay_envelope.cpp src/sentinel/replay_observation.cpp src/sentinel/upstream_capture.cpp
 //        src/sentinel/replay_limits.cpp src/sentinel/incident_outbox.cpp src/request.cpp src/utils.cpp src/config.cpp src/release.cpp
-//        src/kv.cpp src/storage/key_compatibility.cpp src/storage/kv.cpp src/storage/native_addon.cpp src/storage/native_kv.cpp
+//        src/kv.cpp src/storage/key_compatibility.cpp src/storage/kv.cpp src/storage/native_kv.cpp
 //        src/storage/sqlite_readonly.cpp src/storage/value_compatibility.cpp
 // Port of tests/sentinel-replay-retention-metadata.test.ts. Storage is `openKv(":memory:")`: rt::MemoryKv, whose expired
 // rows disappear at its 60 s sweep as the native store's do; `waitForExpiry` polls in the test's fake time, so the

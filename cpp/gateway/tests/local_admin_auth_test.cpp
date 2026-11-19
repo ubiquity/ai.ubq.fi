@@ -2,7 +2,7 @@
 // Links: tests/local_admin_auth_test.cpp
 // src/kv.cpp src/request.cpp src/utils.cpp src/storage/kv.cpp
 // src/storage/sqlite_readonly.cpp src/http.cpp src/auth/index.cpp src/auth/passport.cpp
-// src/authority/native_api_key_policy.cpp src/authority/native_api_key.cpp src/storage/native_addon.cpp src/auth/passport_sessions.cpp
+// src/authority/native_api_key_policy.cpp src/authority/native_api_key.cpp src/auth/passport_sessions.cpp
 // src/kernel/attestation.cpp src/auth/local_development_key.cpp src/auth/passkeys.cpp src/api_keys.cpp
 // src/types.cpp src/paid_fallback/ledger_state.cpp src/kernel/policy_queue.cpp src/api_key_policy.cpp
 // src/auth/local_admin.cpp src/kernel/quota_reservations.cpp src/authority/native_paid_contracts.cpp src/config.cpp

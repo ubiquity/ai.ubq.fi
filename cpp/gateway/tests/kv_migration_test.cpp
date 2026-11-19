@@ -11,7 +11,7 @@
 //        src/codex/native_auth.cpp src/models/codex_models.cpp src/codex/external_auth.cpp src/storage/kv.cpp
 //        src/http.cpp src/storage/sqlite_readonly.cpp src/codex/rate_limit_429.cpp src/provider/health.cpp
 //        src/defaults.cpp src/authority/native_codex_429.cpp src/codex/native_auth_transport.cpp src/storage/native_kv.cpp
-//        src/codex/banked_reset_provider.cpp src/provider/cerebras_rate_limits.cpp src/auth/relay.cpp src/storage/native_addon.cpp
+//        src/codex/banked_reset_provider.cpp src/provider/cerebras_rate_limits.cpp src/auth/relay.cpp
 //        src/bounded_response_body.cpp src/runtime/websocket.cpp src/provider/claude_code_accounts.cpp src/provider/claude_code_credentials.cpp
 // Port of tests/kv-migration.test.ts. The HTTP CLI appendBooleanParam case is deferred: its
 // scripts/kv-migrate.ts module is outside the gateway manifest and has no C++ interface yet.

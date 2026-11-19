@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare the packaged native gateway with the Bun production-smoke launcher."""
+"""Measure the packaged native gateway against a loopback upstream."""
 
 import argparse
 from collections import Counter
@@ -23,7 +23,6 @@ from driver import batch, connection, control, metrics, request, require
 from fixtures import ADMIN_TOKEN, API_TOKEN, INFERENCE, PROVIDER_TOKEN, SCENARIOS, encode
 from record import record
 
-SMOKE = HERE.parents[1] / "tests/production_smoke"
 PATH = os.defpath + ":/usr/sbin:/sbin"
 TICKS = os.sysconf("SC_CLK_TCK")
 LISTEN = re.compile(rb"Listening on http://127\.0\.0\.1:(\d+)/")
@@ -130,30 +129,25 @@ def check_terminals(log, ids):
     require(not pending, f"{len(pending)} inference requests lacked a natural-shutdown terminal")
 
 
-def command_for(args, runtime, root, mock_port, identities):
-    manifest = {"schema": "uos-gateway-bun-source-fixture-v1", "stateRoot": str(root), "hostname": "127.0.0.1", "port": 0,
+def command_for(args, root, mock_port, identities):
+    manifest = {"schema": "uos-gateway-launch-v1", "packageRoot": str(args.package),
+                "packageManifestSha256": identities["package_manifest"],
+                "stateRoot": str(root), "hostname": "127.0.0.1", "port": 0,
                 "fixture": {"syntheticOrigin": f"http://127.0.0.1:{mock_port}"}}
     path = root / "launch.json"
-    if runtime == "native":
-        manifest.update(schema="uos-gateway-launch-v1", packageRoot=str(args.package),
-                        packageManifestSha256=identities["package_manifest"], nativeKvProvenanceSha256=identities["native_kv_provenance"])
-        command = [args.package / "bin/uos-gateway", "--runtime-manifest", path]
-    else:
-        command = [args.bun, "--no-env-file", "--no-install", "--config=" + str(SMOKE / "bunfig.toml"),
-                   SMOKE / "bun.ts", args.source, path, args.binding]
     path.write_text(json.dumps(manifest) + "\n")
-    return command
+    return [args.package / "bin/uos-gateway", "--runtime-manifest", path]
 
 
-def trial(args, runtime, name, repetition, mock_port, mock_pid, identities):
+def trial(args, name, repetition, mock_port, mock_pid, identities):
     fixture = SCENARIOS[name]
     count = args.requests or fixture.requests
     warmup = args.warmup if args.warmup is not None else fixture.warmup
     proof = name == "stream"
-    root = args.out / f"{repetition:02d}-{name}-{runtime}"
+    root = args.out / f"{repetition:02d}-{name}-native"
     root.mkdir(mode=0o700)
     (root / ".data").mkdir(mode=0o700)
-    command = command_for(args, runtime, root, mock_port, identities)
+    command = command_for(args, root, mock_port, identities)
     environment = {**sparse(root), "DENO_TIMELINE": "production", "DENO_DEPLOY_TOKEN": ADMIN_TOKEN,
                    "DEEPSEEK_API_KEY": PROVIDER_TOKEN}
     mock_before = control(mock_port, "/fixture/counts")
@@ -198,8 +192,8 @@ def trial(args, runtime, name, repetition, mock_port, mock_pid, identities):
     delta = Counter(mock_after["calls"]) - Counter(mock_before["calls"])
     expected = {name: count + warmup + proof} if name in INFERENCE else {}
     require(delta == expected and mock_after["failures"] == mock_before["failures"],
-            f"{runtime} {name}: mock dispatch went outside the fixture expectation")
-    return {**metrics(results, elapsed), "runtime": runtime, "scenario": name, "repetition": repetition, "warmup": warmup,
+            f"{name}: mock dispatch went outside the fixture expectation")
+    return {**metrics(results, elapsed), "runtime": "native", "scenario": name, "repetition": repetition, "warmup": warmup,
             "request_bytes": len(fixture.body or b""), "gateway_user_ms_per_request": gateway_cpu_ms[0],
             "gateway_system_ms_per_request": gateway_cpu_ms[1], "gateway_cpu_ms_per_request": sum(gateway_cpu_ms),
             "driver_cpu_ms_per_request": driver_cpu_ms, "mock_cpu_ms_per_request": mock_cpu_ms, "peak_rss_mib": hwm,
@@ -208,25 +202,12 @@ def trial(args, runtime, name, repetition, mock_port, mock_pid, identities):
 
 
 def identities_for(args):
-    binding = json.loads(args.binding.read_text())
-    data = {"bun": digest(args.bun), "bun_lock": digest(args.source / "bun.lock"), "bun_launcher": digest(SMOKE / "bun.ts"),
-            "bun_config": digest(SMOKE / "bunfig.toml"),
-            "native_kv_provenance": binding["expectedProvenanceSha256"], "native_kv_addon": digest(Path(binding["artifactDirectory"]) / "native-kv.node")}
-    if args.package:
-        require(json.loads((args.package / "package.json").read_text())["nativeKvProvenanceSha256"] == data["native_kv_provenance"],
-                "Both gateways must use the same frozen native KV provenance")
-        data.update(native=digest(args.package / "bin/uos-gateway"), package_manifest=digest(args.package / "manifest.sha256"))
-    return data
+    return {"native": digest(args.package / "bin/uos-gateway"), "package_manifest": digest(args.package / "manifest.sha256")}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", type=Path, required=True,
-                        help="Detached Bun oracle prepared by conformance/oracle.sh --production with frozen dependencies")
-    parser.add_argument("--source-revision", required=True)
-    parser.add_argument("--package", type=Path, help="Independently built native candidate package")
-    parser.add_argument("--binding", type=Path, required=True)
-    parser.add_argument("--bun", type=Path, required=True)
+    parser.add_argument("--package", type=Path, required=True, help="Sealed native package")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--parent-netns", required=True)
     parser.add_argument("--concurrency", type=int, default=4)
@@ -234,27 +215,19 @@ def main():
     parser.add_argument("--scenarios", nargs="+", choices=list(SCENARIOS), default=list(SCENARIOS))
     parser.add_argument("--requests", type=int, help="Override timed batch size for a smoke check or profile")
     parser.add_argument("--warmup", type=int, help="Override warm-up batch size")
-    parser.add_argument("--bun-only", action="store_true", help="Verify the oracle fixture before building the native package")
     parser.add_argument("--profile", choices=list(SCENARIOS), help="Run one native instrumented trial for this scenario")
     parser.add_argument("--sudo-perf", action="store_true", help="Use non-interactive sudo for perf sampling")
     args = parser.parse_args()
     if min(args.concurrency, args.repetitions, args.requests if args.requests is not None else 1) < 1 or (args.warmup is not None and args.warmup < 0):
         parser.error("Concurrency, repetitions and request count must be positive and warm-up nonnegative")
-    if (not args.bun_only and args.package is None) or (args.bun_only and args.profile):
-        parser.error("Native comparison and profiling require --package")
-    args.source, args.bun, args.binding, args.out = (path.resolve() for path in (args.source, args.bun, args.binding, args.out))
-    if args.package:
-        args.package = args.package.resolve(strict=True)
-    for tree in (HERE.parents[3], args.source):
-        require(not args.out.is_relative_to(tree), "Run output must stay outside source checkouts")
+    args.package = args.package.resolve(strict=True)
+    args.out = args.out.resolve()
+    require(not args.out.is_relative_to(HERE.parents[3]), "Run output must stay outside the source checkout")
     namespace = verify_namespace(args.parent_netns)
-    pinned = subprocess.check_output(["bash", HERE.parents[1] / "conformance/oracle.sh", "--production", "--check", args.source],
-                                     text=True).strip()
-    require(args.source_revision == pinned, "The Bun source revision must match the oracle pin")
     os.umask(0o077)
     args.out.mkdir(mode=0o700)
     identities = identities_for(args)
-    receipt = {"source_revision": args.source_revision, "binaries_sha256": identities, "network_namespace": namespace,
+    receipt = {"binaries_sha256": identities, "network_namespace": namespace,
                "host": platform.platform(), "cpus": sorted(os.sched_getaffinity(0)), "concurrency": args.concurrency,
                "clock_ticks_per_second": TICKS, "profile": args.profile,
                "request_sha256": {name: hashlib.sha256(fixture.body or b"").hexdigest() for name, fixture in SCENARIOS.items()},
@@ -265,18 +238,13 @@ def main():
         mock_port = wait_port(mock, log, re.compile(rb"^(\d+)\n"))
         scenarios = args.scenarios if not args.profile else [args.profile]
         for repetition in range(1, 2 if args.profile else args.repetitions + 1):
-            order = ("native",) if args.profile else ("bun",) if args.bun_only else (("bun", "native") if repetition % 2 else ("native", "bun"))
             offset = (repetition - 1) % len(scenarios)
             for name in scenarios[offset:] + scenarios[:offset]:
-                pair = []
-                for runtime in order:
-                    print(f"{repetition} {name} {runtime} running", flush=True)
-                    row = trial(args, runtime, name, repetition, mock_port, mock.pid, identities)
-                    pair.append(row)
-                    receipt["trials"].append(row)
-                    (args.out / "results.partial.json").write_text(json.dumps(receipt, indent=2) + "\n")
-                    print(f"{repetition} {name} {runtime} {row['requests']} passed, {row['requests_per_s']:.1f} req/s", flush=True)
-                require(len({tuple(row["models"] or ()) for row in pair}) == 1, "Bun and native model lists differed")
+                print(f"{repetition} {name} running", flush=True)
+                row = trial(args, name, repetition, mock_port, mock.pid, identities)
+                receipt["trials"].append(row)
+                (args.out / "results.partial.json").write_text(json.dumps(receipt, indent=2) + "\n")
+                print(f"{repetition} {name} {row['requests']} passed, {row['requests_per_s']:.1f} req/s", flush=True)
         stop(mock, expected=-signal.SIGTERM)
     (args.out / "results.partial.json").rename(args.out / "results.json")
 

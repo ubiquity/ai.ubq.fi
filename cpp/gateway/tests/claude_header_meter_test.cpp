@@ -25,9 +25,9 @@
 // src/provider/surplus_claude_chat_request.cpp src/provider/surplus_claude_request.cpp src/release.cpp src/request.cpp
 // src/request_policy.cpp src/responses_failover_stream.cpp src/responses_stream.cpp src/runtime/http.cpp
 // src/runtime/http_body.cpp src/runtime/http_early_sse.cpp src/runtime/http_tasks.cpp src/runtime/http_upgrade.cpp
-// src/runtime/websocket.cpp src/runtime_config.cpp src/storage/kv.cpp src/storage/native_addon.cpp
+// src/runtime/websocket.cpp src/runtime_config.cpp src/storage/kv.cpp
 // src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp src/types.cpp src/upstream_wire.cpp
-// src/utils.cpp tests/helpers/linked_native_kv.cpp tests/helpers/loopback_http.cpp
+// src/utils.cpp tests/helpers/loopback_http.cpp
 // Original header-meter cases retain a durable fixture store and real ephemeral loopback HTTP.
 #include "uos/admin/claude_code.hpp"
 #include "uos/config.hpp"
@@ -49,7 +49,6 @@
 #include "uos/rt/test_async.hpp"
 #include "uos/runtime/http.hpp"
 #include "uos/storage/kv.hpp"
-#include "helpers/linked_native_kv.hpp"
 #include "helpers/loopback_http.hpp"
 
 #include <functional>
@@ -112,10 +111,6 @@ namespace {
     rt::Task<void> initialize() {
       EXPECT_EQ(rt::env::get("TMPDIR"), std::optional<std::string>(taskScratch));
       const auto scratchRoot = rt::path::resolve(taskScratch); EXPECT_EQ(rt::path::resolve(rt::os::tmpdir()), scratchRoot);
-      uos::tests::helpers::linked_native_kv::prepareOnce();
-      const auto binding = rt::jsonParse(uos::tests::helpers::linked_native_kv::bindingJson());
-      const auto artifactRoot = rt::getString(binding, "artifactDirectory"); EXPECT(artifactRoot);
-      EXPECT_EQ(rt::path::dirname(rt::path::resolve(*artifactRoot)), scratchRoot);
       directory = rt::fs::mkdtempSync(rt::os::tmpdir() + "/claude-header-meter-"); path = directory + "/fixture.sqlite3";
       EXPECT_EQ(rt::path::dirname(directory), scratchRoot);
       auto opening = uos::storage::kv::openKv(path); store = co_await std::move(opening); uos::kv::setKvForTest(store);

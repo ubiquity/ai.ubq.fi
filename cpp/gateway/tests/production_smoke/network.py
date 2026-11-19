@@ -34,17 +34,11 @@ def write_json(path, value):
     temporary.replace(path)
 
 
-def source_inputs(oracle=None):
+def source_inputs():
     paths = list((WORKTREE / "cpp/gateway/tests/production_smoke").glob("*.py"))
     paths.extend((WORKTREE / "cpp/gateway/bench/paths").glob("*"))
     paths.append(WORKTREE / "cpp/gateway/tools/smoke.py")
     hashes = {str(path.relative_to(WORKTREE)): sha256(path) for path in sorted(paths) if path.is_file()}
-    if oracle:
-        paths = [oracle / name for name in ("serve.ts", "package.json", "bun.lock", "ops/runtime-bunfig.toml",
-                 "cpp/gateway/tests/production_smoke/bun.ts")]
-        for relative in ("src", "lib/jev_compaction"):
-            paths.extend((oracle / relative).rglob("*.ts"))
-        hashes.update({"oracle/" + str(path.relative_to(oracle)): sha256(path) for path in sorted(paths)})
     return hashes
 
 

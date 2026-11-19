@@ -6,7 +6,7 @@
 // src/provider/surplus_claude_request.cpp src/kernel/quota_v2.cpp src/kernel/attestation.cpp src/api_keys.cpp src/authority/native_api_key_policy.cpp src/models/catalog.cpp src/config.cpp src/http.cpp
 // src/storage/kv.cpp src/defaults.cpp src/kernel/policy_queue.cpp src/input_normalization.cpp src/provider/lithos.cpp src/request_policy.cpp src/provider/claude_code_models.cpp src/storage/native_kv.cpp
 // src/models/metadata.cpp src/models/codex_models_fetch.cpp src/provider/surplus.cpp src/responses_request.cpp src/handler/index.cpp src/bounded_response_body.cpp src/types.cpp src/provider/cerebras.cpp
-// src/auth/passkeys.cpp src/admin/kernel.cpp src/codex/auth_refresh.cpp src/admin/api_keys.cpp src/admin/api_key_audit.cpp src/models/openrouter_models.cpp src/codex/dispatch.cpp src/storage/native_addon.cpp
+// src/auth/passkeys.cpp src/admin/kernel.cpp src/codex/auth_refresh.cpp src/admin/api_keys.cpp src/admin/api_key_audit.cpp src/models/openrouter_models.cpp src/codex/dispatch.cpp
 // src/admin/codex.cpp src/auth/local_admin.cpp src/handler/terminal_route.cpp src/admin/claude_code.cpp src/release.cpp src/paid_fallback/ledger_state.cpp src/paid_fallback/ledger_backfill.cpp src/provider/selection.cpp
 // src/storage/sqlite_readonly.cpp src/provider/capacity_parse.cpp src/codex/reset_settings.cpp src/kernel/usage.cpp src/codex/auth.cpp src/codex/banked_reset_pool.cpp src/authority/native_paid_contracts.cpp src/handler/admission.cpp
 // src/admin/api_key_mutations.cpp src/codex/banked_reset_claim.cpp src/paid_fallback/ledger_stats.cpp src/provider/claude_code_credentials.cpp src/codex/supervisor_brief.cpp src/paid_fallback/ledger_settlement.cpp src/provider/claude_code.cpp src/codex/banked_reset.cpp

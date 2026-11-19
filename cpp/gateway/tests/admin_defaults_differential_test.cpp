@@ -29,7 +29,7 @@
 // src/responses_failover_stream.cpp src/provider/capacity_parse.cpp src/codex/native_auth_transport.cpp src/provider/lithos_models.cpp
 // src/provider/anthropic_chat_responses.cpp src/provider/surplus_claude_chat_request.cpp src/release.cpp src/provider/anthropic_response_wire.cpp
 // src/provider/capacity_contract.cpp src/runtime/websocket.cpp src/provider/claude_code_quota.cpp src/cache/scope_targets.cpp
-// src/paid_fallback/ledger_stats.cpp src/storage/native_kv.cpp src/provider/removed_provider_telemetry.cpp src/storage/native_addon.cpp
+// src/paid_fallback/ledger_stats.cpp src/storage/native_kv.cpp src/provider/removed_provider_telemetry.cpp
 // src/provider/anthropic_chat_stream.cpp src/storage/sqlite_readonly.cpp src/codex/responses_error.cpp src/provider/capacity.cpp
 // src/provider/claude_capacity_history.cpp src/provider/capacity_rollups.cpp src/provider/lithos.cpp src/provider/capacity_history.cpp
 // src/provider/claude_capacity_rollups.cpp src/provider/capacity_analytics.cpp src/provider/claude_code_usage_schema.cpp src/provider/lithos_rate_limits.cpp

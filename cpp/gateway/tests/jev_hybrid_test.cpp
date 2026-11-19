@@ -10,7 +10,7 @@
 //        src/provider/anthropic_responses.cpp src/provider/anthropic_replay.cpp src/codex/rate_limit_429.cpp src/authority/native_codex_429.cpp src/codex/banked_reset.cpp src/codex/reset_settings.cpp
 //        src/responses_stream.cpp src/provider/claude_code_usage_schema.cpp src/authority/native_codex_evaluation.cpp src/provider/selection.cpp src/runtime/websocket.cpp src/provider/surplus.cpp
 //        src/openai_telemetry.cpp src/bounded_response_body.cpp src/storage/native_kv.cpp src/provider/capacity_contract.cpp src/provider/anthropic_response_wire.cpp src/provider/health.cpp
-//        src/provider/removed_provider_telemetry.cpp src/provider/surplus_claude_chat_request.cpp src/storage/native_addon.cpp src/provider/capacity.cpp src/provider/capacity_history.cpp src/provider/capacity_parse.cpp
+//        src/provider/removed_provider_telemetry.cpp src/provider/surplus_claude_chat_request.cpp src/provider/capacity.cpp src/provider/capacity_history.cpp src/provider/capacity_parse.cpp
 //        src/paid_fallback/ledger_stats.cpp src/provider/claude_capacity_history.cpp src/provider/capacity_rollups.cpp src/codex/banked_reset_provider.cpp src/provider/claude_capacity_rollups.cpp src/responses_failover_stream.cpp
 //        src/provider/anthropic_chat_responses.cpp src/provider/capacity_analytics.cpp src/metered_quota.cpp src/cache/prompt_analytics_core.cpp src/codex/experiment.cpp src/codex/responses_error.cpp
 //        src/provider/anthropic_chat_stream.cpp src/codex/account_routing.cpp src/codex/routing_evaluation.cpp src/cache/prompt_analytics_read.cpp src/codex/routing_serial.cpp src/authority/native_codex.cpp

@@ -6,7 +6,7 @@
 //        src/paid_fallback/ledger_backfill.cpp src/paid_fallback/ledger_settlement.cpp src/paid_fallback/ledger_state.cpp
 //        src/paid_fallback/ledger_stats.cpp src/paid_fallback/rollups.cpp src/provider/anthropic_replay.cpp src/provider/anthropic_response_wire.cpp
 //        src/provider/anthropic_responses.cpp src/provider/cerebras_rate_limits.cpp src/provider/metered.cpp src/provider/surplus_claude_request.cpp
-//        src/release.cpp src/responses_stream.cpp src/storage/key_compatibility.cpp src/storage/kv.cpp src/storage/native_addon.cpp
+//        src/release.cpp src/responses_stream.cpp src/storage/key_compatibility.cpp src/storage/kv.cpp
 //        src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp src/storage/value_compatibility.cpp src/utils.cpp
 // The paid-fallback cases start the module's one-time background backfill (admitPaidFallbackV3
 // schedules it on first use, as in the TS); each lets it settle before its loop ends

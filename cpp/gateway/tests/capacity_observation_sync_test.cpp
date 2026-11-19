@@ -2,7 +2,7 @@
 //        src/provider/capacity_analytics.cpp src/provider/capacity_parse.cpp src/provider/capacity_contract.cpp
 //        src/http.cpp src/kv.cpp src/config.cpp src/release.cpp src/utils.cpp tests/helpers/counting_kv.cpp
 //        src/admin/chart_source_proxy.cpp src/auth/local_admin.cpp src/auth/relay.cpp src/provider/cerebras_rate_limits.cpp
-//        src/storage/kv.cpp src/storage/sqlite_readonly.cpp src/storage/native_addon.cpp src/storage/native_kv.cpp
+//        src/storage/kv.cpp src/storage/sqlite_readonly.cpp src/storage/native_kv.cpp
 // Port of tests/capacity-observation-sync.test.ts, including real proxy-to-ingest sync.
 #include "uos/admin/capacity_observation_sync.hpp"
 #include "uos/admin/chart_source_proxy.hpp"

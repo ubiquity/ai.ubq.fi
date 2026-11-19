@@ -3,7 +3,7 @@
 //        src/sentinel/replay_retention_schema.cpp src/sentinel/replay_model.cpp src/sentinel/replay_envelope.cpp
 //        src/sentinel/replay_observation.cpp src/sentinel/upstream_capture.cpp src/sentinel/replay_limits.cpp src/sentinel/incident_outbox.cpp
 //        src/request.cpp src/utils.cpp src/config.cpp src/release.cpp src/kv.cpp src/storage/key_compatibility.cpp src/storage/kv.cpp
-//        src/storage/native_addon.cpp src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp src/storage/value_compatibility.cpp
+// src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp src/storage/value_compatibility.cpp
 // Port of tests/sentinel-replay-staging.test.ts. Storage is `openKv(":memory:")`: rt::MemoryKv. The TS Proxies over the
 // store and its atomic operations are an rt::ForwardingKv / rt::ForwardingAtomicOperation pair that records the same
 // calls; `assert.rejects(p, (error) => error === injected)` checks the rejection's identity (EXPECT_REJECTS_REASON).

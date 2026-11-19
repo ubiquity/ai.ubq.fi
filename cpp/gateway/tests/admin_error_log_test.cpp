@@ -3,7 +3,7 @@
 //        src/sentinel/replay_model.cpp src/sentinel/replay_envelope.cpp src/sentinel/replay_observation.cpp src/sentinel/upstream_capture.cpp
 //        src/sentinel/replay_limits.cpp src/sentinel/incident_outbox.cpp src/request.cpp src/utils.cpp src/config.cpp src/release.cpp
 //        src/kv.cpp src/http.cpp src/auth/relay.cpp src/provider/cerebras_rate_limits.cpp src/storage/key_compatibility.cpp
-//        src/storage/kv.cpp src/storage/native_addon.cpp src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp
+//        src/storage/kv.cpp src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp
 //        src/storage/value_compatibility.cpp
 // Port of tests/admin-error-log.test.ts. The TS fakes are objects with only the members a case calls (`set`, or
 // `list`); here they are rt::Kv subclasses whose other members throw, as calling a missing member would.

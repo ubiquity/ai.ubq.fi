@@ -9,7 +9,7 @@ summarizes platform evidence and how to try it. [TypeScript modules](https://git
 
 | Layer          | Responsibility                                                                                                                                                                                                         | Start here                                                                                    |
 | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| Executables    | `uos-gateway` starts the service. `uos-kv-convert` and `uos-kv-proof` are offline data tools with their own entry points.                                                                                              | [entrypoints/](../entrypoints/)                                                               |
+| Executables    | `uos-gateway` starts the service with explicit package and state bindings.                                                                                              | [entrypoints/](../entrypoints/)                                                               |
 | Startup        | Reads the private launch manifest, verifies the package and host dependencies, applies Linux confinement, opens the marked store and starts the application.                                                           | [runtime/startup.cpp](../runtime/startup.cpp)                                                 |
 | Server runtime | Adapts TCP and HTTP to application requests, streams responses, upgrades WebSockets and reports the outcome of socket writes.                                                                                          | [src/runtime/](../src/runtime/), [src/serve.cpp](../src/serve.cpp)                            |
 | Application    | Owns routes, authentication, schemas, provider selection, quotas, admin controls and persistence policy. Headers in `include/uos/` mirror the implementation tree. Many paths and names follow the TypeScript modules. | [src/](../src/), [include/uos/](../include/uos/), [PORT-MANIFEST.json](../PORT-MANIFEST.json) |
@@ -141,6 +141,4 @@ All four Linux ARM64 Release shards passed 450 binaries and 5,113 cases. ASan, U
 binaries and 1,989 cases, including every runtime binary and the HTTP, WebSocket, passkey, storage and confinement
 fixtures. [Final integration](findings/cppgw-integrate-f2-20261118.md)
 
-The paired package conformance runner launches the native and Bun gateways against the same loopback mocks and checks
-wire responses and durable readback across restart. It found agreement on all 186 cases and two failures of the
-independent validation assertions on both runtimes. [Conformance](CONFORMANCE.md)
+The paired comparison with the TypeScript gateway lives at [commit `ca045a83ebaab6c50c20567d1a825638abac0891`](https://github.com/ubiquity/ai.ubq.fi/tree/ca045a83ebaab6c50c20567d1a825638abac0891/cpp/gateway/conformance).

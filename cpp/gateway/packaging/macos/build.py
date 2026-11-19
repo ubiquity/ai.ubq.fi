@@ -33,7 +33,7 @@ LIBRARIES = {
     "zstd": ("libzstd.a",),
     "zlib": ("libz.a",),
 }
-EXECUTABLES = ("uos-gateway", "uos-kv-convert", "uos-kv-proof")
+EXECUTABLES = ("uos-gateway",)
 
 
 def capture(*command, env=None):
@@ -110,7 +110,7 @@ def build(work, output, jobs):
     sqlite, sqlite_obj = prepare_sqlite(work, env)
     build_root = work / "build"
     run("/bin/bash", GATEWAY / "tools/macos-build.sh", "--build-root", build_root, "--sqlite-prefix", sqlite,
-        "--jobs", str(jobs), "--suite", "rt", "--require-clean", env=env)
+        "--jobs", str(jobs), "--suite", "rt", "--require-clean", "--release-commit", commit, env=env)
     (receipt,) = (build_root / "runs").glob("*/provenance.json")
     profile = json.loads(receipt.read_text())
     identity = profile["source_identity"]
@@ -144,8 +144,9 @@ def build(work, output, jobs):
         notice = GATEWAY / "docs/licenses" / library.name / "NOTICE"
         if library.name in ("simdjson", "simdutf") or notice.is_file():
             shutil.copyfile(notice, destination / "NOTICE")
-    (licenses / "sqlite").mkdir()
-    shutil.copyfile(GATEWAY / "packaging/SQLITE-LICENSE", licenses / "sqlite/LICENSE")
+    for library in ("sqlite", "denokv"):
+        (licenses / library).mkdir()
+        shutil.copyfile(GATEWAY / "packaging" / f"{library.upper()}-LICENSE", licenses / library / "LICENSE")
 
     env["SDKROOT"] = profile["sdk"]
     flags = [*profile["flags"], f"-ffile-prefix-map={work}=."]
@@ -169,6 +170,9 @@ def build(work, output, jobs):
         minimum_os[name], = (line.split()[1] for line in capture("xcrun", "vtool", "-show-build", target, env=env).splitlines()
                              if line.split()[:1] == ["minos"])
         run("/usr/bin/codesign", "--verify", "--strict", target, env=env)
+        reported = capture(str(target), "--version", env=env)
+        if reported != f"uos-gateway {commit}":
+            raise ValueError(f"{name} does not report the packaged Git commit: {reported}")
 
     assets = capture("git", "ls-files", "-z", "--", "static/", "favicon.png", "favicon-32.png", env=env)
     for relative in assets.rstrip("\0").split("\0"):

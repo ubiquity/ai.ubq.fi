@@ -22,7 +22,7 @@
 // src/provider/lithos_rate_limits.cpp src/provider/claude_capacity_history.cpp src/provider/capacity_rollups.cpp src/authority/native_codex_evaluation.cpp
 // src/codex/native_auth_transport.cpp src/cache/prompt_analytics_read.cpp src/cache/prompt_analytics_core.cpp src/provider/anthropic_response_wire.cpp
 // src/paid_fallback/ledger_stats.cpp src/codex/experiment.cpp src/auth/relay.cpp src/provider/claude_code.cpp
-// src/runtime/websocket.cpp src/lib/jev_compaction/codex_items.cpp src/storage/native_addon.cpp src/authority/native_codex_429.cpp
+// src/runtime/websocket.cpp src/lib/jev_compaction/codex_items.cpp src/authority/native_codex_429.cpp
 // src/codex/account_routing.cpp src/metered_quota.cpp src/storage/native_kv.cpp src/provider/anthropic_responses.cpp
 // src/codex/routing_serial.cpp src/codex/banked_reset_provider.cpp src/authority/native_codex.cpp src/codex/routing_evaluation.cpp
 // src/codex/reset_settings.cpp src/lib/jev_compaction/compact.cpp src/lib/jev_compaction/request.cpp src/codex/overage_settings.cpp

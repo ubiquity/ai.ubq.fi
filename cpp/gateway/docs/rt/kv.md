@@ -231,9 +231,8 @@ undefined member to each object):
 | `storedView` in src/paid_fallback/rollups.cpp                                                                                                                                               | as runtime_config                                                                                                                                                             | isPaidFallbackUsageRollup (113, 0); the default is exact too                                                                                                                                         |
 | `storedView` in src/metered_quota.cpp                                                                                                                                                       | `{.undefinedMember = omit, .undefinedElement = null, .hole = emptyObject, .topLevelUndefined = null, .kvU64Members = false, .typedArrayMembers = false}`                      | isMeteredQuotaState (145, 0; the runtime_config form would differ in 4: `x === undefined \|\| ...` optional members); the default is exact too                                                       |
 
-Before choosing options for a new guard, read it for presence tests and `=== undefined`; when it
-has both, run the same differential (scratch: a bun script importing the TS guard, the stored
-value through `deserialize(serialize(v))`, and the view emulated in JS).
+For a new guard, check how it distinguishes an absent member from a member with an undefined value.
+The paired comparison with the TypeScript gateway lives at [commit `ca045a83ebaab6c50c20567d1a825638abac0891`](https://github.com/ubiquity/ai.ubq.fi/tree/ca045a83ebaab6c50c20567d1a825638abac0891/cpp/gateway/conformance).
 
 The other operations: `rt::kvJsonStringify(v[, space | gap])` is JSON.stringify (std::nullopt for
 undefined; typed arrays print index members, Date its toJSON, Map/Set/RegExp/Error/buffers `{}`,

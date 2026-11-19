@@ -7,7 +7,7 @@
 //        src/codex/banked_reset.cpp src/runtime_config.cpp src/release.cpp src/authority/native_paid.cpp
 //        src/models/codex_models.cpp src/storage/kv.cpp src/http.cpp src/storage/sqlite_readonly.cpp
 //        src/defaults.cpp src/storage/native_kv.cpp src/codex/banked_reset_provider.cpp src/codex/reset_settings.cpp
-//        src/provider/cerebras_rate_limits.cpp src/auth/relay.cpp src/storage/native_addon.cpp src/codex/auth.cpp
+//        src/provider/cerebras_rate_limits.cpp src/auth/relay.cpp src/codex/auth.cpp
 //        src/codex/capacity_routing.cpp src/authority/native_codex_contracts.cpp src/authority/native_codex_capacity.cpp src/codex/routing_state.cpp
 //        src/codex/routing_mutations.cpp src/authority/native_codex_mutations.cpp src/authority/native_codex_evaluation.cpp src/codex/native_auth.cpp
 //        src/codex/external_auth.cpp src/codex/rate_limit_429.cpp src/provider/health.cpp src/authority/native_codex_429.cpp

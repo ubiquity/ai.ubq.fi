@@ -6,7 +6,7 @@
 // src/codex/quota.cpp src/auth/passport_sessions.cpp src/provider/cerebras_rate_limits.cpp src/authority/native_api_key_policy.cpp
 // src/api_keys.cpp src/auth/relay.cpp src/authority/native_paid_policy.cpp src/kv.cpp
 // src/config.cpp src/storage/kv.cpp src/storage/sqlite_readonly.cpp src/storage/native_kv.cpp
-// src/release.cpp src/storage/native_addon.cpp
+// src/release.cpp
 #include "uos/handler/http.hpp"
 #include "uos/authority/native_contracts.hpp"
 #include "uos/rt/json.hpp"

@@ -24,7 +24,7 @@
 // src/provider/surplus.cpp src/provider/surplus_claude_chat_request.cpp src/provider/surplus_claude_request.cpp src/quota_projection.cpp src/recent_model_context.cpp src/release.cpp src/request.cpp src/request_policy.cpp src/responses_attempts.cpp src/responses_buffered.cpp
 // src/responses_failover_stream.cpp src/responses_handler.cpp src/responses_native_headers.cpp src/responses_request.cpp src/responses_stream.cpp src/runtime/http_early_sse.cpp src/runtime/http_tasks.cpp src/runtime/websocket.cpp src/runtime_config.cpp src/sentinel/incident_outbox.cpp
 // src/sentinel/replay_admin.cpp src/sentinel/replay_envelope.cpp src/sentinel/replay_limits.cpp src/sentinel/replay_model.cpp src/sentinel/replay_observation.cpp src/sentinel/replay_read.cpp src/sentinel/replay_retention.cpp src/sentinel/replay_retention_bootstrap.cpp src/sentinel/replay_retention_metadata.cpp src/sentinel/replay_retention_schema.cpp
-// src/sentinel/replay_store.cpp src/sentinel/upstream_capture.cpp src/static.cpp src/storage/kv.cpp src/storage/native_addon.cpp src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp src/systemone/handlers.cpp src/types.cpp src/upstream_wire.cpp
+// src/sentinel/replay_store.cpp src/sentinel/upstream_capture.cpp src/static.cpp src/storage/kv.cpp src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp src/systemone/handlers.cpp src/types.cpp src/upstream_wire.cpp
 // src/utils.cpp tests/helpers/counting_kv.cpp
 // Original handler ingress cases use the real router; existing direct health cases remain component evidence.
 #include "uos/rt/fs.hpp"
@@ -32,6 +32,7 @@
 #include <array>
 #include "uos/handler/index.hpp"
 #include "uos/config.hpp"
+#include "uos/release.hpp"
 #include "uos/kv.hpp"
 #include "uos/rt/clock.hpp"
 #include "uos/rt/env.hpp"
@@ -91,6 +92,7 @@ namespace {
 #include "uos/health.hpp"
 #include "uos/codex/auth.hpp"
 #include "uos/config.hpp"
+#include "uos/release.hpp"
 #include "uos/kv.hpp"
 #include "uos/metered_quota.hpp"
 #include "uos/provider/health.hpp"
@@ -221,7 +223,13 @@ ASYNC_TEST("provider health serializes success to 429 to success transitions") {
   const std::function<double()> now = [] { return 3001.0; }; AWAIT(health, ph::getCodexProviderHealth("ordered-account", now)); EXPECT_EQ(health.state, "healthy"); EXPECT_EQ(health.last_observed_at_ms, std::optional(3000.0)); EXPECT_EQ(health.last_success_at_ms, std::optional(3000.0)); EXPECT_EQ(health.last_429_at_ms, std::optional(2000.0)); EXPECT_EQ(commits(scope), 3u);
 }
 ASYNC_TEST("public health is passive release provenance with zero upstream and KV work") {
-  Scope scope; auto response = h::handleHealth(); const auto payload = co_await response.json(); EXPECT_EQ(response.status(), 200); EXPECT_EQ(rt::getString(payload, "status"), std::optional<std::string_view>("available")); EXPECT(rt::getString(object(payload, "release"), "git_sha").has_value()); EXPECT(rt::getString(object(payload, "release"), "deployment_id").has_value()); EXPECT(scope.store->commands.empty());
+  Scope scope; auto response = h::handleHealth(); const auto payload = co_await response.json(); EXPECT_EQ(response.status(), 200); EXPECT_EQ(rt::getString(payload, "status"), std::optional<std::string_view>("available")); EXPECT(rt::getString(object(payload, "release"), "git_sha").has_value());
+    EXPECT_EQ(*rt::getString(object(payload, "release"), "git_sha"), std::string_view(uos::config::runtimeGitSha()));
+#ifdef UOS_PACKAGE_GIT_COMMIT
+    EXPECT_EQ(*rt::getString(object(payload, "release"), "git_sha"), std::string_view(UOS_PACKAGE_GIT_COMMIT));
+    EXPECT(*rt::getString(object(payload, "release"), "git_sha") != std::string_view("unknown"));
+#endif
+    EXPECT(rt::getString(object(payload, "release"), "deployment_id").has_value()); EXPECT(scope.store->commands.empty());
 }
 ASYNC_TEST("public health HEAD is release liveness without a response body") {
   T2IngressScope ingress;

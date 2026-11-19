@@ -1,15 +1,12 @@
 #include "uos/runtime/permissions_linux.hpp"
 
 #include "uos/provider/gemini.hpp"
-#include "uos/rt/crypto.hpp"
 #include "uos/rt/error.hpp"
 #include "uos/rt/fs.hpp"
-#include "uos/rt/json.hpp"
 #include "uos/rt/number.hpp"
 #include "uos/rt/ordered.hpp"
 #include "uos/rt/prelude.hpp"
 #include "uos/rt/process.hpp"
-#include "uos/rt/regex.hpp"
 #include "uos/rt/string.hpp"
 
 #include <algorithm>
@@ -48,7 +45,6 @@ namespace uos::runtime::permissions_linux {
     constexpr std::uint64_t scopeSignal = 1ULL << 1;
     constexpr std::uint32_t restrictThreadSync = 1U << 3;
 
-    // The Node-API error the addon throws: an Error whose `code` is LINUX_CONFINEMENT_UNAVAILABLE.
     struct NativeConfinementError : rt::JsError {
       std::string code;
       NativeConfinementError(std::string message_, std::string code_) : rt::JsError(std::move(message_)), code(std::move(code_)) {}
@@ -70,9 +66,7 @@ namespace uos::runtime::permissions_linux {
     };
 
 #if defined(__linux__) && defined(__aarch64__)
-    // Built-in confinement includes the reduced-ABI and CLI profiles. The packaged
-    // C addon remains a separate artifact. See docs.kernel.org/userspace-api/{landlock,seccomp_filter}.html.
-    // The asm-generic numbers the release artifact compiles in from current kernel headers.
+    // Include syscall numbers missing from older ARM64 distribution headers.
 #ifndef __NR_fchmodat2
 #define __NR_fchmodat2 452
 #endif
@@ -232,50 +226,12 @@ namespace uos::runtime::permissions_linux {
     }
 #endif
 
-    // The addon's exports as `process.dlopen` would expose them.
-    NativePermissions builtInNativePermissions() {
+    NativePermissions linkedPermissions() {
 #if defined(__linux__) && defined(__aarch64__)
       return NativePermissions{nativeSupport, nativeReadonlyMount, nativeEnforce};
 #else
-      return NativePermissions{};
+      throw rt::JsError("Linux confinement requires Linux ARM64");
 #endif
-    }
-
-    rt::OrderedMap<std::string, NativePermissions>& loaded() {
-      static rt::OrderedMap<std::string, NativePermissions> cache;
-      return cache;
-    }
-
-    LinuxPermissionsArtifact defaultArtifact() {
-      const auto directory = std::filesystem::path(rt::process::execPath()).parent_path() / ".uos-permissions";
-      const auto manifest = (directory / "manifest.json").native();
-      const rt::fs::Stats info = rt::fs::lstatSync(manifest);
-      if (!info.isFile() || info.isSymbolicLink()) throw rt::JsError("Native confinement manifest is not a regular file");
-      const json::value document = rt::jsonParse(rt::fs::readFileSync(manifest, "utf8"));
-      const json::object* object = document.if_object();
-      const json::value* path = object != nullptr ? rt::get(*object, "path") : nullptr;
-      const json::value* architecture = object != nullptr ? rt::get(*object, "architecture") : nullptr;
-      const json::value* sha256 = object != nullptr ? rt::get(*object, "sha256") : nullptr;
-      if (document.is_null() || !(document.is_object() || document.is_array()) || path == nullptr || !path->is_string() || path->get_string() != "linux-arm64.node" ||
-          architecture == nullptr || !architecture->is_string() || architecture->get_string() != "arm64" || sha256 == nullptr || !sha256->is_string())
-        throw rt::JsError("Native confinement manifest is invalid");
-      return LinuxPermissionsArtifact{(directory / "linux-arm64.node").native(), std::string(sha256->get_string())};
-    }
-
-    NativePermissions nativeLibrary(const std::optional<LinuxPermissionsArtifact>& artifact) {
-      if (rt::process::platform != "linux" || rt::process::arch != "arm64") throw rt::JsError("Linux confinement requires Linux ARM64");
-      const LinuxPermissionsArtifact selected = artifact ? *artifact : defaultArtifact();
-      static const rt::Regex SHA256("^[0-9a-f]{64}$");
-      const rt::fs::Stats info = rt::fs::lstatSync(selected.path);
-      if (!info.isFile() || info.isSymbolicLink() || !SHA256.test(selected.sha256)) throw rt::JsError("Native confinement artifact is invalid");
-      if (rt::crypto::createHash("sha256").update(rt::fs::readFileSync(selected.path)).digest("hex") != selected.sha256)
-        throw rt::JsError("Native confinement artifact integrity check failed");
-      const std::string key = rt::fs::realpathSync(selected.path) + ":" + selected.sha256;
-      if (const NativePermissions* cached = loaded().get(key)) return *cached;
-      const NativePermissions api = builtInNativePermissions();
-      if (!api.support || !api.readonlyMount || !api.enforce) throw rt::JsError("Native confinement interface is invalid");
-      loaded().set(key, api);
-      return api;
     }
 
     bool beneath(const std::string& parent, const std::string& child) {
@@ -416,12 +372,12 @@ namespace uos::runtime::permissions_linux {
   std::vector<sock_filter> detail::seccompProcessFilter(bool allowChildProcess) { return processFilter(allowChildProcess); }
 #endif
 
-  LinuxPermissionsSupport getLinuxPermissionsSupport(const std::optional<LinuxPermissionsArtifact>& artifact) {
-    return reportedSupport(nativeLibrary(artifact).support());
+  LinuxPermissionsSupport getLinuxPermissionsSupport() {
+    return reportedSupport(linkedPermissions().support());
   }
 
-  static LinuxPermissionsReceipt apply(const LinuxPermissions& permissions, const std::optional<LinuxPermissionsArtifact>& artifact, std::optional<int> abiCap) {
-    const NativePermissions native = nativeLibrary(artifact);
+  static LinuxPermissionsReceipt enforcePermissions(const LinuxPermissions& permissions, std::optional<int> abiCap) {
+    const NativePermissions native = linkedPermissions();
     const NativeSupport support = native.support();
     const int abi = abiCap ? std::min(*abiCap, support.landlockAbi) : support.landlockAbi;
     const auto policy = detail::landlockPolicy(abi, support.seccomp, permissions.allowReducedConfinement.has_value());
@@ -456,11 +412,11 @@ namespace uos::runtime::permissions_linux {
     return receipt;
   }
 
-  LinuxPermissionsReceipt applyLinuxPermissions(const LinuxPermissions& permissions, const std::optional<LinuxPermissionsArtifact>& artifact) {
-    return apply(permissions, artifact, std::nullopt);
+  LinuxPermissionsReceipt applyLinuxPermissions(const LinuxPermissions& permissions) {
+    return enforcePermissions(permissions, std::nullopt);
   }
 
-  LinuxPermissionsReceipt detail::applyLinuxPermissionsWithAbiCap(const LinuxPermissions& permissions, const LinuxPermissionsArtifact& artifact, int abiCap) {
-    return apply(permissions, artifact, abiCap);
+  LinuxPermissionsReceipt detail::applyLinuxPermissionsWithAbiCap(const LinuxPermissions& permissions, int abiCap) {
+    return enforcePermissions(permissions, abiCap);
   }
 }

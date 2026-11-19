@@ -26,7 +26,7 @@
 // src/provider/selection.cpp src/provider/surplus.cpp src/provider/surplus_claude_chat_request.cpp src/provider/surplus_claude_request.cpp src/release.cpp
 // src/responses_stream.cpp src/runtime/http.cpp src/runtime/http_body.cpp src/runtime/http_early_sse.cpp src/runtime/http_tasks.cpp
 // src/runtime/http_upgrade.cpp src/runtime/websocket.cpp src/runtime_config.cpp src/storage/key_compatibility.cpp src/storage/kv.cpp
-// src/storage/native_addon.cpp src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp src/storage/value_compatibility.cpp src/types.cpp
+// src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp src/storage/value_compatibility.cpp src/types.cpp
 // src/utils.cpp src/quota_projection.cpp src/kernel/usage.cpp src/kernel/quota_v2.cpp src/authority/native_kernel.cpp
 // src/admin/kernel.cpp src/kernel/policy_queue.cpp src/admin/api_keys.cpp src/api_key_policy.cpp src/request.cpp
 // src/authority/native_api_key.cpp src/admin/api_key_audit.cpp src/authority/native_api_key_audit.cpp src/authority/native_api_key_policy.cpp src/kernel/quota_write.cpp

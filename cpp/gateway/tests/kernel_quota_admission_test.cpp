@@ -30,7 +30,7 @@
 // src/embeddings/voyage.cpp src/sentinel/upstream_capture.cpp src/embeddings/ledger.cpp src/systemone/handlers.cpp src/provider/openrouter_request_controls.cpp src/deepseek/handlers.cpp src/provider/lithos_handlers.cpp src/provider/cerebras_responses.cpp
 // src/kernel/quota_reserve.cpp src/chat/completions.cpp src/provider/lithos_streams.cpp src/deepseek/chat_projection.cpp src/embeddings/handlers.cpp src/deepseek/responses_stream.cpp src/provider/openrouter_handlers.cpp src/provider/openrouter_streams.cpp
 // src/deepseek/stream.cpp src/lib/jev_compaction/codex_items.cpp src/paid_fallback/routing.cpp src/deepseek/responses.cpp src/deepseek/forwarded_payload_policy.cpp src/codex/responses_error.cpp src/deepseek/responses_payload.cpp src/sentinel/replay_limits.cpp
-// src/provider/stream_relay.cpp src/storage/native_addon.cpp src/lib/jev_compaction/state.cpp src/provider/openrouter_web_tools.cpp src/storage/native_kv.cpp src/paid_fallback/claude_code_route.cpp src/lib/jev_compaction/types.cpp src/codex/index.cpp
+// src/provider/stream_relay.cpp src/lib/jev_compaction/state.cpp src/provider/openrouter_web_tools.cpp src/storage/native_kv.cpp src/paid_fallback/claude_code_route.cpp src/lib/jev_compaction/types.cpp src/codex/index.cpp
 // src/lib/jev_compaction/compact.cpp src/lib/jev_compaction/request.cpp src/codex/responses_operations.cpp src/codex/responses_runners.cpp src/codex/responses_state.cpp
 // Port of the single original tests/kernel-quota-admission.test.ts integration; all providers and authority are synthetic.
 #include "tests/helpers/counting_kv.hpp"

@@ -10,8 +10,6 @@
 #include "uos/rt/clock.hpp"
 #include "uos/rt/console.hpp"
 #include "uos/rt/process.hpp"
-#include "uos/runtime/native_kv_bootstrap.hpp"
-#include "uos/storage/native_addon.hpp"
 
 #include <optional>
 #include <utility>
@@ -152,42 +150,13 @@ namespace uos::serve {
   }
 
   namespace {
-    rt::Task<void> serveConfigured(std::string hostname, int port) {
-      const auto migration = initializeModule().catch_(rt::ignoreRejection);
-      runtime::http::ServeHttpOptions options{.hostname = std::move(hostname), .port = static_cast<double>(port), .onListen = application.onListen, .upgrade = application.upgrade,
-                                             .applicationChatBodyRejection = true};
-      const auto server = runtime::http::serveHttp(options, application.fetch);
-      rt::process::Listener shutdown([server] {
-        server.shutdown().catch_([](rt::Reason) { rt::console::error("[ai.ubq.fi] Development HTTP shutdown failed"); });
-      });
-      {
-        auto removeListeners = rt::scopeExit([shutdown] {
-          rt::process::removeListener("SIGINT", shutdown);
-          rt::process::removeListener("SIGTERM", shutdown);
-        });
-        rt::process::once("SIGINT", shutdown);
-        rt::process::once("SIGTERM", shutdown);
-        co_await server.ready.wait();
-        co_await server.finished.wait();
-        co_await migration.wait();
-        rt::Promise<void> drained(shutdownOptionalTelemetry());
-        co_await drained.wait();
-        auto kvPending = kv::getKv();
-        auto store = co_await kvPending.wait();
-        if (store) store->close();
-      }
-      rt::process::exit(0);
-    }
-
-    // The native launcher follows scripts/serve-vps.ts, including its failure cleanup.
     rt::Task<void> servePrepared(std::string hostname, int port) {
-      if (!storage::native_addon::nativeKvBackendIsPrepared()) throw rt::JsError("Native KV backend must be prepared before starting the gateway");
-      const std::vector<std::string> args;
-      rt::Promise<void> configured(configureLoopbackServeRuntime(args));
-      co_await configured.wait();
       auto opening = kv::getKv();
       auto store = co_await opening.wait();
       if (!store) throw rt::JsError("Native KV must be initialized before starting the gateway");
+      const std::vector<std::string> args;
+      rt::Promise<void> configured(configureLoopbackServeRuntime(args));
+      co_await configured.wait();
       rt::Reason failure;
       std::optional<rt::process::Listener> shutdown;
       std::optional<rt::Promise<void>> migration;
@@ -229,18 +198,5 @@ namespace uos::serve {
 
   rt::Task<void> importMetaMain(const ServeStartupOptions& options) {
     return servePrepared(options.hostname, options.port);
-  }
-
-  rt::Task<void> importMetaMain() {
-    auto prepared = runtime::native_kv_bootstrap::prepareNativeKvForDevelopment();
-    co_await prepared.wait();
-    const auto& argv = rt::process::argv();
-    std::vector<std::string> args(argv.begin() + static_cast<std::ptrdiff_t>(std::min<std::size_t>(2, argv.size())), argv.end());
-    rt::Promise<void> configured(configureLoopbackServeRuntime(args));
-    co_await configured.wait();
-
-    const std::string hostname = "127.0.0.1";
-    auto serving = serveConfigured(hostname, 8000);
-    co_await std::move(serving);
   }
 }

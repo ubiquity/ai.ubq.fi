@@ -3,7 +3,7 @@
 //        src/sentinel/replay_model.cpp src/sentinel/replay_envelope.cpp src/sentinel/replay_observation.cpp
 //        src/sentinel/upstream_capture.cpp src/sentinel/replay_limits.cpp src/sentinel/incident_outbox.cpp src/request.cpp
 //        src/utils.cpp src/config.cpp src/release.cpp src/kv.cpp src/storage/key_compatibility.cpp src/storage/kv.cpp
-//        src/storage/native_addon.cpp src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp
+// src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp
 //        src/storage/value_compatibility.cpp
 // Differential cases for src/sentinel/replay-retention-metadata.ts. Every case of its direct test,
 // tests/sentinel-replay-retention-metadata.test.ts, drives src/sentinel/replay-retention.ts (admission, pruning and

@@ -1,8 +1,8 @@
 // Links: tests/jev_codex_smoke_test.cpp
 // src/provider/gemini.cpp src/admin/gemini_quota.cpp
-//   src/models/catalog.cpp src/input_normalization.cpp src/provider/selection.cpp src/provider/surplus.cpp src/models/metadata.cpp src/utils.cpp src/authority/native_api_key_policy.cpp src/provider/lithos.cpp src/storage/native_addon.cpp
+//   src/models/catalog.cpp src/input_normalization.cpp src/provider/selection.cpp src/provider/surplus.cpp src/models/metadata.cpp src/utils.cpp src/authority/native_api_key_policy.cpp src/provider/lithos.cpp
 //   src/models/codex_models_fetch.cpp src/authority/native_api_key.cpp src/models/codex_models_whitelist.cpp src/types.cpp src/codex/auth_refresh.cpp src/provider/openrouter.cpp src/http.cpp src/request_policy.cpp src/runtime_config.cpp
-//   src/runtime/native_kv_bootstrap.cpp src/provider/anthropic_chat_responses.cpp src/deepseek/index.cpp src/models/codex_models.cpp src/handler/admission.cpp src/codex/dispatch.cpp src/provider/cerebras.cpp src/api_keys.cpp src/codex/auth.cpp
+// src/provider/anthropic_chat_responses.cpp src/deepseek/index.cpp src/models/codex_models.cpp src/handler/admission.cpp src/codex/dispatch.cpp src/provider/cerebras.cpp src/api_keys.cpp src/codex/auth.cpp
 //   src/provider/claude_code_credentials.cpp src/agent_messages.cpp src/models/openrouter_models.cpp src/codex/external_auth.cpp src/provider/anthropic_response_wire.cpp src/catalog/index.cpp src/catalog/models.cpp src/provider/surplus_claude_request.cpp src/runtime/http.cpp
 //   src/provider/capacity_events.cpp src/runtime/http_body.cpp src/provider/claude_code_models.cpp src/config.cpp src/provider/health.cpp src/auth/relay.cpp src/auth/index.cpp src/catalog/store.cpp src/provider/anthropic_chat_stream.cpp
 //   src/inference_admission.cpp src/recent_model_context.cpp src/release.cpp src/handler/serve_handler.cpp src/kernel/attestation.cpp src/defaults.cpp src/catalog/types.cpp src/bounded_response_body.cpp src/kernel/quota_reservations.cpp

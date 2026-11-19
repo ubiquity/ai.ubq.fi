@@ -15,7 +15,7 @@
 //   src/provider/claude_code_accounts.cpp src/provider/claude_code_credentials.cpp src/provider/claude_code_quota.cpp src/provider/claude_code_usage_schema.cpp
 //   src/provider/health.cpp src/provider/selection.cpp src/release.cpp src/runtime/http.cpp
 //   src/runtime/http_body.cpp src/runtime/http_early_sse.cpp src/runtime/http_tasks.cpp src/runtime/http_upgrade.cpp
-//   src/runtime/websocket.cpp src/storage/key_compatibility.cpp src/storage/kv.cpp src/storage/native_addon.cpp
+//   src/runtime/websocket.cpp src/storage/key_compatibility.cpp src/storage/kv.cpp
 //   src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp src/storage/value_compatibility.cpp src/types.cpp
 //   src/utils.cpp src/live/upstream.cpp src/handler/http.cpp src/authority/native_contracts.cpp
 //   src/auth/passport.cpp src/api_key_policy.cpp src/authority/native_api_key.cpp src/codex/quota.cpp

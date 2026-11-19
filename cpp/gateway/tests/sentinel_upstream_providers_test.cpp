@@ -23,7 +23,7 @@
 //        src/codex/responses_runners.cpp src/deepseek/handlers.cpp src/openai_schema.cpp src/codex/responses_state.cpp src/codex/quota.cpp src/live/calls.cpp src/provider/openrouter_streams.cpp src/provider/openrouter_request_controls.cpp src/storage/native_kv.cpp src/runtime/http_tasks.cpp src/chat/completions.cpp
 //        src/codex/supervisor_transport.cpp src/provider/anthropic_chat_stream.cpp src/deepseek/forwarded_payload_policy.cpp src/lib/jev_compaction/state.cpp src/inference_admission.cpp src/codex/supervisor_log.cpp src/deepseek/context_admission_failure.cpp src/live/routes.cpp src/responses_buffered.cpp src/recent_model_context.cpp
 //        src/lib/jev_compaction/codex_items.cpp src/codex/native_auth_transport.cpp src/authority/native_codex_429.cpp src/deepseek/chat_projection.cpp src/codex/responses_error.cpp src/paid_fallback/claude_code_route.cpp src/deepseek/responses_stream.cpp src/deepseek/stream.cpp src/lib/jev_compaction/compact.cpp src/lib/jev_compaction/types.cpp
-//        src/runtime/http_early_sse.cpp src/provider/openrouter_web_tools.cpp src/runtime/websocket.cpp src/storage/native_addon.cpp src/lib/jev_compaction/request.cpp
+//        src/runtime/http_early_sse.cpp src/provider/openrouter_web_tools.cpp src/runtime/websocket.cpp src/lib/jev_compaction/request.cpp
 // Port of tests/sentinel-upstream-providers.test.ts: the nine recorded-transport cases, seven direct provider/
 // Codex cases, and the current-source assertions of the historical framing case. The historical TS archive
 // subprocess comparison is deferred; it needs its original TypeScript runtime and sandboxed historical harness.

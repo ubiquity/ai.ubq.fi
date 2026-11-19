@@ -8,7 +8,6 @@
     "packageRoot",
     "stateRoot",
     "packageManifestSha256",
-    "nativeKvProvenanceSha256",
     "hostname",
     "port"
   ],
@@ -17,7 +16,6 @@
     "packageRoot": { "type": "string", "pattern": "^/" },
     "stateRoot": { "type": "string", "pattern": "^/" },
     "packageManifestSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-    "nativeKvProvenanceSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "hostname": { "const": "127.0.0.1" },
     "port": { "type": "integer", "minimum": 0, "maximum": 65535, "not": { "enum": [7999, 8000] } },
     "fixture": {

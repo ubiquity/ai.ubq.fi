@@ -462,9 +462,7 @@ Keep application-specific field order, coercion, status, error code and log shap
   `InterposeLedgerReads`, `HoldPoint`) live in `tests/sentinel_replay_bootstrap_retry_test.cpp`:
   the replay-retention/replay-store porter extends that file, and ports
   `tests/helpers/sentinel-kv-stub.ts`.
-- ORACLE TIP: the TS can run under bun on the REAL native `:memory:` KV: copy the pinned
-  native-kv artifact to your scratch and use a preload that calls `prepareNativeKvBackend`
-  (see /tmp/claude-1002/wave/w04c2/progress.md for how). Prefer this to fake KVs when recording.
+- The paired comparison with the TypeScript gateway lives at [commit `ca045a83ebaab6c50c20567d1a825638abac0891`](https://github.com/ubiquity/ai.ubq.fi/tree/ca045a83ebaab6c50c20567d1a825638abac0891/cpp/gateway/conformance).
 - More GCC 12.2 forms that fail inside `co_await`: a string literal bound to a
   `const std::string&` parameter; coroutines taking aggregates by value need a non-coroutine
   wrapper taking `const&`.
@@ -594,8 +592,7 @@ co_await p.wait();`. A bare `rt::Fetch` call returns a lazy Task whose body woul
 - The JSON conversions declared in `capacity_events.hpp` are DEFINED in `capacity_contract.cpp`.
 - Between tests: `resetProviderHealthThrottleForTest()`, `resetProviderSelectionCacheForTest()`.
   The default sample trigger's 15-minute debounce state persists for the life of a binary.
-- Bun oracle isolation, strongest form: `env -i PATH=... HOME=<empty dir> bun run --no-env-file`.
-  C++: `rt::env::ScopedEnvironment({{"HOME", "/nonexistent/..."}})`.
+- For scoped fixture homes in C++, use `rt::env::ScopedEnvironment({{"HOME", "/nonexistent/..."}})`.
 - HAZARD: a `ForwardingKv` subclass that OWNS its inner store must create it in an earlier
   base class (see `OwnedInnerKv` in tests/provider_capacity_differential_support.hpp);
   `ForwardingKv(*member)` binds garbage because members are built after bases.

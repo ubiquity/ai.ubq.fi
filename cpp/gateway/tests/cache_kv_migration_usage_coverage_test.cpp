@@ -4,7 +4,7 @@
 //        src/cache/kv_migration_paid_fallback.cpp src/kernel/quota_reservations.cpp src/authority/native_api_key_policy.cpp src/kv.cpp
 //        src/api_keys.cpp src/authority/native_paid_policy.cpp src/storage/kv.cpp src/authority/native_kernel_contracts.cpp
 //        src/http.cpp src/storage/sqlite_readonly.cpp src/authority/native_paid.cpp src/config.cpp
-//        src/authority/native_contracts.cpp src/provider/cerebras_rate_limits.cpp src/storage/native_kv.cpp src/storage/native_addon.cpp
+//        src/authority/native_contracts.cpp src/provider/cerebras_rate_limits.cpp src/storage/native_kv.cpp
 //        src/auth/relay.cpp src/release.cpp
 // Port of tests/cache-kv-migration-usage-coverage.test.ts. MapKv extends the shared deterministic
 // stand-in with the source fixture's expiry observations, refused commits and racing atomic hook.

@@ -3,7 +3,6 @@
 import argparse
 import json
 import os
-import subprocess
 import sys
 import time
 import traceback
@@ -24,10 +23,6 @@ def parser():
     result.add_argument("--build-receipt", type=Path, help="Exact primary build/profile identity receipt supplied by the build owner")
     result.add_argument("--fixture-flag", help="Exact startup flag agreed with the build/runtime owners; no default")
     result.add_argument("--runtime-template", type=Path, help="Reviewed runtime fixture document whose inputs stay task-scoped")
-    result.add_argument("--bun", type=Path)
-    result.add_argument("--oracle", type=Path, help="Detached worktree prepared by conformance/oracle.sh")
-    result.add_argument("--bun-binding", type=Path)
-    result.add_argument("--bun-only", action="store_true", help="Prequalify only the actual Bun source fixture; never native acceptance")
     result.add_argument("--benchmark", action="store_true")
     result.add_argument("--json-benchmark", type=Path, help="Run only the qualified production JSON hot-path target")
     result.add_argument("--json-sha256", help="Accepted primary JSON benchmark binary hash")
@@ -41,7 +36,7 @@ def inside(arguments):
               "harness_sha256": {str(path.relative_to(WORKTREE)): sha256(path)
                                  for path in sorted((WORKTREE / "cpp/gateway/tests/production_smoke").glob("*.py"))}}
     status = 0
-    before = source_inputs(arguments.oracle)
+    before = source_inputs()
     result["source_inputs_sha256"] = before
     if arguments.build_receipt:
         result["build_receipt"] = {"path": str(arguments.build_receipt), "sha256": sha256(arguments.build_receipt)}
@@ -74,7 +69,7 @@ def inside(arguments):
         elif arguments.json_benchmark:
             sys.path.insert(0, str(WORKTREE / "cpp/gateway/bench/paths"))
             from run_json import run
-            result["json_benchmark"] = run(arguments.json_benchmark, arguments.bun, output / "json")
+            result["json_benchmark"] = run(arguments.json_benchmark, output / "json")
             result["outcome"] = "passed"
         else:
             from cases import run
@@ -84,7 +79,7 @@ def inside(arguments):
         status = 1
         result.update({"outcome": "failed", "error": str(error), "traceback": traceback.format_exc()})
     result["finished_ns"] = time.time_ns()
-    after = source_inputs(arguments.oracle)
+    after = source_inputs()
     changed = sorted(path for path in before.keys() | after.keys() if before.get(path) != after.get(path))
     result["changed_source_inputs"] = changed
     if changed:
@@ -100,18 +95,13 @@ def main():
     arguments.output = require_task_path(arguments.output)
     if arguments.build_receipt:
         arguments.build_receipt = require_task_path(arguments.build_receipt).resolve(strict=True)
-    if arguments.bun and not arguments.json_benchmark:
-        if not arguments.oracle:
-            raise RuntimeError("Bun application comparisons require the pinned oracle worktree")
-        arguments.oracle = arguments.oracle.resolve(strict=True)
-        subprocess.run(["bash", WORKTREE / "cpp/gateway/conformance/oracle.sh", "--check", arguments.oracle], check=True)
     if not 5 <= arguments.timeout <= 600:
         raise RuntimeError("Harness timeout must be from 5 through 600 seconds")
     if arguments.inside:
         return inside(arguments)
     if arguments.json_benchmark:
-        if not arguments.bun or not arguments.build_receipt or not arguments.json_sha256:
-            raise RuntimeError("JSON comparison requires explicit Bun, primary build receipt and accepted native binary hash")
+        if not arguments.build_receipt or not arguments.json_sha256:
+            raise RuntimeError("JSON benchmark requires the primary build receipt and accepted native binary hash")
         arguments.json_benchmark = arguments.json_benchmark.resolve(strict=True)
         if not arguments.json_benchmark.is_relative_to(WORKTREE / ".data"):
             raise RuntimeError("JSON target must be the worktree's qualified build output")
@@ -127,21 +117,11 @@ def main():
             raise RuntimeError("JSON measurements require the selected native GCC release profile")
         if sha256(owner["compiler"]) != owner.get("compiler_sha256"):
             raise RuntimeError("Qualified JSON compiler identity changed")
-        arguments.bun = arguments.bun.resolve(strict=True)
-    elif arguments.bun_only:
-        if not arguments.bun or not arguments.bun_binding:
-            raise RuntimeError("Bun source fixture requires an explicit runtime and verified genuine native-KV binding")
-        arguments.bun = arguments.bun.resolve(strict=True)
-        arguments.bun_binding = require_task_path(arguments.bun_binding).resolve(strict=True)
     elif not (arguments.preflight or arguments.fixture_self_test):
         if not arguments.gateway or not arguments.gateway_sha256 or not arguments.fixture_flag or not arguments.runtime_template or not arguments.build_receipt:
             raise RuntimeError("Runtime launch requires binary/hash, reviewed fixture flag and runtime template")
         arguments.gateway = arguments.gateway.resolve(strict=True)
         arguments.runtime_template = arguments.runtime_template.resolve(strict=True)
-        if arguments.bun:
-            arguments.bun = arguments.bun.resolve(strict=True)
-        if arguments.bun_binding:
-            arguments.bun_binding = require_task_path(arguments.bun_binding).resolve(strict=True)
         if not arguments.gateway.is_relative_to(WORKTREE / ".data"):
             raise RuntimeError("Only the task build's primary gateway binary may run")
         if sha256(arguments.gateway) != arguments.gateway_sha256:

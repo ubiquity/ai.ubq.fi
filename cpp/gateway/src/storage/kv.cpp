@@ -72,11 +72,7 @@ namespace uos::storage::kv {
       return rt::kvJscSerialize(value);
     }
 
-    // `openKv(path, opts)` of @deno/kv (npm.js, napi_based.js) for its local SQLite
-    // implementation, whose native store is rt::SqliteKv, linked into the C++ runtime
-    // (docs/rt/kv-durable.md). The SDK and the store are one C++ component, so the database
-    // is opened directly instead of through the NapiInterface's protobuf calls; the
-    // interface is still checked as the SDK checks it.
+    // The linked SQLite store uses the explicitly selected value codec.
     rt::Task<std::shared_ptr<rt::Kv>> openLinkedNativeKv(std::string path, NativeKvOpenOptions options) {
       const std::string& implementation = options.implementation;
       if (!(implementation.empty() || implementation == "in-memory" || implementation == "sqlite" || implementation == "remote"))
@@ -88,13 +84,6 @@ namespace uos::storage::kv {
                           "functions via options. See https://www.npmjs.com/package/@deno/kv#other-runtimes");
       static const rt::Regex REMOTE("^https?:\\/\\/", "i");
       if (REMOTE.test(path) || implementation == "remote") throw rt::JsError("The @deno/kv remote implementation is not linked into the C++ runtime");
-      const native_addon::NapiInterface& napi = options.napi;
-      const bool every = napi.open && napi.close && napi.snapshotRead && napi.atomicWrite && napi.dequeueNextMessage && napi.finishMessage && napi.startWatch &&
-                         napi.dequeueNextWatchMessage && napi.endWatch;
-      const bool any = napi.open || napi.close || napi.snapshotRead || napi.atomicWrite || napi.dequeueNextMessage || napi.finishMessage || napi.startWatch ||
-                       napi.dequeueNextWatchMessage || napi.endWatch;
-      if (!any) throw rt::JsError("No default napi interface, provide one via the 'napi' option.");
-      if (!every) throw rt::JsError("Unexpected napi interface for sqlite");
       rt::SqliteKvOptions store;
       store.encodeV8 = std::move(options.encodeV8);
       store.decodeV8 = std::move(options.decodeV8);
@@ -102,7 +91,7 @@ namespace uos::storage::kv {
       try {
         kv = std::make_shared<rt::SqliteKv>(path, std::move(store));
       } catch (const rt::sqlite::SQLiteError& error) {
-        // napi.open reports the backend's failure as a plain Error.
+        // Preserve the storage facade's error contract.
         throw rt::JsError(error.message);
       }
       co_return kv;
@@ -119,18 +108,14 @@ namespace uos::storage::kv {
     return reader;
   }
 
-  rt::Task<std::shared_ptr<rt::Kv>> openKv() { return openKv(std::string(BUN_KV_DATABASE_PATH)); }
-
   rt::Task<std::shared_ptr<rt::Kv>> openKv(std::string path) {
     static const rt::Regex REMOTE_URL("^https?:\\/\\/", "i");
     if (path.empty() || REMOTE_URL.test(path)) throw rt::JsError("Bun KV requires an explicit local SQLite path or :memory:");
-    native_addon::NapiInterface napi = native_addon::preparedNativeKvBackend();
     const std::string target = path == ":memory:" ? path : rt::path::resolve(path);
-    std::function<rt::Task<std::shared_ptr<rt::Kv>>()> open = [target, napi]() -> rt::Task<std::shared_ptr<rt::Kv>> {
+    std::function<rt::Task<std::shared_ptr<rt::Kv>>()> open = [target]() -> rt::Task<std::shared_ptr<rt::Kv>> {
       if (target != ":memory:") prepareDatabase(target);
       NativeKvOpenOptions options;
       options.implementation = "sqlite";
-      options.napi = napi;
       options.encodeV8 = encodeV8;
       options.decodeV8 = [](std::span<const std::uint8_t> bytes) { return deserialize()(bytes); };
       rt::Task<std::shared_ptr<rt::Kv>> opening = openNativeKv()(target, std::move(options));

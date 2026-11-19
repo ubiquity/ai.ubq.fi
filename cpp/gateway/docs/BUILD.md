@@ -29,11 +29,10 @@ resource_log=/tmp/claude-1002/codex/resources.log
 
 python3 cpp/gateway/tools/build.py native release checkpoint --keep-going --tests --jobs 2 \
   --target uos_gateway_modules --target uos_gateway \
-  --target uos_kv_convert --target uos_kv_proof \
   --release-lock "$release_lock" --supervisor-log "$resource_log"
 ```
 
-The default build produces `libuos_gateway.a` from `uos_gateway_modules` and links `uos_gateway`, `uos_kv_convert` and `uos_kv_proof`. The three executables link the application archive with whole-archive semantics to retain module registrars. CMake compiles source files into reusable object targets. The independent test targets link their resolved `Links` closures and fixture stand-ins. `--tests` generates the registry at configure time. CTest test binaries have to be built before using the driver's `test` phase.
+The default build produces `libuos_gateway.a` from `uos_gateway_modules` and links `uos_gateway`. The executable links the application archive with whole-archive semantics to retain module registrars. CMake compiles source files into reusable object targets. The independent test targets link their resolved `Links` closures and fixture stand-ins. `--tests` generates the registry at configure time. CTest test binaries have to be built before using the driver's `test` phase.
 
 The task's full primary suite uses its own `release-tests` lane, builds up to eight registered targets per wave, and runs their actual binaries one at a time. Configure the test lane through the same driver. The active test controller owns its release lock and evidence. Resume a settled run from a verified prior receipt rather than launching a parallel complete suite.
 
@@ -44,13 +43,13 @@ python3 cpp/gateway/tools/build.py native release configure --tests --lane tests
 
 That command generates `.data/cpp-gateway-native-release-tests/tests-registry.json` and `profile-owner.json`. The test wave controller selects the registry's `uos_test_*` targets through `build.py native release build --incremental --lane tests`. A standalone profile can use `tools/ctest-run.py suite` with its own registry, profile manifest, release lock and supervisor log. For an individual test or the SDK comparison, see [test commands and fixture isolation](TESTING.md). Select the comparison SDK by its exact qualified path and `sdk-release`. The old SDK `release` spelling is a transition alias for the same GCC 12 profile.
 
-The CMake `package` target depends on all three executables. Configure the build cache with the exact native KV directory, frozen inputs file, provenance hash, permissions artifact directory and a fresh output directory. Finalize [RUNTIME.md](RUNTIME.md) before package creation because it becomes the manifest-bound README. The measured CMake package invocation follows.
+The CMake `package` target depends on `uos_gateway`. Close the qualified build, select a fresh `UOS_PACKAGE_OUTPUT` under the worktree's canonical `.data`, and run the bounded target. For a relocatable archive, use the Linux ARM64 Docker Buildx path. [Release packages](RELEASES.md) · [Runtime layout](RUNTIME.md)
 
 ```sh
 python3 cpp/gateway/tools/build.py native release package --supervisor-log "$resource_log"
 ```
 
-The reproducibility check invokes `tools/package.py` with the same sealed graph and artifact inputs and a second new output directory. The [runtime guide](RUNTIME.md) gives the direct packaging command and launch manifest. The [same-binary smoke guide](../tests/production_smoke/README.md) gives the isolated runtime command.
+The reproducibility check invokes `tools/package.py` with the same sealed graph and artifact inputs and a second new output directory. The [runtime guide](RUNTIME.md) describes the package and launch manifest. The [same-binary smoke guide](../tests/production_smoke/README.md) gives the isolated runtime command.
 
 ## Resource limits and resume
 

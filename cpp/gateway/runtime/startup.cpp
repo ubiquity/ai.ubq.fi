@@ -16,7 +16,6 @@
 #include "uos/runtime/permissions_linux.hpp"
 #include "uos/serve.hpp"
 #include "uos/storage/kv.hpp"
-#include "uos/storage/native_addon.hpp"
 
 #include <openssl/evp.h>
 
@@ -141,17 +140,7 @@ namespace uos::runtime::startup {
       if (!hashText(expected) || sha256(path) != expected) refuse("integrity check failed: " + path.string());
     }
 
-    void requireArm64Elf(const fs::path& path) {
-      regular(path);
-      std::ifstream input(path, std::ios::binary);
-      std::array<unsigned char, 20> header{};
-      input.read(reinterpret_cast<char*>(header.data()), static_cast<std::streamsize>(header.size()));
-      if (input.gcount() != static_cast<std::streamsize>(header.size()) || header[0] != 0x7f || header[1] != 'E' || header[2] != 'L' || header[3] != 'F' ||
-          header[4] != 2 || header[5] != 1 || header[18] != 183 || header[19] != 0)
-        refuse("required artifact is not a Linux ARM64 ELF file: " + path.string());
-    }
-
-    void verifyPackage(const fs::path& root, const std::string& expected, std::string_view executable = "uos-gateway") {
+    void verifyPackage(const fs::path& root, const std::string& expected) {
       const fs::path manifest = root / "manifest.sha256";
       if (!hashText(expected) || sha256(manifest) != expected) refuse("package manifest integrity check failed");
       const std::string text = read(manifest);
@@ -182,13 +171,12 @@ namespace uos::runtime::startup {
           refuse("package contains a non-regular entry");
         }
       }
-      for (const std::string_view required : {"bin/uos-gateway", "bin/uos-kv-convert", "bin/uos-kv-proof", "package.json", "runtime-closure.json",
-                                               "native/kv/inputs.json", "native/kv/native-kv.node", "native/kv/native-kv.provenance.json",
-                                               "native/permissions/manifest.json", "native/permissions/linux-arm64.node", "static/index.html", "static/openapi.json",
-                                               "runtime/launch-schema.json", "runtime/offline-schema.json", "src/kv-conversion/v8-helper.mjs", "src/kv-conversion/typed-value.ts"}) {
+      for (const std::string_view required : {"bin/uos-gateway", "package-info.json", "build-profile.json", "runtime-closure.json", "operator-closure.json",
+                                               "static/index.html", "static/openapi.json", "favicon.png", "favicon-32.png", "licenses/sqlite/LICENSE", "licenses/denokv/LICENSE",
+                                               "runtime/launch-schema.json", "ops/launch-native.sh"}) {
         if (!selected.contains(std::string(required))) refuse("package lacks a required file: " + std::string(required));
       }
-      if (canonical(rt::process::execPath()) != root / "bin" / std::string(executable)) refuse("executable is outside the selected package");
+      if (canonical(rt::process::execPath()) != root / "bin/uos-gateway") refuse("executable is outside the selected package");
     }
 
     void verifyClosure(const fs::path& root) {
@@ -331,7 +319,7 @@ namespace uos::runtime::startup {
       if (::fsync(directory) != 0) refuse("fixture state directory durability failed");
     }
 
-    void enforce(const fs::path& package, const fs::path& state, const permissions_linux::LinuxPermissionsArtifact& artifact, int port,
+    void enforce(const fs::path& package, const fs::path& state, int port,
                  const std::optional<std::string>& origin) {
       auto profiles = permissions_linux::gatewayLinuxPermissions(package.string(), state.string());
       auto& permissions = profiles.gateway;
@@ -341,7 +329,7 @@ namespace uos::runtime::startup {
         else ports.connectPorts = {53, 443}; // DNS TCP fallback and the gateway's HTTPS/WSS upstreams.
         permissions.allowReducedConfinement = std::move(ports);
       }
-      const auto receipt = permissions_linux::applyLinuxPermissions(permissions, artifact);
+      const auto receipt = permissions_linux::applyLinuxPermissions(permissions);
       if (!receipt.processThreadSync || (!receipt.filesystemThreadSync && !permissions.allowReducedConfinement))
         refuse("kernel confinement did not produce both enforcement receipts");
       if (profiles.antigravity) {
@@ -380,50 +368,15 @@ namespace uos::runtime::startup {
     return argv[2];
   }
 
-  void prepareOfflineCli(int argc, const char* const* argv) {
-    if (argc < 3 || std::string_view(argv[1]) != "--runtime-manifest" || !fs::path(argv[2]).is_absolute())
-      refuse("expected prefix --runtime-manifest <absolute-path> before offline CLI arguments");
-    const fs::path launchPath = canonical(argv[2]);
-    const json::object launch = object(launchPath, true);
-    keys(launch, {"schema", "packageRoot", "packageManifestSha256", "nativeKvProvenanceSha256"});
-    if (string(launch, "schema") != "uos-gateway-offline-v1") refuse("offline CLI manifest schema is unsupported");
-    const fs::path package = canonical(string(launch, "packageRoot"));
-    const std::string executable = fs::path(rt::process::execPath()).filename().string();
-    if (executable != "uos-kv-convert" && executable != "uos-kv-proof") refuse("offline preflight requires a packaged offline CLI executable");
-    verifyPackage(package, string(launch, "packageManifestSha256"), executable);
-    verifyClosure(package);
-    const json::object packageInfo = object(package / "package.json");
-    if (string(packageInfo, "schema") != "uos-native-package-v1" || string(packageInfo, "platform") != "linux" || string(packageInfo, "architecture") != "arm64")
-      refuse("package identity is unsupported");
-    const std::string provenance = string(launch, "nativeKvProvenanceSha256");
-    if (provenance != string(packageInfo, "nativeKvProvenanceSha256")) refuse("native KV provenance differs from package binding");
-    storage::native_addon::NativeKvArtifactBinding backend;
-    backend.artifactDirectory = (package / "native/kv").string();
-    backend.expectedProvenanceSha256 = provenance;
-    backend.inputsManifest = (package / "native/kv/inputs.json").string();
-    requireArm64Elf(package / "native/kv/native-kv.node");
-    storage::native_addon::prepareNativeKvBackend(backend);
-    const json::object permissionsInfo = object(package / "native/permissions/manifest.json");
-    if (string(permissionsInfo, "path") != "linux-arm64.node" || string(permissionsInfo, "architecture") != "arm64") refuse("Linux confinement manifest is invalid");
-    const fs::path permissionsPath = package / "native/permissions/linux-arm64.node";
-    requireArm64Elf(permissionsPath);
-    requireHash(permissionsInfo, "sha256", permissionsPath);
-    paths::setResourceRoot(package.string());
-    std::vector<const char*> application;
-    application.reserve(static_cast<std::size_t>(argc - 2));
-    application.push_back(argv[0]);
-    for (int index = 3; index < argc; ++index) application.push_back(argv[index]);
-    rt::process::setArgv(static_cast<int>(application.size()), application.data());
-  }
-
   rt::Task<void> run(std::string manifestPath) {
     const fs::path launchPath = canonical(manifestPath);
     const json::object launch = object(launchPath, true);
-    keys(launch, {"schema", "packageRoot", "stateRoot", "packageManifestSha256", "nativeKvProvenanceSha256", "hostname", "port", "fixture"});
+    keys(launch, {"schema", "packageRoot", "stateRoot", "packageManifestSha256", "hostname", "port", "fixture"});
     if (string(launch, "schema") != "uos-gateway-launch-v1") refuse("launch manifest schema is unsupported");
     const fs::path package = canonical(string(launch, "packageRoot"));
     const fs::path state = canonical(string(launch, "stateRoot"));
     const fs::path data = state / ".data";
+    const fs::path database = state / storage::kv::BUN_KV_DATABASE_PATH;
     privateDirectory(state);
     privateDirectory(data);
     const auto relative = state.lexically_relative(package);
@@ -433,23 +386,10 @@ namespace uos::runtime::startup {
     const std::string packageHash = string(launch, "packageManifestSha256");
     verifyPackage(package, packageHash);
     verifyClosure(package);
-    const json::object packageInfo = object(package / "package.json");
+    const json::object packageInfo = object(package / "package-info.json");
     if (string(packageInfo, "schema") != "uos-native-package-v1" || string(packageInfo, "platform") != "linux" || string(packageInfo, "architecture") != "arm64")
       refuse("package identity is unsupported");
-    const std::string provenance = string(launch, "nativeKvProvenanceSha256");
-    if (provenance != string(packageInfo, "nativeKvProvenanceSha256")) refuse("native KV provenance differs from package binding");
-    storage::native_addon::NativeKvArtifactBinding backend;
-    backend.artifactDirectory = (package / "native/kv").string();
-    backend.expectedProvenanceSha256 = provenance;
-    backend.inputsManifest = (package / "native/kv/inputs.json").string();
-    requireArm64Elf(package / "native/kv/native-kv.node");
-    storage::native_addon::prepareNativeKvBackend(backend);
-    const json::object permissionsInfo = object(package / "native/permissions/manifest.json");
-    if (string(permissionsInfo, "path") != "linux-arm64.node" || string(permissionsInfo, "architecture") != "arm64") refuse("Linux confinement manifest is invalid");
-    const fs::path permissionsPath = package / "native/permissions/linux-arm64.node";
-    requireArm64Elf(permissionsPath);
-    requireHash(permissionsInfo, "sha256", permissionsPath);
-    const permissions_linux::LinuxPermissionsArtifact artifact{permissionsPath.string(), string(permissionsInfo, "sha256")};
+    requireHash(packageInfo, "profileSha256", package / "build-profile.json");
     const std::string hostname = string(launch, "hostname");
     const auto portValue = rt::getNumber(launch, "port");
     if (hostname != "127.0.0.1" || !portValue || !std::isfinite(*portValue) || *portValue < 0 || *portValue > 65535 || std::floor(*portValue) != *portValue)
@@ -466,15 +406,15 @@ namespace uos::runtime::startup {
       binding = fixtureBinding(state, packageHash, *origin);
       newFixture = verifyFixtureState(data, binding);
     } else {
-      regular(data / "kv-bun.sqlite3", true);
+      regular(database, true);
     }
     // Load the existing operator-selected CA bundles while startup can read them.
     rt::detail::tls::defaultContext();
-    enforce(package, state, artifact, port, origin);
+    enforce(package, state, port, origin);
     if (newFixture) createFixtureBinding(data, binding);
     paths::setResourceRoot(package.string());
     if (::chdir(state.c_str()) != 0) refuse("private state working directory is unavailable");
     if (::setenv("SQLITE_TMPDIR", data.c_str(), 1) != 0) refuse("private SQLite temporary directory is unavailable");
-    return serveGateway(serve::ServeStartupOptions{hostname, port}, std::move(origin), (data / "kv-bun.sqlite3").string());
+    return serveGateway(serve::ServeStartupOptions{hostname, port}, std::move(origin), database.string());
   }
 }

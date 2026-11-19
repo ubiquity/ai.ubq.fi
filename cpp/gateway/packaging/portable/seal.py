@@ -15,7 +15,7 @@ import tempfile
 sys.dont_write_bytecode = True
 import runtime_manifest as runtime
 
-EXECUTABLES = ("bin/uos-gateway", "bin/uos-kv-convert", "bin/uos-kv-proof")
+EXECUTABLES = ("bin/uos-gateway",)
 INTERPRETER = "/lib/ld-linux-aarch64.so.1"
 DIRECT_LIBRARIES = {"libssl.so.3", "libcrypto.so.3", "libz.so.1", "libbrotlidec.so.1", "libzstd.so.1"}
 SYSTEM_LIBRARIES = DIRECT_LIBRARIES | {"libc.so.6", "libm.so.6", "ld-linux-aarch64.so.1"}
@@ -93,9 +93,7 @@ def seal(payload, output):
         if stage.exists():
             shutil.rmtree(stage)
 
-    package = json.loads((output / "package.json").read_text())
-    return {"packageRoot": str(output), "packageManifestSha256": runtime.digest(output / "manifest.sha256"),
-            "nativeKvProvenanceSha256": package["nativeKvProvenanceSha256"]}
+    return {"packageRoot": str(output), "packageManifestSha256": runtime.digest(output / "manifest.sha256")}
 
 
 def main():

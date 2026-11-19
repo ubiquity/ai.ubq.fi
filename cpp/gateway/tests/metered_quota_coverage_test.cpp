@@ -5,7 +5,7 @@
 //        src/paid_fallback/ledger_state.cpp src/paid_fallback/ledger_stats.cpp src/paid_fallback/rollups.cpp src/provider/anthropic_replay.cpp
 //        src/provider/anthropic_response_wire.cpp src/provider/anthropic_responses.cpp src/provider/metered.cpp
 //        src/provider/surplus_claude_request.cpp src/responses_stream.cpp src/storage/key_compatibility.cpp src/storage/kv.cpp
-//        src/storage/native_addon.cpp src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp src/storage/value_compatibility.cpp
+// src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp src/storage/value_compatibility.cpp
 //        src/types.cpp src/utils.cpp
 // `MeteredKv` is the TS file's in-memory Deno.Kv substitute on rt::Kv; `encodeKey` is counting-kv's
 // `JSON.stringify(key)`.

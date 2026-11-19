@@ -4,7 +4,7 @@
 // src/authority/native_paid_policy.cpp src/paid_fallback/ledger_state.cpp src/provider/capacity_events.cpp src/storage/kv.cpp
 // src/paid_fallback/ledger_settlement.cpp src/paid_fallback/ledger_admission.cpp src/codex/banked_reset.cpp src/utils.cpp
 // src/storage/native_kv.cpp src/api_keys.cpp src/types.cpp src/authority/native_api_key_policy.cpp
-// src/storage/native_addon.cpp src/storage/sqlite_readonly.cpp src/api_key_policy.cpp src/provider/metered.cpp
+// src/storage/sqlite_readonly.cpp src/api_key_policy.cpp src/provider/metered.cpp
 // src/provider/capacity_contract.cpp src/runtime_config.cpp src/authority/native_contracts.cpp src/authority/native_api_key.cpp
 // src/codex/auth.cpp src/provider/anthropic_responses.cpp src/models/codex_models.cpp src/codex/capacity_routing.cpp
 // src/provider/surplus.cpp src/authority/native_codex_capacity.cpp src/kv_conversion/profile_json.cpp src/defaults.cpp

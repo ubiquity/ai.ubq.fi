@@ -27,7 +27,7 @@
 // src/provider/removed_provider_telemetry.cpp src/provider/selection.cpp src/provider/surplus.cpp src/provider/surplus_claude_chat_request.cpp
 // src/provider/surplus_claude_request.cpp src/release.cpp src/request_policy.cpp src/responses_failover_stream.cpp
 // src/responses_stream.cpp src/runtime/websocket.cpp src/runtime_config.cpp src/storage/kv.cpp
-// src/storage/native_addon.cpp src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp src/types.cpp
+// src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp src/types.cpp
 // src/upstream_wire.cpp src/utils.cpp
 // Deferred original handler and paid-pipeline cases require their final modules.
 // Owned API parity from the original Bun tests. Upstream/handler assertions remain separate.

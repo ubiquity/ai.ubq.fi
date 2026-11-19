@@ -25,7 +25,7 @@
 // src/provider/surplus.cpp src/provider/surplus_claude_chat_request.cpp src/provider/surplus_claude_request.cpp
 // src/release.cpp src/request_policy.cpp src/responses_failover_stream.cpp
 // src/responses_stream.cpp src/runtime/websocket.cpp src/runtime_config.cpp
-// src/storage/kv.cpp src/storage/native_addon.cpp src/storage/native_kv.cpp
+// src/storage/kv.cpp src/storage/native_kv.cpp
 // src/storage/sqlite_readonly.cpp src/types.cpp src/utils.cpp
 // src/cache/scope_targets.cpp src/deepseek/forwarded_payload_policy.cpp src/deepseek/responses_payload.cpp
 // src/deepseek/chat_projection.cpp src/deepseek/responses_stream.cpp src/deepseek/flash_aliases.cpp
