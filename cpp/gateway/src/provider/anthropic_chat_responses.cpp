@@ -516,7 +516,8 @@ namespace uos::provider::anthropic_chat_responses {
     readOptions.signal = options.signal;
     readOptions.maxBytes = MAX_RESPONSES_SSE_EVENT_BYTES;
     readOptions.timeoutMs = inference_deadline::BUFFERED_INFERENCE_DEADLINE_MS;
-    const bounded_response_body::BoundedResponseBody captured = co_await bounded_response_body::readBoundedResponseBody(response, std::move(readOptions));
+    auto reading = bounded_response_body::readBoundedResponseBody(response, std::move(readOptions));
+    const bounded_response_body::BoundedResponseBody captured = co_await std::move(reading);
     if (options.signal && options.signal->aborted()) {
       if (rt::isError(options.signal->reason())) rt::rethrow(options.signal->reason());
       throw rt::DOMException("Claude Chat was aborted.", "AbortError");
