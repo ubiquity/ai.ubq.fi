@@ -50,7 +50,46 @@ All 19 fuzz targets in `cmake/extra-targets.json` and every source in `tests/LIN
 
 ## Exact commands and measurements
 
-(in progress: fuzz campaign and release tests)
+### Registration and source inventory
+
+- `git diff --diff-filter=D --name-only ca045a83ebaab6c50c20567d1a825638abac0891 HEAD` -> 56 deleted paths.
+- `python3 -B cpp/gateway/tools/links.py --check` -> 450 registered tests, exit 0.
+- `python3 -B cpp/gateway/tools/cmake-sources.py /tmp/sources.cmake` -> `{"module_count": 322, "rt_count": 44, "source_count": 366}`.
+- A Python check of every source in `cmake/extra-targets.json` and every source in `tests/LINKS.txt` found 0 missing files.
+- `python3 -B -c 'import json; print(len(json.load(open("cpp/gateway/fuzz/targets.json"))["targets"]))'` -> 25 targets.
+- `git diff --check` -> clean.
+
+### Release tests (Clang 21.1.8, release, fresh namespaces, empty home/temp)
+
+Environment: `UOS_CI_SQLITE_PREFIX=/usr/local`, Boost 1.92.0 staged at `/tmp/boost-stage`,
+`UOS_CI_CXXFLAGS='-isystem /tmp/boost-stage/include'`, `UOS_CI_LDFLAGS='-L/tmp/boost-stage/lib'`.
+
+- `bash cpp/gateway/tools/ci-build.sh --config release release_identity` -> 366/366 production objects,
+  `tests/release_identity_test.cpp` PASS 1/1 cases, 711.668 s including the cold object phase.
+- `bash cpp/gateway/tools/ci-build.sh --config release tests/health_test.cpp` -> PASS 23/23 cases.
+- `bash cpp/gateway/tools/ci-build.sh --config release runtime_native_startup_test` -> PASS 1/1 case.
+- `bash cpp/gateway/tools/ci-build.sh --config release config_differential` -> 3 tests, PASS 23/23 cases.
+
+### Portable package and sealed verifier
+
+Package built from commit `508e62cc77452aa36c920a9a04b028ded82a0e54`, tree
+`1ec7e5321d91fd4b46eabc82cf575dbebc4d3119`:
+
+```sh
+PORTABLE_JOBS=2 TMPDIR=/tmp bash cpp/gateway/packaging/portable/build.sh /tmp/uos-gateway-portable-508e62cc.tar.gz
+```
+
+- Archive SHA-256: `e2f2d7564b77ecbb5b097f901548cda4e25f2a634a1f910dd3bd223004fb280d`.
+- `packaging/portable/verify.sh` exit 0 on Debian 12 and 13 at 512 MiB and 256 MiB.
+- Gateway binary SHA-256: `d54a1fe7125334e37257b3a11e7bde92c9fae587044380905d1a67aed5fe75b3`.
+- Every proof reported `release.git_sha = 508e62cc77452aa36c920a9a04b028ded82a0e54` and
+  `release.deployment_id = vps-508e62cc77452aa36c920a9a04b028ded82a0e54` in both initial and loaded health,
+  never `unknown`, and `x-uos-git-sha` matched the packaged commit.
+- Same binary and manifest verified in all four proofs; no OOM events; two integrity refusals per proof.
+
+### Fuzz campaign
+
+(in progress)
 
 ## Unfinished / out-of-scope defects
 
