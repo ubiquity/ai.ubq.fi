@@ -13,7 +13,7 @@
 - [x] Update CI and current operating documents.
 - [x] Add the ARM64 cutover checklist and runtime environment table.
 - [x] Verify registrations, tracked files, workflows and whitespace.
-- [ ] Build the gateway and run the selected release tests in native isolation.
+- [x] Build the gateway and run the selected release tests in native isolation.
 - [ ] Build and verify the portable package.
 - [ ] Record final results and leave the checkout clean.
 
@@ -114,3 +114,26 @@ The portable build runs from `$scratch/package-tree` at commit `d5454f1702eb22a8
 The first startup/static Release group passed five binaries and 60 of 61 cases. The static scan still required a repository-root command in the root README after the old upload section was removed. Restored that command as the entry to the native build/test instructions and kept the static assertions. The CI driver also no longer sets the leftover terminal-only environment variable from the old runtime. Requalify both changes with the final focused groups.
 
 The storage source is a port of the upstream denokv SQLite backend. Kept its original MIT notice as `packaging/DENOKV-LICENSE` and included it in all package assemblers. This notice covers the linked implementation that remains. The recipe-only notices were removed earlier. The provisional portable build was already compiling at `d5454f17`. Reuse its build cache for the accepted archive that includes the retained notice, and verify that archive with its matching commit.
+
+## Focused final Release gates
+
+After updating the README and CI fixture environment, repeated the seven groups at commit `a6e70a210a3f62f203808edb3c3989ccf1870f9c`, tree `d1687cf0586d12cf5e0714a51452b14242ee17a8`. Each command was `bash "$scratch/run-release.sh" "$pattern"` with the pattern from `$scratch/final-groups.tsv`. `accepted-<group>.json` receipts bind unchanged input SHA-256 `a59500446147dc51130dcfd80ab2cf60d4792a345ee49a099f655ff3298f644e`. All 366 production objects were available, with 44 shared runtime objects. The rerun reused the warmed objects.
+
+| Group | Binaries | Passed cases | Driver wall time |
+| --- | ---: | ---: | ---: |
+| Startup, HTTP, delivery, and static assets | 6 | 61 | 7.117 s |
+| Strict, reduced and Gemini confinement | 4 | 38 | 1.780 s |
+| Runtime KV and SQLite | 6 | 119 | 7.442 s |
+| Storage, durable interop and budgets | 9 | 176 | 2.086 s |
+| Snapshots, schema, cursors and typed values | 7 | 37 | 1.377 s |
+| Edited storage and serving fixtures | 8 | 70 | 2.464 s |
+| Inference and residual regressions | 5 | 128 | 5.569 s |
+| Total | 45 | 629 | 27.835 s |
+
+`env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC HOME="$run/home" TMPDIR="$run/tmp" /usr/bin/time -p python3 -B "$scratch/native-extras.py"` used the release receipt compiler flags, source closures and vendor objects to link the gateway and the auxiliary native targets from the same worktree. Full commands are in `$scratch/native-extras/*.compile.log` and `*.link.log`. The gateway ELF is 41,213,136 bytes, SHA-256 `3e8bbba42eab2b4f5ec0337d8ca24d547245cf08297aff3a0220925b8b8fbd70`. The standalone bind-failure gate passed 3 checks in 0.064 s, including one close of its real durable store. The native JSON runner passed 18 trials across three inputs in 2.621 s. The native regex binary passed the redaction smoke in 1.618 s. All three ran through the CI OS boundary. The native extras invocation took 26.50 s.
+
+## Package gate status
+
+The interim portable build on `d5454f17` was cancelled with SIGINT after identifying the license that covers the linked KV port. It exited 130 during compilation and published no archive. The accepted build runs the same background build command from `$scratch/package-tree` at `bdcbf891dc45c945c6805d3508d574a084b588f5`, tree `da68f4e4102c12545a929c5858bf76ccb3baa4f2`. The log is `package-build-accepted.log`. The cache already reused compiled objects from the cancelled run.
+
+The verifier is queued in the same background command after successful publication. It uses a separate empty home and fresh temp, the same committed worktree and `bash cpp/gateway/packaging/portable/verify.sh "$scratch/uos-gateway-linux-arm64.tar.gz" "$scratch/package-evidence"` under `env -i` and `/usr/bin/time -p`. Poll `package-build-accepted.status`, `package-verify.log` and `package-verify.status`. A separate loopback benchmark/smoke check is queued after verification in `package-followups.log`. The local portable build, packaged proofs and follow-ups are the remaining verification work.
