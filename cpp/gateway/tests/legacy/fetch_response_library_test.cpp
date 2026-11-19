@@ -6,6 +6,10 @@
 #include "uos/rt/gzip.hpp"
 #include "uos/rt/test.hpp"
 
+#if defined(UOS_GATEWAY_NATIVE_LIBRARIES)
+#include <zstd.h>
+#endif
+
 namespace {
   namespace fetch = uos::rt::detail::fetch;
   namespace ws = uos::rt::ws;
@@ -308,3 +312,52 @@ TEST("Fetch Brotli rejects a valid stream past the expansion budget") {
   out.clear();
   EXPECT_THROWS_MATCHING(rejected->write(beyond, out), "ResponseBodyTooLarge");
 }
+
+#if defined(UOS_GATEWAY_NATIVE_LIBRARIES)
+TEST("Fetch Zstd caps both decoded bytes and the advertised frame window") {
+  namespace limits = uos::rt::limits;
+  const std::unique_ptr<ZSTD_CCtx, decltype(&ZSTD_freeCCtx)> compressor(ZSTD_createCCtx(), ZSTD_freeCCtx);
+  ASSERT(compressor);
+  for (const int extra : {0, 1}) {
+    const std::size_t decodedSize = limits::kHttpBodyBytes + static_cast<std::size_t>(extra);
+    std::string input(decodedSize, '\0');
+    std::uint32_t state = 1;
+    constexpr std::size_t blockBytes = 65536;
+    for (std::size_t i = 0; i < blockBytes; ++i) {
+      state ^= state << 13;
+      state ^= state >> 17;
+      state ^= state << 5;
+      input[i] = static_cast<char>(state & 255);
+    }
+    for (std::size_t i = blockBytes; i < input.size(); ++i) input[i] = input[i % blockBytes];
+    std::string compressed(ZSTD_compressBound(input.size()), '\0');
+    const auto length = ZSTD_compress2(compressor.get(), compressed.data(), compressed.size(), input.data(), input.size());
+    ASSERT(!ZSTD_isError(length));
+    auto decoder = fetch::contentDecoder("zstd", "http://localhost");
+    const std::string_view wire(compressed.data(), length);
+    std::string out;
+    if (extra == 0) {
+      decoder->write(wire, out);
+      decoder->finish(out);
+      EXPECT(out == input);
+    } else EXPECT_THROWS_MATCHING(decoder->write(wire, out), "ResponseBodyTooLarge");
+
+    ASSERT(!ZSTD_isError(ZSTD_CCtx_reset(compressor.get(), ZSTD_reset_session_and_parameters)));
+    ASSERT(!ZSTD_isError(ZSTD_CCtx_setParameter(compressor.get(), ZSTD_c_windowLog, limits::kZstdWindowLog + extra)));
+    ASSERT(!ZSTD_isError(ZSTD_CCtx_setParameter(compressor.get(), ZSTD_c_contentSizeFlag, 0)));
+    ZSTD_inBuffer inputChunk{input.data(), blockBytes, 0};
+    ZSTD_outBuffer frame{compressed.data(), compressed.size(), 0};
+    ASSERT_EQ(ZSTD_compressStream2(compressor.get(), &frame, &inputChunk, ZSTD_e_flush), 0u);
+    ASSERT_EQ(ZSTD_compressStream2(compressor.get(), &frame, &inputChunk, ZSTD_e_end), 0u);
+    auto window = fetch::contentDecoder("zstd", "http://localhost");
+    const std::string_view windowWire(compressed.data(), frame.pos);
+    out.clear();
+    if (extra == 0) {
+      window->write(windowWire, out);
+      window->finish(out);
+      EXPECT_EQ(out.size(), blockBytes);
+    } else EXPECT_THROWS_MATCHING(window->write(windowWire, out), "ResponseBodyTooLarge");
+    ASSERT(!ZSTD_isError(ZSTD_CCtx_reset(compressor.get(), ZSTD_reset_session_and_parameters)));
+  }
+}
+#endif
