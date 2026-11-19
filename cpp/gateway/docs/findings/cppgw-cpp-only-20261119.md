@@ -4,7 +4,7 @@
 
 - [x] Start the report on the supplied Gemini integration tree.
 - [x] Merge the residuals branch and record the request-allowlist revert under STATE A.
-- [ ] Build and run the selected State A request tests.
+- [x] Build and run the selected State A request tests.
 - [x] Inventory tracked language sources, toolchain commands and runtime dependencies.
 - [x] Remove the historical comparison and formatter.
 - [x] Call the linked Linux confinement implementation directly.
@@ -12,7 +12,7 @@
 - [x] Remove unnecessary package runtime artifacts and offline tooling.
 - [x] Update CI and current operating documents.
 - [x] Add the ARM64 cutover checklist and runtime environment table.
-- [ ] Verify registrations, tracked files, workflows and whitespace.
+- [x] Verify registrations, tracked files, workflows and whitespace.
 - [ ] Build the gateway and run the selected release tests in native isolation.
 - [ ] Build and verify the portable package.
 - [ ] Record final results and leave the checkout clean.
@@ -49,3 +49,58 @@ The portable mock proof now checks refusal of a wrong launch manifest hash and a
 Updated the runtime, root, release and operator guides for the single-executable package. The runtime table covers the two production `UOS_GATEWAY_*` switches and every matching environment read by the native build and test tools. The cutover checklist uses the existing systemd draft, sealer and health contract. The Arch host, copied production state, live observation, switch and rollback remain UNVERIFIED.
 
 Pre-existing outside-scope content: `static/docs/llms-agents.md` still documents legacy auth-upload commands for the live service. It remains a public asset as supplied. The portable build still reports the checked-in runtime release SHA `unknown` through health. Archive identity is bound independently to the full commit and tree, but this health value blocks production acceptance under the existing exact-release requirement. No deployment or identity change was made.
+
+## Runner and exact commands
+
+The Linux ARM64 runner uses Ubuntu 24.04.5, kernel 7.0.0-1017-azure, four CPUs and Landlock ABI 8. Clang 21.1.8 uses the signed Noble LLVM repository (fingerprint `6084F3CF814B57C1CF12EFD515CF4D18AF4F7421`). GCC 14.2.0 built Boost 1.92.0 JSON and Container static archives. Installed the native development packages with `sudo apt-get install -y -qq clang-21 libclang-rt-21-dev mold ninja-build libssl-dev zlib1g-dev libicu-dev libbrotli-dev libzstd-dev util-linux iproute2 pkg-config`. Downloaded with `curl -q -fLsS --retry 3` and checked the Boost, ICU and SQLite archive hashes against the [existing verified pins](cppgw-input-limits-20261119.md#runner-and-exact-commands) before extraction. The reusable scratch root is `/var/tmp/cppgw-cpp-only-20261119`.
+
+```sh
+# In the extracted Boost source, after pinning gcc-14 in boost-user-config.jam.
+./bootstrap.sh --with-libraries=json,container
+./b2 -j2 --user-config=../boost-user-config.jam --with-json --with-container variant=release link=static threading=multi toolset=gcc-14 stage
+
+# In the separate icu-build and extracted SQLite source directories, respectively.
+../icu/source/configure --prefix="$scratch/icu78" --disable-tests --disable-samples --disable-extras --disable-static
+make -j2
+make install
+./configure --prefix="$scratch/sqlite" --disable-static --disable-readline CFLAGS='-O2 -DSQLITE_DQS=3'
+make -j1
+make install
+```
+
+The scratch test wrapper `run-release.sh` runs from the detached worktree at `$scratch/state-a`. It uses a fresh `run` directory for every invocation and the repository CI driver for all compilation, links and test isolation. The Python selector only restricts `links.all_tests()` before calling `driver.main()` with `--config release`. It selects closures containing either request source for STATE A and the patterns in `$scratch/final-groups.tsv` for final gates.
+
+```sh
+env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC   HOME="$run/home" TMPDIR="$run/tmp" CC=clang-21 CXX=clang++-21 UOS_CI_JOBS=4   UOS_CI_BUILD_DIR="$scratch/ci" UOS_CI_SQLITE_PREFIX="$scratch/sqlite"   PKG_CONFIG_PATH="$scratch/icu78/lib/pkgconfig:$scratch/sqlite/lib/pkgconfig"   UOS_CI_CXXFLAGS="-isystem $scratch/boost_1_92_0"   UOS_CI_LDFLAGS="-L$scratch/boost_1_92_0/stage/lib -Wl,--disable-new-dtags,-rpath,$scratch/icu78/lib:$scratch/sqlite/lib"   python3 -B "$scratch/selected.py" "$@"
+```
+
+STATE A ran `bash "$scratch/run-release.sh" state-a "$index" 10` for indices 0, 10, 20, 30, 40, 50 and 60. All receipts bind the exact STATE A commit and tree and unchanged input SHA-256 `3ab20c3a1b83656aa230cb33703ceff243f540672fa80668773045ea2db9194e`. The driver proved loopback-only networking in fresh network, mount and PID namespaces via `sudo`, dropped back to uid 1001, and probed SQLite 3.54.0 inside the boundary. Every linked test passed.
+
+| Group start | Binaries | Cases | Driver wall time |
+| --- | ---: | ---: | ---: |
+| 0 | 10 | 151 | 725.994 s |
+| 10 | 10 | 136 | 42.142 s |
+| 20 | 10 | 141 | 51.718 s |
+| 30 | 10 | 168 | 61.883 s |
+| 40 | 10 | 77 | 38.475 s |
+| 50 | 10 | 129 | 56.778 s |
+| 60 | 1 | 1 | 14.293 s |
+| Total | 61 | 803 | 991.283 s |
+
+The first group built all 371 STATE A production objects outside the checkout. Later groups reused them. `openai_compat_part11_test` passed 23 cases including both oversized-model checks.
+
+## Static checks and gates in progress
+
+```sh
+python3 cpp/gateway/tools/links.py --check
+git ls-files | grep -E '\.(ts|tsx|js|mjs|cjs|rs)$|Cargo|package\.json|bun\.lock|bunfig'
+git grep -nE '\b(bun|cargo|rustc|npm|node) ' -- .github cpp/gateway/packaging cpp/gateway/tools cpp/gateway/cmake
+git diff --check 13502438 HEAD
+"$scratch/bin/actionlint-1.7.12" -config-file "$scratch/actionlint.yaml" .github/workflows/cpp-gateway-ci.yml .github/workflows/cpp-gateway-release.yml
+```
+
+Registration resolved 449 binaries. The filename scan returned 14 tracked browser scripts under `static/` only. The command scan returned zero matches. Whitespace and both workflow checks passed. The first bare actionlint attempt flagged the existing `ubuntu-26.04-arm` and `macos-26` labels in its older catalog. The verified 1.7.12 release recognizes `macos-26`. Its temporary local configuration adds the pre-existing `ubuntu-26.04-arm` label for schema validation. No runner label or workflow trigger was changed.
+
+The final test worktree is now at `3d44d15e2db235f5b72f7b304eac51db6e873f28`, tree `662efec391f9153d4dcbecfd8d28d07a78a31789`. Its Release groups run sequentially with logs and receipts named `final-<group>` in scratch.
+
+The portable build runs from `$scratch/package-tree` at commit `d5454f1702eb22a89e7f6e570893a6ae5e844e7d`, tree `b5724b1ae685e43b05e59e41c5a10a6f90dd0bfb`, with the same shipping code and package inputs as the test tree. Its background command uses `env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 HOME="$run/home" TMPDIR="$run/tmp" /usr/bin/time -p bash cpp/gateway/packaging/portable/build.sh "$scratch/uos-gateway-linux-arm64.tar.gz"`. Poll `package-build.log` and `package-build.status`. When it completes, run the verifier from the same package worktree, with a fresh empty home and temporary root and a new evidence path.
