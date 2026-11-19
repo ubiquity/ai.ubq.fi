@@ -5,7 +5,9 @@ from concurrent.futures import ThreadPoolExecutor
 import ctypes
 import json
 from pathlib import Path
+import shutil
 import statistics
+import subprocess
 import sys
 import tempfile
 import threading
@@ -14,7 +16,7 @@ import time
 sys.path.insert(0, "/workspace/cpp/gateway/tests/production_smoke")
 from cases import ADMIN_TOKEN, API_TOKEN, CATALOG_MODEL, VERSION, checked, inference_body, synthetic_auth, usage
 from client import request
-from network import sha256, write_json
+from network import sha256, sparse_environment, write_json
 from process import GatewayProcess
 from upstream import Upstream
 
@@ -191,12 +193,38 @@ def exercise(gateway, upstream, binding):
                  "seccomp_filters": int(process["Seccomp_filters"])}
 
 
+def verify_startup_integrity(state, binding):
+    package = Path(binding["packageRoot"])
+    launch = state / "integrity.json"
+    environment = sparse_environment(state / "integrity")
+    manifest = {**binding, "schema": "uos-gateway-launch-v1", "stateRoot": str(state), "hostname": "127.0.0.1", "port": 0}
+
+    def refuse(document, root, expected):
+        write_json(launch, document)
+        result = subprocess.run([root / "ops/launch-native.sh", launch], cwd=state, env=environment,
+                                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
+        if result.returncode != 1 or expected not in result.stderr or any((state / ".data").iterdir()):
+            raise RuntimeError(f"Invalid immutable input crossed startup preflight: {result.returncode} {result.stderr}")
+
+    refuse({**manifest, "packageManifestSha256": "0" * 64}, package, "package manifest integrity check failed")
+    copy = state.parent / (state.name + "-tampered")
+    try:
+        shutil.copytree(package, copy)
+        (copy / "static/index.html").write_text("synthetic tamper\n")
+        refuse({**manifest, "packageRoot": str(copy)}, copy, "package file integrity check failed: static/index.html")
+    finally:
+        if copy.exists():
+            shutil.rmtree(copy)
+    return 2
+
+
 def run(state, cap):
     binding = json.loads((STAGED / "binding.json").read_text())
     package = Path(binding["packageRoot"])
     if sha256(package / "manifest.sha256") != binding["packageManifestSha256"]:
         raise RuntimeError("Staged package binding changed")
     (state / ".data").mkdir(mode=0o700)
+    integrity_refusals = verify_startup_integrity(state, binding)
     startup = state / "launch.json"
     upstream = CodexUpstream()
     environment = {"DENO_TIMELINE": "production", "DENO_DEPLOY_TOKEN": ADMIN_TOKEN}
@@ -229,7 +257,7 @@ def run(state, cap):
         if gateway is not None and not gateway.stop_monitor.is_set():
             gateway.close(force=True)
         upstream.close()
-    return {**result, "cap_mib": cap, "concurrency": CONCURRENCY, "reopened_accounted_requests": reopened,
+    return {**result, "cap_mib": cap, "concurrency": CONCURRENCY, "integrity_refusals": integrity_refusals, "reopened_accounted_requests": reopened,
             "binary_sha256": sha256(package / "bin/uos-gateway"), "manifest_sha256": binding["packageManifestSha256"]}
 
 
