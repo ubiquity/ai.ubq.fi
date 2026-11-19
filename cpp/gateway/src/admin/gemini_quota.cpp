@@ -10,6 +10,7 @@
 #include "uos/rt/number.hpp"
 #include "uos/rt/process.hpp"
 #include "uos/rt/string.hpp"
+#include "uos/upstream_wire.hpp"
 #include "uos/utils.hpp"
 
 #include <array>
@@ -189,7 +190,8 @@ namespace uos::admin::gemini_quota {
       auto turn = co_await std::move(task);
       auto snapshot = projectUsageCommand(turn.rawResult, nowMs);
       if (!snapshot) co_return unavailable("invalid_event");
-      co_await writeSnapshot(directory, *snapshot);
+      auto writing = writeSnapshot(directory, *snapshot);
+      co_await std::move(writing);
       co_return *snapshot;
     }
   }
@@ -278,7 +280,10 @@ namespace uos::admin::gemini_quota {
     } catch (const rt::JsError& error) {
       if (error.name == "AbortError") co_return http::openaiError(499, "Request was cancelled.", "request_cancelled");
       if (error.name == "TimeoutError") co_return http::openaiError(504, "Gemini quota refresh exceeded the gateway deadline.", "gateway_timeout");
-      co_return http::openaiError(503, error.message, "gemini_quota_refresh_failed");
+      upstream_wire::logRedactedUpstreamError("[ai.ubq.fi] Antigravity quota refresh failed:", std::current_exception());
+    } catch (...) {
+      upstream_wire::logRedactedUpstreamError("[ai.ubq.fi] Antigravity quota refresh failed:", std::current_exception());
     }
+    co_return http::openaiError(503, "Antigravity quota refresh is unavailable.", "gemini_quota_refresh_failed");
   }
 }

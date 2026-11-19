@@ -64,6 +64,7 @@ namespace uos::provider::gemini {
     bool streamJson = true;
     std::function<void()> onDispatch{};
     std::function<void()> onInit{};
+    double timeoutMs = 120'000;
   };
 
   struct GeminiCliTurn {

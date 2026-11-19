@@ -42,18 +42,24 @@
 #include "uos/kv.hpp"
 #include "uos/input_normalization.hpp"
 #include "uos/provider/gemini.hpp"
+#include "uos/provider/health.hpp"
 #include "uos/provider/presentation.hpp"
 #include "uos/provider/selection.hpp"
 #include "uos/rt/clock.hpp"
+#include "uos/rt/console.hpp"
 #include "uos/rt/env.hpp"
 #include "uos/rt/fs.hpp"
 #include "uos/rt/json.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/process.hpp"
 #include "uos/rt/test_async.hpp"
 
+#include <cerrno>
+#include <csignal>
 #include <cstdlib>
 #include <filesystem>
 #include <string>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <variant>
 
@@ -63,6 +69,11 @@ namespace gemini = uos::provider::gemini;
 namespace quota = uos::admin::gemini_quota;
 namespace api_key_policy = uos::api_key_policy;
 #define AWAIT(name, expression) auto name##Task = (expression); auto name = co_await std::move(name##Task)
+#define REAL_GEMINI_TEST_IMPL(name, id) \
+  static rt::Task<void> UOS_TEST_JOIN(geminiReal, id)(); \
+  TEST(name) { rt::Loop loop; rt::blockOn(loop, UOS_TEST_JOIN(geminiReal, id)()); } \
+  static rt::Task<void> UOS_TEST_JOIN(geminiReal, id)()
+#define REAL_GEMINI_TEST(name) REAL_GEMINI_TEST_IMPL(name, __COUNTER__)
 
 namespace {
   json::object usageResult() {
@@ -71,7 +82,7 @@ namespace {
   }
 
   gemini::GeminiCliRunner turnRunner(bool includeUsage = true) {
-    return [includeUsage](const gemini::GeminiCliOptions& command) -> rt::Task<gemini::GeminiCliTurn> {
+    return [includeUsage](const gemini::GeminiCliOptions& command) {
       const bool usage = command.prompt == "/usage";
       EXPECT_EQ(command.mode, usage ? std::string() : std::string("plan"));
       EXPECT_EQ(command.disableSlashCommands, !usage);
@@ -85,13 +96,44 @@ namespace {
         if (command.onDispatch) command.onDispatch();
         if (command.onInit) command.onInit();
       }
-      co_return turn;
+      return rt::Promise<gemini::GeminiCliTurn>::resolve(std::move(turn)).wait();
     };
   }
 
   json::value usageCommand() {
     return rt::jsonParse(R"({"command":{"name":"usage","data":{"groups":[{"name":"Gemini Models","buckets":[{"id":"gemini-weekly","remaining_fraction":0.986355185508728,"reset_time":"2026-11-25T19:04:49Z"}]},{"name":"Claude and GPT models","buckets":[{"id":"3p-weekly","remaining_fraction":1,"reset_time":"2026-11-25T19:38:03Z"}]}]}}})");
   }
+
+  struct RealCliFixture {
+    std::string originalDirectory = rt::process::cwd();
+    std::string root = rt::fs::mkdtempSync("/tmp/gemini-process-");
+    std::string home = root + "/home";
+    std::string pidPath = home + "/child-pid";
+    rt::env::ScopedEnvironment environment{{"HOME", home}, {"UOS_GATEWAY_ENABLE_ANTIGRAVITY", "1"}};
+
+    explicit RealCliFixture(std::string script) {
+      const std::string bin = home + "/.local/bin";
+      const std::string state = home + "/.gemini/antigravity-cli";
+      for (const auto& dir : {bin, state, root + "/.data"}) rt::fs::mkdirSync(dir, {.recursive = true, .mode = 0700});
+      rt::fs::writeFileSync(state + "/antigravity-oauth-token", "", {.flag = "wx", .mode = 0600});
+      rt::fs::writeFileSync(bin + "/agy", "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$$\" > \"$HOME/child-pid\"\n" + script, {.flag = "wx", .mode = 0700});
+      ASSERT(::chdir(root.c_str()) == 0);
+    }
+
+    ~RealCliFixture() {
+      if (::chdir(originalDirectory.c_str()) != 0) std::abort();
+      rt::fs::rmSync(root, {.recursive = true, .force = true});
+    }
+
+    void expectReaped() const {
+      const int pid = std::stoi(rt::fs::readFileSync(pidPath, "utf8"));
+      int status = 0;
+      const int waited = ::waitpid(pid, &status, WNOHANG);
+      const int error = errno;
+      EXPECT_EQ(waited, -1);
+      EXPECT_EQ(error, ECHILD);
+    }
+  };
 }
 
 TEST("Gemini model ids and subscription token accounting are explicit") {
@@ -184,7 +226,7 @@ ASYNC_TEST("Gemini quota refresh writes a private snapshot through the CLI usage
   co_return;
 }
 
-ASYNC_TEST("Gemini CLI receives only the minimal environment required for the owner CLI") {
+REAL_GEMINI_TEST("Gemini CLI receives only the minimal environment required for the owner CLI") {
   const std::string originalDirectory = rt::process::cwd();
   const std::string root = rt::fs::mkdtempSync("/tmp/gemini-cli-env-");
   const std::string home = rt::path::join(root, "home");
@@ -205,6 +247,14 @@ ASYNC_TEST("Gemini CLI receives only the minimal environment required for the ow
   rt::env::ScopedEnvironment environment{
     {"HOME", home}, {"PATH", "/usr/local/bin:/usr/bin:/bin"}, {"LANG", "C.UTF-8"}, {"UOS_GATEWAY_ENABLE_ANTIGRAVITY", "1"},
     {"UOS_AI_TOKEN", "must-not-leak"}, {"DEEPSEEK_API_KEY", "must-not-leak"}, {"METERED_API_KEY", "must-not-leak"}};
+  const auto clearParentEnvironment = rt::scopeExit([] {
+    ::unsetenv("UOS_AI_TOKEN");
+    ::unsetenv("DEEPSEEK_API_KEY");
+    ::unsetenv("METERED_API_KEY");
+  });
+  ASSERT_EQ(::setenv("UOS_AI_TOKEN", "synthetic-env-marker", 1), 0);
+  ASSERT_EQ(::setenv("DEEPSEEK_API_KEY", "synthetic-env-marker", 1), 0);
+  ASSERT_EQ(::setenv("METERED_API_KEY", "synthetic-env-marker", 1), 0);
   gemini::GeminiCliOptions options{.model = "gemini-3.8-flash-low", .prompt = "capture environment", .mode = "plan", .disableSlashCommands = true, .streamJson = false};
   AWAIT(turn, gemini::runGeminiCli(options));
   EXPECT_EQ(turn.response, "OK");
@@ -216,39 +266,64 @@ ASYNC_TEST("Gemini CLI receives only the minimal environment required for the ow
   EXPECT(captured.find("UOS_AI_TOKEN") == std::string::npos);
   EXPECT(captured.find("DEEPSEEK_API_KEY") == std::string::npos);
   EXPECT(captured.find("METERED_API_KEY") == std::string::npos);
+  EXPECT(captured.find("UOS_GATEWAY_ENABLE_ANTIGRAVITY") == std::string::npos);
+  EXPECT(captured.find("synthetic-env-marker") == std::string::npos);
   co_return;
 }
 
-ASYNC_TEST("Gemini CLI abort kills the process and returns through the request signal") {
-  const std::string originalDirectory = rt::process::cwd();
-  const std::string root = rt::fs::mkdtempSync("/tmp/gemini-cli-abort-");
-  const std::string home = rt::path::join(root, "home");
-  const std::string bin = rt::path::join(home, ".local/bin");
-  rt::fs::mkdirSync(bin, {.recursive = true, .mode = 0700});
-  rt::fs::mkdirSync(rt::path::join(root, ".data"), {.mode = 0700});
-  rt::fs::writeFileSync(rt::path::join(bin, "agy"), "#!/bin/sh\nexec /bin/sleep 30\n", {.flag = "wx", .mode = 0700});
-  auto cleanup = rt::scopeExit([root] { rt::fs::rmSync(root, {.recursive = true, .force = true}); });
-  auto restoreDirectory = rt::scopeExit([originalDirectory] { EXPECT_EQ(::chdir(originalDirectory.c_str()), 0); });
-  ASSERT(::chdir(root.c_str()) == 0);
-  rt::env::ScopedEnvironment environment{{"HOME", home}, {"PATH", "/usr/bin:/bin"}, {"UOS_GATEWAY_ENABLE_ANTIGRAVITY", "1"}};
-  gemini::setGeminiCliRunnerForTest({});
-  auto restoreRunner = rt::scopeExit([] { gemini::setGeminiCliRunnerForTest({}); });
-  gemini::GeminiCliOptions options{.model = "gemini-3.8-flash-low", .prompt = "wait", .signal = rt::AbortSignal::timeout(100),
-    .mode = "plan", .disableSlashCommands = true, .streamJson = false};
+REAL_GEMINI_TEST("Gemini CLI abort kills the process and returns through the request signal") {
+  const RealCliFixture fixture("trap '' TERM\nexec /bin/sleep 30\n");
+  const rt::AbortController controller;
+  const auto timer = rt::setTimeout([controller] { controller.abort(); }, 200);
+  const auto clear = rt::scopeExit([&] { rt::clearTimeout(timer); });
+  rt::RequestInit init{.method = "POST", .signal = controller.signal()};
+  const rt::Request request("https://ai.ubq.fi/v1/responses", init);
+  const gemini::GeminiHandlerOptions options{.refreshQuota = false};
+  const json::object raw{{"model", "gemini-3.8-flash-low"}, {"input", "wait"}};
   const double started = rt::performanceNow();
-  bool aborted = false;
-  try {
-    auto task = gemini::runGeminiCli(options);
-    static_cast<void>(co_await std::move(task));
-  } catch (...) {
-    aborted = true;
-  }
-  EXPECT(aborted);
+  AWAIT(response, gemini::handleGeminiResponses(request, raw, "gemini-3.8-flash-low", nullptr, options));
+  EXPECT_EQ(response.status(), 499);
   EXPECT(rt::performanceNow() - started < 2'000);
+  fixture.expectReaped();
   co_return;
 }
 
-ASYNC_TEST("Gemini CLI failures do not expose raw stderr to API clients") {
+REAL_GEMINI_TEST("Gemini CLI deadline kills and reaps a child that ignores SIGTERM") {
+  const RealCliFixture fixture("trap '' TERM\nexec /bin/sleep 30\n");
+  const gemini::GeminiCliOptions options{.model = "gemini-3.8-flash-low", .prompt = "deadline", .timeoutMs = 200};
+  auto task = gemini::runGeminiCli(options);
+  auto check = rt::test::expectRejects<rt::DOMException>(std::move(task), "Gemini CLI", "TimeoutError",
+    "Antigravity CLI exceeded the gateway deadline.", __FILE__, __LINE__);
+  co_await std::move(check);
+  fixture.expectReaped();
+}
+
+REAL_GEMINI_TEST("Gemini drains both CLI pipes before finishing a stdin write") {
+  const RealCliFixture fixture("head -c 98304 /dev/zero | tr '\\000' ' '\nhead -c 98304 /dev/zero >&2\ncat >/dev/null\n"
+    "printf '\\n%s\\n' '{\"status\":\"SUCCESS\",\"response\":\"input-drained\"}'\n");
+  const gemini::GeminiCliOptions options{.model = "gemini-3.8-flash-low", .prompt = std::string(1024 * 1024, 'x'), .timeoutMs = 3'000};
+  AWAIT(turn, gemini::runGeminiCli(options));
+  EXPECT_EQ(turn.response, "input-drained");
+  fixture.expectReaped();
+}
+
+REAL_GEMINI_TEST("Gemini reaps the child on stderr, stdout event and stdout aggregate limits") {
+  const std::vector<std::pair<std::string, std::string>> cases{
+    {"head -c 131073 /dev/zero >&2", "Antigravity stderr exceeded its gateway limit."},
+    {"head -c 4194305 /dev/zero", "Antigravity emitted an oversized stream-json event."},
+    {"yes ' ' | head -c " + std::to_string(rt::limits::kJsonDocumentBytes + 1), "Antigravity stdout exceeded its gateway limit."},
+  };
+  for (const auto& fixtureCase : cases) {
+    const RealCliFixture fixture("trap '' TERM\n" + fixtureCase.first + "\nexec /bin/sleep 30\n");
+    const gemini::GeminiCliOptions options{.model = "gemini-3.8-flash-low", .prompt = std::string(1024 * 1024, 'x'), .timeoutMs = 6'000};
+    auto task = gemini::runGeminiCli(options);
+    auto check = rt::test::expectRejects<rt::JsError>(std::move(task), "Gemini CLI", "limit error", fixtureCase.second.c_str(), __FILE__, __LINE__);
+    co_await std::move(check);
+    fixture.expectReaped();
+  }
+}
+
+REAL_GEMINI_TEST("Gemini CLI failures do not expose raw stderr to API clients") {
   const std::string originalDirectory = rt::process::cwd();
   const std::string root = rt::fs::mkdtempSync("/tmp/gemini-cli-redact-");
   const std::string home = rt::path::join(root, "home");
@@ -270,11 +345,16 @@ ASYNC_TEST("Gemini CLI failures do not expose raw stderr to API clients") {
   const rt::Request request("https://ai.ubq.fi/v1/responses", init);
   gemini::GeminiHandlerOptions options{.refreshQuota = false};
   const json::object raw{{"model", "gemini-3.8-flash-low"}, {"input", "Reply exactly GEMINI_OK."}, {"stream", false}};
+  rt::console::Capture logs({rt::console::Method::error});
   AWAIT(response, gemini::handleGeminiResponses(request, raw, "gemini-3.8-flash-low", nullptr, options));
   EXPECT_EQ(response.status(), 502);
   AWAIT(body, response.text());
   EXPECT(body.find("TOP_SECRET_CLI_DETAIL") == std::string::npos);
   EXPECT(body.find("gemini_cli_failed") != std::string::npos);
+  EXPECT(std::any_of(logs.calls().begin(), logs.calls().end(), [](const auto& call) {
+    return call.text.find("Antigravity CLI exited without a result") != std::string::npos;
+  }));
+  for (const auto& call : logs.calls()) EXPECT(call.text.find("TOP_SECRET_CLI_DETAIL") == std::string::npos);
   co_return;
 }
 
@@ -285,11 +365,11 @@ ASYNC_TEST("Gemini explicit quota refresh bypasses a fresh snapshot but normal r
   auto cleanup = rt::scopeExit([root] { rt::fs::rmSync(root, {.recursive = true, .force = true}); });
   int calls = 0;
   quota::GeminiQuotaOptions options;
-  options.runner = [&calls](const gemini::GeminiCliOptions&) -> rt::Task<gemini::GeminiCliTurn> {
+  options.runner = [&calls](const gemini::GeminiCliOptions&) {
     ++calls;
     gemini::GeminiCliTurn turn;
     turn.rawResult = usageCommand().as_object();
-    co_return turn;
+    return rt::Promise<gemini::GeminiCliTurn>::resolve(std::move(turn)).wait();
   };
   const double now = 1795031902000;
   AWAIT(first, quota::refreshSnapshot(data, options, now));
@@ -357,9 +437,9 @@ ASYNC_TEST("Gemini rejects caller tool declarations before dispatching the subsc
   const rt::Request request("https://ai.ubq.fi/v1/responses", init);
   bool dispatched = false;
   gemini::GeminiHandlerOptions options{.refreshQuota = false};
-  options.runner = [&dispatched](const gemini::GeminiCliOptions&) -> rt::Task<gemini::GeminiCliTurn> {
+  options.runner = [&dispatched](const gemini::GeminiCliOptions&) {
     dispatched = true;
-    co_return gemini::GeminiCliTurn{};
+    return rt::Promise<gemini::GeminiCliTurn>::resolve(gemini::GeminiCliTurn{}).wait();
   };
   const json::object raw{{"model", "gemini-3.8-flash-low"}, {"input", "Use the supplied tool."},
     {"tools", json::array{json::object{{"type", "function"}, {"name", "fixture"}}}}};
@@ -437,14 +517,14 @@ ASYNC_TEST("Gemini cancels admission when the CLI fails before transport") {
   const rt::Request request("https://ai.ubq.fi/v1/responses", init);
   int cancelled = 0;
   uos::openai_telemetry::UsageContext context;
-  context.beforeProviderDispatch = [&cancelled](api_key_policy::ApiKeyUsageProvider) -> rt::Task<std::optional<api_key_policy::ApiKeyProviderDispatch>> {
+  context.beforeProviderDispatch = [&cancelled](api_key_policy::ApiKeyUsageProvider) {
     api_key_policy::ApiKeyProviderDispatch dispatch;
     dispatch.markTransportStarted = [] {};
-    dispatch.cancelBeforeTransport = [&cancelled]() -> rt::Task<void> {
+    dispatch.cancelBeforeTransport = [&cancelled] {
       ++cancelled;
-      co_return;
+      return rt::Promise<void>::resolve().wait();
     };
-    co_return dispatch;
+    return rt::Promise<std::optional<api_key_policy::ApiKeyProviderDispatch>>::resolve(std::move(dispatch)).wait();
   };
   gemini::GeminiHandlerOptions options{
     .runner = [](const gemini::GeminiCliOptions&) -> rt::Task<gemini::GeminiCliTurn> {
@@ -470,9 +550,9 @@ ASYNC_TEST("Gemini maps an already-cancelled request to 499") {
   const rt::Request request("https://ai.ubq.fi/v1/responses", init);
   int dispatched = 0;
   uos::openai_telemetry::UsageContext context;
-  context.beforeProviderDispatch = [&dispatched](api_key_policy::ApiKeyUsageProvider) -> rt::Task<std::optional<api_key_policy::ApiKeyProviderDispatch>> {
+  context.beforeProviderDispatch = [&dispatched](api_key_policy::ApiKeyUsageProvider) {
     ++dispatched;
-    co_return api_key_policy::ApiKeyProviderDispatch{};
+    return rt::Promise<std::optional<api_key_policy::ApiKeyProviderDispatch>>::resolve(api_key_policy::ApiKeyProviderDispatch{}).wait();
   };
   gemini::GeminiHandlerOptions options{.runner = turnRunner(), .refreshQuota = false};
   const json::object raw{{"model", "gemini-3.8-flash-low"}, {"input", "Reply exactly GEMINI_OK."}, {"stream", false}};
@@ -512,6 +592,47 @@ ASYNC_TEST("Gemini Chat Completions streams the same provider answer and usage")
   EXPECT(body.find("\"usage\":{\"prompt_tokens\":8692") != std::string::npos);
   EXPECT(body.ends_with("data: [DONE]\n\n"));
   co_return;
+}
+
+ASYNC_TEST("Gemini Chat Completions can stream when the CLI supplies no token counts") {
+  rt::RequestInit init{.method = "POST"};
+  const rt::Request request("https://ai.ubq.fi/v1/chat/completions", init);
+  const gemini::GeminiHandlerOptions options{.runner = turnRunner(false), .refreshQuota = false};
+  const json::object raw{{"model", "gemini-3.8-flash-low"}, {"messages", json::array{json::object{{"role", "user"}, {"content", "Reply exactly GEMINI_OK."}}}},
+    {"stream", true}, {"stream_options", json::object{{"include_usage", true}}}};
+  AWAIT(response, gemini::handleGeminiChatCompletions(request, raw, "gemini-3.8-flash-low", nullptr, options));
+  EXPECT_EQ(response.status(), 200);
+  AWAIT(body, response.text());
+  EXPECT(body.find("GEMINI_OK") != std::string::npos);
+  EXPECT(body.find("\"usage\"") == std::string::npos);
+  EXPECT(body.ends_with("data: [DONE]\n\n"));
+}
+
+ASYNC_TEST("Gemini prompt limits and missing executables do not record upstream health failures") {
+  namespace health = uos::provider::health;
+  const RealCliFixture fixture("exit 1\n");
+  uos::kv::setKvForTest(std::make_shared<rt::MemoryKv>(rt::dateNow));
+  auto restore = rt::scopeExit([] { uos::kv::setKvForTest(nullptr); health::resetProviderHealthThrottleForTest(); });
+  health::resetProviderHealthThrottleForTest();
+  const auto record = health::recordGeminiProviderHealth("success", 200);
+  co_await record.wait();
+  const rt::RequestInit init{.method = "POST"};
+  const rt::Request request("https://ai.ubq.fi/v1/responses", init);
+  const gemini::GeminiHandlerOptions options{.refreshQuota = false};
+  const json::object oversized{{"model", "gemini-3.8-flash-low"}, {"input", std::string(8 * 1024 * 1024, 'x')}};
+  AWAIT(refused, gemini::handleGeminiResponses(request, oversized, "gemini-3.8-flash-low", nullptr, options));
+  EXPECT_EQ(refused.status(), 413);
+  ASSERT(!rt::fs::existsSync(fixture.pidPath));
+
+  rt::fs::rmSync(fixture.home + "/.local/bin/agy");
+  const json::object normal{{"model", "gemini-3.8-flash-low"}, {"input", "ordinary prompt"}};
+  AWAIT(missing, gemini::handleGeminiResponses(request, normal, "gemini-3.8-flash-low", nullptr, options));
+  EXPECT_EQ(missing.status(), 503);
+  AWAIT(body, missing.json());
+  EXPECT_EQ(rt::getString(*rt::get(body, "error"), "code"), "gemini_cli_unavailable");
+  AWAIT(state, health::getGeminiProviderHealth());
+  EXPECT_EQ(state.state, "healthy");
+  EXPECT(!state.last_error_at_ms);
 }
 
 ASYNC_TEST("authenticated gateway request routes to Gemini and records the subscription spend") {

@@ -340,6 +340,12 @@ namespace uos::rt::process {
 
   Promise<void> FileSink::flush() { return Promise<void>(flushSink(state_)); }
   Promise<void> FileSink::end() { return Promise<void>(endSink(state_)); }
+  void FileSink::close() noexcept {
+    state_->pending.clear();
+    state_->ended = true;
+    boost::system::error_code ignored;
+    state_->descriptor->close(ignored);
+  }
 
   struct Subprocess::State {
     int pid = -1;

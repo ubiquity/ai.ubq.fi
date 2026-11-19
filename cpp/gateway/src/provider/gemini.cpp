@@ -20,6 +20,7 @@
 #include "uos/rt/env.hpp"
 #include "uos/rt/fs.hpp"
 #include "uos/rt/json.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/number.hpp"
 #include "uos/rt/process.hpp"
 #include "uos/rt/string.hpp"
@@ -27,6 +28,7 @@
 
 #include <algorithm>
 #include <array>
+#include <csignal>
 #include <exception>
 #include <memory>
 #include <optional>
@@ -39,12 +41,10 @@ namespace uos::provider::gemini {
   namespace {
     namespace tel = openai_telemetry;
     namespace payload = deepseek::responses_payload;
-    namespace rs = responses_stream;
-
     constexpr std::size_t MAX_PROMPT_BYTES = 8 * 1024 * 1024;
-    constexpr std::size_t MAX_OUTPUT_BYTES = 32 * 1024 * 1024;
-    constexpr std::size_t MAX_STDERR_BYTES = 128 * 1024;
-    constexpr std::size_t MAX_LINE_BYTES = 4 * 1024 * 1024;
+    constexpr auto MAX_STDOUT_BYTES = rt::limits::kJsonDocumentBytes;
+    constexpr auto MAX_STDERR_BYTES = std::min<std::size_t>(128 * 1024, rt::limits::kTextInputBytes);
+    constexpr auto MAX_LINE_BYTES = std::min<std::size_t>(4 * 1024 * 1024, rt::limits::kSseLineBytes);
 
     struct GeminiError : rt::JsError {
       int status_code;
@@ -176,12 +176,13 @@ namespace uos::provider::gemini {
       const auto home = rt::env::get("HOME");
       if (!home || home->empty()) throw GeminiError(503, "gemini_cli_unavailable", "The Antigravity CLI home is unavailable.");
       const std::string path = rt::path::join(*home, ".local/bin/agy");
-      const auto info = rt::fs::lstatSync(path);
-      if (!info.isFile() || info.isSymbolicLink() || info.uid != rt::process::getuid() || info.nlink != 1 || (info.mode & 077) != 0 ||
-          (info.mode & 0100) == 0) {
-        throw GeminiError(503, "gemini_cli_unavailable", "The owner-private Antigravity CLI executable is unavailable.");
+      try {
+        const auto info = rt::fs::lstatSync(path);
+        if (info.isFile() && !info.isSymbolicLink() && info.uid == rt::process::getuid() && info.nlink == 1 &&
+            (info.mode & 077) == 0 && (info.mode & 0100) != 0) return path;
+      } catch (const rt::fs::ErrnoError&) {
       }
-      return path;
+      throw GeminiError(503, "gemini_cli_unavailable", "The owner-private Antigravity CLI executable is unavailable.");
     }
 
     std::string workRoot() {
@@ -194,23 +195,41 @@ namespace uos::provider::gemini {
       return data;
     }
 
-    rt::Task<std::string> readBounded(rt::ReadableStreamDefaultReader<rt::ByteChunk> reader, std::size_t maximum, std::string_view label) {
+    using PipeReader = rt::ReadableStreamDefaultReader<rt::ByteChunk>;
+
+    rt::Task<std::string> readBounded(PipeReader reader, std::size_t maximum, std::string_view label, bool jsonLines = false) {
       std::string output;
+      std::size_t lineBytes = 0;
       for (;;) {
-        const auto result = co_await reader.read();
+        auto reading = reader.read();
+        const auto result = co_await std::move(reading);
         if (result.done) break;
         if (!result.value) continue;
-        if (output.size() + result.value->size() > maximum) {
+        if (result.value->size() > maximum - output.size()) {
           throw GeminiError(502, "gemini_output_too_large", std::string(label) + " exceeded its gateway limit.");
         }
-        output.append(reinterpret_cast<const char*>(result.value->data()), result.value->size());
+        const std::string_view bytes(reinterpret_cast<const char*>(result.value->data()), result.value->size());
+        if (jsonLines) {
+          for (const char byte : bytes) {
+            if (byte == '\n') lineBytes = 0;
+            else if (++lineBytes > MAX_LINE_BYTES)
+              throw GeminiError(502, "gemini_output_too_large", "Antigravity emitted an oversized stream-json event.");
+          }
+        }
+        output.append(bytes);
       }
       co_return output;
     }
 
-    rt::Task<std::string> readBounded(rt::ByteStream stream, std::size_t maximum, std::string_view label) {
-      auto reader = stream.getReader();
-      co_return co_await readBounded(std::move(reader), maximum, label);
+    rt::Task<void> endChildInput(rt::process::FileSink sink) {
+      const auto ending = sink.end();
+      try {
+        co_await ending.wait();
+      } catch (const rt::fs::ErrnoError& error) {
+        // A CLI that exits early may still send a terminal error on its output pipes.
+        if (error.code != "EPIPE") throw;
+        sink.close();
+      }
     }
 
     std::vector<std::string> deniedActions(const json::value* value) {
@@ -232,27 +251,17 @@ namespace uos::provider::gemini {
 
     std::function<void(const std::string&)> childConfinement;
 
-    struct ParsedCli {
-      GeminiCliTurn turn;
-      std::string status;
-    };
-
     void logCliFailure(std::string_view label, std::string_view detail) {
-      const std::string trimmed = rt::trim(detail);
-      if (trimmed.empty()) return;
-      upstream_wire::logRedactedUpstreamError(std::string(label), rt::makeReason(rt::JsError(rt::slice(trimmed, 0, 1000))));
+      if (!detail.empty()) upstream_wire::logRedactedUpstreamError(std::string(label), rt::makeReason(rt::JsError("Antigravity diagnostic present")));
     }
 
-    ParsedCli parseCliOutput(std::string_view output, const std::string& stderrText, int exitCode) {
-      ParsedCli parsed;
+    GeminiCliTurn parseCliOutput(std::string_view output, const std::string& stderrText, int exitCode) {
       std::optional<json::object> result;
-      std::optional<json::object> lastObject;
       std::size_t start = 0;
       while (start < output.size()) {
         const std::size_t end = output.find('\n', start);
         const std::string_view line = output.substr(start, end == std::string_view::npos ? output.size() - start : end - start);
         start = end == std::string_view::npos ? output.size() : end + 1;
-        if (line.size() > MAX_LINE_BYTES) throw GeminiError(502, "gemini_output_too_large", "Antigravity emitted an oversized stream-json event.");
         if (rt::trim(line).empty()) continue;
         json::value event;
         try {
@@ -261,7 +270,6 @@ namespace uos::provider::gemini {
           throw GeminiError(502, "gemini_cli_invalid_json", "Antigravity emitted malformed stream-json output.");
         }
         if (!event.is_object()) continue;
-        lastObject = event.as_object();
         if (rt::getString(event, "event") == std::optional<std::string_view>("result")) {
           if (const auto* value = rt::getObject(event, "result")) result = *value;
         } else if (rt::getString(event, "status")) {
@@ -275,24 +283,23 @@ namespace uos::provider::gemini {
         }
         throw GeminiError(502, "gemini_cli_missing_result", "Antigravity CLI produced no result event.");
       }
-      const auto status = rt::getString(*result, "status");
-      if (status) parsed.status = *status;
-      const auto response = rt::getString(*result, "response");
-      if (response) parsed.turn.response = *response;
-      if (const auto conversation = rt::getString(*result, "conversation_id"); conversation && !conversation->empty()) parsed.turn.conversationId = *conversation;
-      parsed.turn.rawResult = *result;
-      if (const auto* usage = rt::getObject(*result, "usage")) parsed.turn.usage = *usage;
-      parsed.turn.deniedActions = deniedActions(rt::get(*result, "denied_actions"));
-      if (parsed.status != "SUCCESS") {
+      if (rt::getString(*result, "status") != std::optional<std::string_view>("SUCCESS") || exitCode != 0) {
         const auto error = rt::getString(*result, "error");
         logCliFailure("[ai.ubq.fi] Antigravity CLI returned an unsuccessful result:", error ? *error : stderrText);
         throw GeminiError(502, "gemini_cli_failed", "Antigravity CLI returned an unsuccessful result.");
       }
-      if (rt::trim(parsed.turn.response).empty() && !parsed.turn.deniedActions.empty()) {
+      GeminiCliTurn turn;
+      const auto response = rt::getString(*result, "response");
+      if (response) turn.response = *response;
+      turn.conversationId = upstream_wire::normalizeProviderRequestId(rt::get(*result, "conversation_id"));
+      if (const auto* usage = rt::getObject(*result, "usage")) turn.usage = *usage;
+      turn.deniedActions = deniedActions(rt::get(*result, "denied_actions"));
+      if (rt::trim(turn.response).empty() && !turn.deniedActions.empty()) {
         throw GeminiError(502, "gemini_tool_denied", "Antigravity requested a tool that headless gateway inference cannot approve.");
       }
-      if (rt::trim(parsed.turn.response).empty()) throw GeminiError(502, "gemini_empty_response", "Antigravity returned an empty response.");
-      return parsed;
+      if (rt::trim(turn.response).empty()) throw GeminiError(502, "gemini_empty_response", "Antigravity returned an empty response.");
+      turn.rawResult = std::move(*result);
+      return turn;
     }
   }
 
@@ -337,6 +344,12 @@ namespace uos::provider::gemini {
     if (!geminiOperatorOptIn()) throw GeminiError(503, "gemini_disabled", "Gemini subscription inference is not enabled on this gateway.");
     if (options.prompt.size() > MAX_PROMPT_BYTES) throw GeminiError(413, "gemini_prompt_too_large", "Gemini subscription prompt exceeds 8 MiB.");
     if (options.signal && options.signal->aborted()) rt::rethrow(options.signal->reason());
+    const rt::AbortController deadline;
+    const auto timer = rt::setTimeout([deadline] {
+      deadline.abort(rt::makeReason(rt::DOMException("Antigravity CLI exceeded the gateway deadline.", "TimeoutError")));
+    }, std::min(options.timeoutMs, 120'000.0));
+    const auto clearDeadline = rt::scopeExit([&] { rt::clearTimeout(timer); });
+    const auto signal = options.signal ? rt::AbortSignal::any({*options.signal, deadline.signal()}) : deadline.signal();
     const auto home = rt::env::get("HOME");
     if (!home || home->empty()) throw GeminiError(503, "gemini_cli_unavailable", "The Antigravity CLI home is unavailable.");
     const std::string executable = agyPath();
@@ -355,6 +368,11 @@ namespace uos::provider::gemini {
       command.insert(command.end(), {"--json-schema", schemaPath});
     }
     if (options.disableSlashCommands) command.insert(command.end(), "--disable-slash-commands");
+    std::string input;
+    if (options.streamJson) {
+      const json::object event{{"event", "user"}, {"message", json::object{{"content", options.prompt}}}};
+      input = rt::jsonStringify(event) + "\n";
+    }
     std::vector<std::pair<std::string, std::string>> environment{
       {"HOME", *home}, {"PATH", "/usr/local/bin:/usr/bin:/bin"}, {"TMPDIR", directory}, {"LANG", "C.UTF-8"}};
     rt::process::SpawnOptions spawnOptions{.cwd = directory, .env = std::move(environment),
@@ -362,32 +380,55 @@ namespace uos::provider::gemini {
     if (rt::process::platform == "linux") {
       spawnOptions.confine = [&directory] { if (childConfinement) childConfinement(directory); };
     }
-    const rt::process::Subprocess child = rt::process::spawn(std::move(command), std::move(spawnOptions));
-    auto terminateChild = rt::scopeExit([child] {
-      if (!child.exitCode()) child.kill();
-    });
-    if (options.onDispatch) options.onDispatch();
-    if (options.onInit) options.onInit();
-    rt::EventListener abort = [child] { child.kill(); };
-    if (options.signal) {
-      if (options.signal->aborted()) child.kill();
-      else options.signal->addEventListener("abort", abort, {.once = true});
+    const auto child = [&] {
+      try {
+        return rt::process::spawn(std::move(command), std::move(spawnOptions));
+      } catch (...) {
+        upstream_wire::logRedactedUpstreamError("[ai.ubq.fi] Antigravity CLI could not start:", std::current_exception());
+        throw GeminiError(503, "gemini_cli_unavailable", "The Antigravity CLI could not start.");
+      }
+    }();
+    const auto terminateChild = rt::scopeExit([&] { child.kill(SIGKILL); });
+    const auto exited = child.exited();
+    std::optional<rt::process::FileSink> stdinPipe;
+    std::optional<PipeReader> stdoutPipe, stderrPipe;
+    const auto stop = [&] {
+      child.kill(SIGKILL);
+      if (stdinPipe) stdinPipe->close();
+      if (stdoutPipe) static_cast<void>(stdoutPipe->cancelPromise().catch_(rt::ignoreRejection));
+      if (stderrPipe) static_cast<void>(stderrPipe->cancelPromise().catch_(rt::ignoreRejection));
+    };
+    rt::EventListener abort(stop);
+    const auto removeAbort = rt::scopeExit([&] { signal.removeEventListener("abort", abort); });
+    rt::Reason failure;
+    try {
+      if (options.onDispatch) options.onDispatch();
+      if (options.onInit) options.onInit();
+      stdoutPipe.emplace(child.stdout().getReader());
+      stderrPipe.emplace(child.stderr().getReader());
+      if (signal.aborted()) rt::rethrow(signal.reason());
+      signal.addEventListener("abort", abort, {.once = true});
+
+      const rt::Promise<std::string> stdoutBody(readBounded(*stdoutPipe, MAX_STDOUT_BYTES, "Antigravity stdout", true));
+      const rt::Promise<std::string> stderrBody(readBounded(*stderrPipe, MAX_STDERR_BYTES, "Antigravity stderr"));
+      auto inputWritten = rt::Promise<void>::resolve();
+      if (options.streamJson) {
+        stdinPipe.emplace(child.stdin());
+        stdinPipe->write(input);
+        inputWritten = rt::Promise<void>(endChildInput(*stdinPipe));
+      }
+      auto finished = rt::all(stdoutBody, stderrBody, inputWritten, exited);
+      const auto output = co_await finished.wait();
+      if (signal.aborted()) rt::rethrow(signal.reason());
+      co_return parseCliOutput(std::get<0>(output), std::get<1>(output), std::get<3>(output));
+    } catch (...) {
+      failure = std::current_exception();
     }
-    auto removeAbort = rt::scopeExit([options, abort] { if (options.signal) options.signal->removeEventListener("abort", abort); });
-    rt::Promise<std::string> stdoutBody(readBounded(child.stdout(), MAX_OUTPUT_BYTES, "Antigravity stdout"));
-    rt::Promise<std::string> stderrBody(readBounded(child.stderr(), MAX_STDERR_BYTES, "Antigravity stderr"));
-    if (options.streamJson) {
-      const json::object input{{"event", "user"}, {"message", json::object{{"content", options.prompt}}}};
-      auto sink = child.stdin();
-      sink.write(rt::jsonStringify(input) + "\n");
-      auto ending = sink.end();
-      co_await ending.wait();
-    }
-    const std::string output = co_await stdoutBody.wait();
-    const std::string errors = co_await stderrBody.wait();
-    const int exitCode = co_await child.exited().wait();
-    if (options.signal && options.signal->aborted()) rt::rethrow(options.signal->reason());
-    co_return parseCliOutput(output, errors, exitCode).turn;
+    stop();
+    const auto reaped = co_await exited.wait();
+    static_cast<void>(reaped);
+    if (signal.aborted()) rt::rethrow(signal.reason());
+    rt::rethrow(failure);
   }
 
   namespace {
@@ -483,12 +524,17 @@ namespace uos::provider::gemini {
       } catch (const api_key_policy::ApiKeyQuotaDispatchError&) {
         return false;
       } catch (const GeminiError& error) {
-        return error.status_code >= 500;
+        return error.status_code >= 500 && error.status_code != 503;
       } catch (const rt::JsError& error) {
         return error.name != "AbortError" && error.name != "TimeoutError";
       } catch (...) {
         return true;
       }
+    }
+
+    rt::Response unavailableCliResponse() {
+      if (geminiOperatorOptIn()) return http::openaiError(503, "The Antigravity CLI is unavailable.", "gemini_cli_unavailable");
+      return http::openaiError(503, "Gemini subscription inference is not enabled on this gateway.", "gemini_disabled");
     }
 
     struct GeminiAdmissionGuard {
@@ -537,23 +583,28 @@ namespace uos::provider::gemini {
     GeminiHandlerOptions effectiveOptions = handlerOptions;
     if (!effectiveOptions.runner && testRunner()) effectiveOptions.runner = *testRunner();
     if (!effectiveOptions.runner && !geminiCliConfigured())
-      co_return http::openaiError(503, "Gemini subscription inference is not enabled on this gateway.", "gemini_disabled");
+      co_return unavailableCliResponse();
     std::optional<GeminiCliTurn> turn;
     rt::Reason failure;
     bool admitted = false;
+    bool streamRequested = false;
+    bool includeUsage = false;
     try {
       const auto model = geminiUpstreamModelFor(modelRaw);
       if (!model) throw GeminiError(400, "gemini_model_unknown", "Gemini subscription does not support model " + modelRaw + ".");
       if (hasDeclaredTools(rawRecord)) throw GeminiError(400, "gemini_tools_unsupported", "Gemini subscription Chat Completions is text-only and does not translate caller tools.");
       auto prepared = prepareCommon(rawRecord, promptForChat(rawRecord));
       prepared.reasoning = reasoningForModel(*model);
+      streamRequested = prepared.stream;
+      includeUsage = prepared.includeUsage;
       if (usageContext && usageContext->responseTelemetry) {
         usageContext->responseTelemetry->provider = "gemini";
         usageContext->responseTelemetry->reasoning = prepared.reasoning;
         usageContext->responseTelemetry->outputTokenAllowance = rt::getNumber(rt::get(rawRecord, "max_completion_tokens"));
       }
       const tel::RecordRequestUsageDetails details{.model = modelRaw, .route = "chat.completions", .stream = prepared.stream, .reasoning = prepared.reasoning};
-      co_await tel::recordRequestUsage(usageContext, details).wait();
+      const auto recording = tel::recordRequestUsage(usageContext, details);
+      co_await recording.wait();
       auto task = runWithAdmission(prepared, *model, usageContext, effectiveOptions, requestSignal, admitted);
       turn = co_await std::move(task);
     } catch (...) {
@@ -577,19 +628,13 @@ namespace uos::provider::gemini {
     tel::recordStreamTerminalType(usageContext, "response.completed");
     tel::recordStreamTerminal(usageContext);
     health::recordGeminiProviderHealth("success", 200, {}, turn->conversationId);
-    if (!turn->conversationId) { /* A successful result without an ID remains successful; no correlation is invented. */ }
     rt::Headers headers{{"x-uos-upstream", "gemini"}};
     if (turn->conversationId) headers.set("x-uos-provider-request-id", *turn->conversationId);
-    if (!std::get<request_policy::ParseStreamFieldOk>(request_policy::parseStreamField(rt::get(rawRecord, "stream"))).value) {
-      json::object body{{"id", id}, {"object", "chat.completion"}, {"created", rt::makeNumber(created)}, {"model", modelRaw},
-        {"choices", json::array{json::object{{"index", rt::makeNumber(0.0)}, {"message", json::object{{"role", "assistant"}, {"content", turn->response}}},
-          {"finish_reason", "stop"}}}}};
-      if (usage) body["usage"] = chatUsageObject(*usage);
-      if (!turn->deniedActions.empty()) body["uos_warnings"] = json::value_from(turn->deniedActions);
+    if (!streamRequested) {
+      auto body = syntheticCompletion(id, modelRaw, created, turn->response, usage);
+      if (!turn->deniedActions.empty()) body["uos_warnings"] = json::array{"Antigravity requested a tool that headless gateway inference cannot approve."};
       co_return http::json(200, body, headers);
     }
-    const auto streamOptions = request_policy::parseChatStreamOptions(rt::get(rawRecord, "stream_options"));
-    const bool includeUsage = std::get<request_policy::ParseChatStreamOptionsOk>(streamOptions).includeUsage;
     std::string stream = "data: " + rt::jsonStringify(json::object{{"id", id}, {"object", "chat.completion.chunk"}, {"created", rt::makeNumber(created)},
       {"model", modelRaw}, {"choices", json::array{json::object{{"index", rt::makeNumber(0.0)}, {"delta", json::object{{"role", "assistant"}, {"content", turn->response}}},
         {"finish_reason", "stop"}}}}}) + "\n\n";
@@ -607,7 +652,7 @@ namespace uos::provider::gemini {
     GeminiHandlerOptions effectiveOptions = handlerOptions;
     if (!effectiveOptions.runner && testRunner()) effectiveOptions.runner = *testRunner();
     if (!effectiveOptions.runner && !geminiCliConfigured())
-      co_return http::openaiError(503, "Gemini subscription inference is not enabled on this gateway.", "gemini_disabled");
+      co_return unavailableCliResponse();
     std::optional<GeminiCliTurn> turn;
     rt::Reason failure;
     bool admitted = false;
@@ -629,7 +674,8 @@ namespace uos::provider::gemini {
         usageContext->responseTelemetry->semanticOutputObserved = false;
       }
       const tel::RecordRequestUsageDetails details{.model = modelRaw, .route = "responses", .stream = prepared.stream, .reasoning = prepared.reasoning};
-      co_await tel::recordRequestUsage(usageContext, details).wait();
+      const auto recording = tel::recordRequestUsage(usageContext, details);
+      co_await recording.wait();
       auto task = runWithAdmission(prepared, *model, usageContext, effectiveOptions, requestSignal, admitted);
       turn = co_await std::move(task);
     } catch (...) {
@@ -660,7 +706,7 @@ namespace uos::provider::gemini {
     tel::recordStreamTerminal(usageContext);
     health::recordGeminiProviderHealth("success", 200, {}, turn->conversationId);
     auto body = payload::toDeepSeekResponsesPayload(completion, modelRaw, responseId, echo);
-    if (!turn->deniedActions.empty()) body["uos_warnings"] = json::value_from(turn->deniedActions);
+    if (!turn->deniedActions.empty()) body["uos_warnings"] = json::array{"Antigravity requested a tool that headless gateway inference cannot approve."};
     if (!streamRequested) co_return http::json(200, body, headers);
     auto translator = deepseek::responses_stream::createDeepSeekResponsesStreamTranslator(modelRaw, responseId, echo, created);
     auto events = translator.open();

@@ -149,6 +149,8 @@ namespace uos::rt::process {
     Promise<void> flush();
     // `await sink.end()`: flushes, then closes the pipe (the child sees EOF).
     Promise<void> end();
+    // Discard buffered input and cancel a pending write when terminating a child.
+    void close() noexcept;
 
   private:
     std::shared_ptr<State> state_;
