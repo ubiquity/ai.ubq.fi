@@ -256,7 +256,10 @@ namespace uos::provider::health {
       std::shared_ptr<rt::Kv> kv = co_await kvPromise.wait();
       if (!kv) co_return unknownView();
       std::vector<rt::Promise<rt::KvEntryMaybe<>>> reads;
-      for (const std::string_view record : PROVIDER_RECORDS) reads.push_back(rt::Promise<rt::KvEntryMaybe<>>(kv->get(providerHealthKey(provider, identity, record))));
+      for (const std::string_view record : PROVIDER_RECORDS) {
+        auto read = kv->get(providerHealthKey(provider, identity, record));
+        reads.emplace_back(rt::detail::keepAlive(kv, std::move(read)));
+      }
       auto everything = rt::all(std::move(reads));
       const std::vector<rt::KvEntryMaybe<>> entries = co_await everything.wait();
       std::vector<ProviderHealthObservation> observations;

@@ -136,8 +136,12 @@ namespace uos::embeddings::handlers {
         }
         const auto unique = rt::arrayFrom(buckets.values());
         std::vector<rt::Promise<rt::KvEntryMaybe<>>> pending;
-        for (const auto& item : unique) pending.emplace_back(kv->get(embeddingsCacheKey(parsed.profile.cache_profile_key, item.hash)));
-        const auto entries = co_await rt::all(std::move(pending)).wait();
+        for (const auto& item : unique) {
+          auto read = kv->get(embeddingsCacheKey(parsed.profile.cache_profile_key, item.hash));
+          pending.emplace_back(rt::detail::keepAlive(kv, std::move(read)));
+        }
+        auto reads = rt::all(std::move(pending));
+        const auto entries = co_await reads.wait();
         for (std::size_t i = 0; i < unique.size(); ++i) {
           const auto& cached = entries[i].value["embedding"];
           if (isValidEmbeddingVector(cached, parsed.profile.dimensions)) {
@@ -260,7 +264,7 @@ namespace uos::embeddings::handlers {
         for (std::size_t i = 0; i < items.size(); ++i) {
           for (auto idx : items[i].indices) vectorsByIndex[idx] = vectors[i];
           if (kv) {
-            auto task = writeEmbeddingsCacheEntryBestEffort(*kv, parsed.profile.cache_profile_key, items[i].hash, vectors[i], rt::dateNow(), deadlineMs);
+            auto task = writeEmbeddingsCacheEntryBestEffort(kv, parsed.profile.cache_profile_key, items[i].hash, vectors[i], rt::dateNow(), deadlineMs);
             const auto ignored = co_await jsAwait(std::move(task));
             (void)ignored;
           }

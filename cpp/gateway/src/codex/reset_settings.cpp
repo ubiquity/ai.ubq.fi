@@ -15,6 +15,11 @@ namespace uos::codex::reset_settings {
   namespace {
     rt::KvGetOptions strongRead() { return rt::KvGetOptions{.consistency = rt::KvConsistencyLevel::strong}; }
 
+    rt::Task<rt::KvEntryMaybe<>> readWithStore(std::shared_ptr<rt::Kv> kv, rt::KvKey key) {
+      auto read = kv->get(std::move(key), strongRead());
+      return rt::detail::keepAlive(std::move(kv), std::move(read));
+    }
+
     // A stored row as the TS reads it (`unknown`): JSON-shaped parts as they are, an undefined member
     // absent and an undefined element or hole null; any other value (a Date, Map, Uint8Array, KvU64,
     // bigint, ...) a member-less object. parseCodexAuthPool rejects that object exactly where it
@@ -61,8 +66,8 @@ namespace uos::codex::reset_settings {
     const rt::KvEntryMaybe<> marker = co_await markerRead.wait();
     if (!marker.value.isNull()) co_return std::string("done");
 
-    rt::Promise<rt::KvEntryMaybe<>> legacyRead(kv->get(CODEX_BANKED_RESET_USAGE_LEGACY_KEY, strongRead()));
-    rt::Promise<rt::KvEntryMaybe<>> poolRead(kv->get(auth::CODEX_AUTH_POOL_KV_KEY, strongRead()));
+    rt::Promise<rt::KvEntryMaybe<>> legacyRead(readWithStore(kv, CODEX_BANKED_RESET_USAGE_LEGACY_KEY));
+    rt::Promise<rt::KvEntryMaybe<>> poolRead(readWithStore(kv, auth::CODEX_AUTH_POOL_KV_KEY));
     auto reads = rt::all(std::move(legacyRead), std::move(poolRead));
     const std::tuple<rt::KvEntryMaybe<>, rt::KvEntryMaybe<>> both = co_await reads.wait();
     const rt::KvEntryMaybe<>& legacy = std::get<0>(both);
@@ -106,8 +111,8 @@ namespace uos::codex::reset_settings {
      * current defaults instead of inheriting a seeded opt-out.
      */
     rt::Task<void> ensureLegacyGlobalOptOutMigratedForAccount(std::shared_ptr<rt::Kv> kv, std::string accountIdHash) {
-      rt::Promise<rt::KvEntryMaybe<>> markerRead(kv->get(CODEX_RESET_USAGE_MIGRATION_KEY, strongRead()));
-      rt::Promise<rt::KvEntryMaybe<>> legacyRead(kv->get(CODEX_BANKED_RESET_USAGE_LEGACY_KEY, strongRead()));
+      rt::Promise<rt::KvEntryMaybe<>> markerRead(readWithStore(kv, CODEX_RESET_USAGE_MIGRATION_KEY));
+      rt::Promise<rt::KvEntryMaybe<>> legacyRead(readWithStore(kv, CODEX_BANKED_RESET_USAGE_LEGACY_KEY));
       auto reads = rt::all(std::move(markerRead), std::move(legacyRead));
       const std::tuple<rt::KvEntryMaybe<>, rt::KvEntryMaybe<>> both = co_await reads.wait();
       const rt::KvEntryMaybe<>& marker = std::get<0>(both);

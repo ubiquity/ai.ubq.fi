@@ -163,9 +163,11 @@ namespace uos::embeddings::ledger {
       std::vector<rt::Promise<rt::KvEntryMaybe<>>> reads;
       for (double index = 0; index < *record.response_chunk_count; index += 1) {
         rt::KvKey chunkKey{lease.responseKeyPrefix, responseGeneration, index};
-        reads.push_back(rt::Promise<rt::KvEntryMaybe<>>(lease.kv->get(std::move(chunkKey))));
+        auto read = lease.kv->get(std::move(chunkKey));
+        reads.emplace_back(rt::detail::keepAlive(lease.kv, std::move(read)));
       }
-      const std::vector<rt::KvEntryMaybe<>> chunks = co_await rt::all(std::move(reads)).wait();
+      auto allReads = rt::all(std::move(reads));
+      const std::vector<rt::KvEntryMaybe<>> chunks = co_await allReads.wait();
       for (const rt::KvEntryMaybe<>& entry : chunks)
         if (!entry.value.isString()) co_return std::nullopt;
       std::vector<std::string> parts;

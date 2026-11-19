@@ -123,16 +123,21 @@ namespace uos::embeddings::voyage {
       const auto commit = co_await jsAwait(operation->commit());
       co_return CacheEvictionOutcome{commit.ok, false};
     }
-    rt::Task<EmbeddingsCacheEvictResult> evictOldestEmbeddingsCacheEntries(rt::Kv& kv, double count) {
-      const auto candidates = co_await jsAwait(listEmbeddingsCacheEvictionCandidates(kv, count));
+    rt::Task<EmbeddingsCacheEvictResult> evictOldestEmbeddingsCacheEntries(std::shared_ptr<rt::Kv> kv, double count) {
+      auto listing = listEmbeddingsCacheEvictionCandidates(*kv, count);
+      const auto candidates = co_await jsAwait(std::move(listing));
       if (candidates.empty()) co_return EmbeddingsCacheEvictResult{0, 0};
       std::vector<rt::Promise<rt::KvEntryMaybe<>>> pending;
-      for (const auto& candidate : candidates) pending.emplace_back(kv.get(embeddingsCacheIndexByHashKey(candidate.cacheProfileKey, candidate.hash)));
-      const auto byHashEntries = co_await rt::all(std::move(pending)).wait();
+      for (const auto& candidate : candidates) {
+        auto read = kv->get(embeddingsCacheIndexByHashKey(candidate.cacheProfileKey, candidate.hash));
+        pending.emplace_back(rt::detail::keepAlive(kv, std::move(read)));
+      }
+      auto reads = rt::all(std::move(pending));
+      const auto byHashEntries = co_await reads.wait();
       double evictedEmbeddings = 0;
       double deletedStaleIndexKeys = 0;
       for (std::size_t i = 0; i < candidates.size(); ++i) {
-        auto task = evictEmbeddingsCacheCandidate(kv, candidates[i], byHashEntries[i]);
+        auto task = evictEmbeddingsCacheCandidate(*kv, candidates[i], byHashEntries[i]);
         const auto outcome = co_await jsAwait(std::move(task));
         if (outcome.evicted) ++evictedEmbeddings;
         if (outcome.deletedStaleIndexKey) ++deletedStaleIndexKeys;
@@ -141,14 +146,15 @@ namespace uos::embeddings::voyage {
     }
   }
 
-  rt::Task<EmbeddingsCacheWriteResult> writeEmbeddingsCacheEntryBestEffort(rt::Kv& kv, std::string cacheProfileKey, std::string hash,
+  rt::Task<EmbeddingsCacheWriteResult> writeEmbeddingsCacheEntryBestEffort(std::shared_ptr<rt::Kv> kv, std::string cacheProfileKey, std::string hash,
                                                                        std::vector<double> embedding, double createdAtMs, double deadlineMs) {
     double evictBatch = ledger::EMBEDDINGS_CACHE_EVICT_BATCH;
     for (int attempt = 0; attempt <= ledger::EMBEDDINGS_CACHE_QUOTA_MAX_RETRIES; ++attempt) {
       if (rt::dateNow() >= deadlineMs) co_return EmbeddingsCacheWriteResult{false};
       rt::Reason error;
       try {
-        const auto result = co_await jsAwait(writeEmbeddingsCacheEntry(kv, cacheProfileKey, hash, embedding, createdAtMs));
+        auto writing = writeEmbeddingsCacheEntry(*kv, cacheProfileKey, hash, embedding, createdAtMs);
+        const auto result = co_await jsAwait(std::move(writing));
         co_return result;
       } catch (...) { error = std::current_exception(); }
       if (!isEmbeddingsCacheQuotaError(error)) {
@@ -158,7 +164,8 @@ namespace uos::embeddings::voyage {
       // Evict globally so a new profile cannot be starved by another profile's entries.
       rt::Reason evictError;
       try {
-        const auto evicted = co_await jsAwait(evictOldestEmbeddingsCacheEntries(kv, evictBatch));
+        auto evicting = evictOldestEmbeddingsCacheEntries(kv, evictBatch);
+        const auto evicted = co_await jsAwait(std::move(evicting));
         rt::console::warn("[ai.ubq.fi] embeddings_cache quota eviction requesting_profile=" + cacheProfileKey + " scope=global evicted=" +
           rt::numberToString(evicted.evicted_embeddings) + " stale_index_deleted=" + rt::numberToString(evicted.deleted_stale_index_keys) +
           " batch=" + rt::numberToString(evictBatch));

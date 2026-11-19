@@ -294,7 +294,7 @@ namespace uos::embeddings::jobs {
           currentRaw = patchJob(currentRaw, patch);
         }
         for (std::size_t i = 0; i < chunk.size(); ++i) {
-          auto task = writeEmbeddingsCacheEntryBestEffort(*params.kv, currentJob.cache_profile_key, chunk[i].hash, upstream.vectors[i], rt::dateNow(), params.deadlineMs);
+          auto task = writeEmbeddingsCacheEntryBestEffort(params.kv, currentJob.cache_profile_key, chunk[i].hash, upstream.vectors[i], rt::dateNow(), params.deadlineMs);
           const auto ignored = co_await jsAwait(std::move(task));
           (void)ignored;
         }
