@@ -1,9 +1,15 @@
 # Runtime deviations from Bun
 
-The gateway keeps the application and protocol behavior described in [PORTING.md](../PORTING.md). This record covers deliberate generic runtime differences and the evidence that bounds them.
+The gateway keeps the application and protocol behavior described in [PORTING.md](../PORTING.md). This record covers deliberate differences and their verification.
 
 The full Release and sanitizer runs on the combined Linux ARM64 tree passed **451 binaries and 5,186 cases**
 per profile. [Combined verification](findings/cppgw-combine-1-20261119.md)
+
+## Inference request validation
+
+Native Chat Completions returns HTTP 400 for an unsupported `messages[i].role`. Native Responses returns the same OpenAI-style `invalid_request_error` for an unsupported `tools[i].type`. Both checks run before provider dispatch and quota commitment. The pinned Bun gateway forwards the two invalid requests in the conformance suite and receives HTTP 200 from its mock provider.
+
+The shared checks use the role and tool variants from the pinned OpenAI request specification, plus the OpenRouter web tool aliases covered by the compatibility fixtures. Existing provider-specific validation still applies when a recognized value reaches its route. The conformance suite checks Bun's HTTP 200 and one dispatch alongside native HTTP 400 and zero dispatches, and reports both exchanges as native stricter than reference. [Conformance cases](../conformance/cases.json)
 
 ## JSON
 
