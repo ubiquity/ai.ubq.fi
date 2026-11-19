@@ -3435,7 +3435,8 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
     }
 
     rt::Task<std::optional<PasskeyUserRecord>> getUserByHandle(std::shared_ptr<rt::Kv> kv, std::string handle) {
-      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(passkeyHandleKey(handle));
+      const rt::KvKey handleKey = passkeyHandleKey(handle);
+      const rt::KvEntryMaybe<> userIdEntry = co_await kv->get(handleKey);
       if (!userIdEntry.value.truthy()) co_return std::nullopt;
       const rt::KvKey userKey = authKey("users", userIdEntry.value);
       const rt::KvEntryMaybe<> userEntry = co_await kv->get(userKey);
@@ -3532,7 +3533,8 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
   }
 
   rt::Task<SavedPasskeyRegistration> saveVerifiedPasskeyRegistration(std::shared_ptr<rt::Kv> kv, SaveVerifiedPasskeyRegistrationInput input) {
-    const rt::KvEntryMaybe<> handleEntry = co_await kv->get(passkeyHandleKey(input.handle));
+    const rt::KvKey handleKey = passkeyHandleKey(input.handle);
+    const rt::KvEntryMaybe<> handleEntry = co_await kv->get(handleKey);
     if (handleEntry.value.truthy() && !(handleEntry.value.isString() && handleEntry.value.asString() == input.userId)) {
       co_return SavedPasskeyRegistrationRejected{.response = conflict("A passkey account already exists for this username")};
     }
@@ -3547,7 +3549,8 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
       .created_at_ms = createdAtMs,
     };
 
-    const rt::KvEntryMaybe<> existingUserEntry = co_await kv->get(passkeyUserKey(input.userId));
+    const rt::KvKey userKey = passkeyUserKey(input.userId);
+    const rt::KvEntryMaybe<> existingUserEntry = co_await kv->get(userKey);
     PasskeyUserRecord userRecord;
     rt::KvValue storedUser;
     std::optional<PasskeyUserRecord> existing;
@@ -3610,7 +3613,8 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
       (void)co_await operation->commit();
       co_return std::nullopt;
     }
-    const rt::KvEntryMaybe<> userEntry = co_await kv->get(passkeyUserKey(session.user_id));
+    const rt::KvKey userKey = passkeyUserKey(session.user_id);
+    const rt::KvEntryMaybe<> userEntry = co_await kv->get(userKey);
     if (!userEntry.value.truthy()) co_return std::nullopt;
     co_return PasskeySession{.token = token, .user = storedRecord<PasskeyUserRecord>(userEntry.value), .session = session};
   }
@@ -4041,7 +4045,8 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
     const rt::KvKey& credentialKey = storedCredential->key;
     const PasskeyCredentialRecord& credential = storedCredential->credential;
     const std::string& versionstamp = storedCredential->versionstamp;
-    const rt::KvEntryMaybe<> userEntry = co_await kv->get(passkeyUserKey(credential.user_id));
+    const rt::KvKey userKey = passkeyUserKey(credential.user_id);
+    const rt::KvEntryMaybe<> userEntry = co_await kv->get(userKey);
     if (!userEntry.value.truthy()) co_return http::openaiError(401, "Unauthorized", std::string("invalid_api_key"));
     const PasskeyUserRecord user = storedRecord<PasskeyUserRecord>(userEntry.value);
 
@@ -4123,7 +4128,10 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
     if (session) {
       auto opening = ::uos::kv::getKv();
       const std::shared_ptr<rt::Kv> kv = co_await opening.wait();
-      if (kv) co_await kv->delete_(passkeySessionKey(session->token));
+      if (kv) {
+        const rt::KvKey sessionKey = passkeySessionKey(session->token);
+        co_await kv->delete_(sessionKey);
+      }
     }
     rt::ResponseInit init;
     init.status = 204;

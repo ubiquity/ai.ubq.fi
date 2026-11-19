@@ -111,6 +111,7 @@ namespace uos::models::openrouter_models {
 
   // An empty OpenRouterFetch is null.
   void setOpenRouterModelsFetchForTest(OpenRouterFetch fetcher);
+  void setOpenRouterIndexAllocationFailureForTest(bool fail);
 
   // The options of fetchOpenRouterModels; an empty fetcher is undefined.
   struct FetchOpenRouterModelsOptions {

@@ -59,6 +59,21 @@ namespace {
   std::string origin(const wire::NetAddr& address) { return "http://127.0.0.1:" + rt::numberToString(address.port); }
 }
 
+ASYNC_TEST("dropping a delivery handoff releases its request signal") {
+  const auto completed = rt::withResolvers<void>();
+  std::weak_ptr<void> observer;
+  {
+    const rt::AbortController caller;
+    const auto signal = caller.signal();
+    observer = signal.state();
+    const auto abandoned = handler::serve_handler::createRequestDeliveryLifecycle(signal, completed.promise);
+    EXPECT(!abandoned.signal.aborted());
+  }
+  EXPECT(observer.expired());
+  completed.resolve();
+  co_await rt::microtask();
+}
+
 ASYNC_TEST("serve.ts classifies delivered and client-cancelled SSE responses from real HTTP completion") {
   fixture::Isolation isolation;
   ScopedLoopbackFetch network;

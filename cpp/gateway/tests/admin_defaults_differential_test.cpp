@@ -38,6 +38,7 @@
 #include "uos/admin/defaults.hpp"
 #include "uos/codex/auth.hpp"
 #include "uos/config.hpp"
+#include "uos/defaults.hpp"
 #include "uos/kv.hpp"
 #include "uos/runtime_config.hpp"
 #include "uos/metered_quota.hpp"
@@ -74,6 +75,16 @@ namespace {
       co_return entry;
     }
   };
+  class RejectingDefaultsStore final : public rt::ForwardingKv {
+  public:
+    explicit RejectingDefaultsStore(rt::Kv& store) : rt::ForwardingKv(store) {}
+    rt::Task<rt::KvEntryMaybe<>> get(rt::KvKey key, rt::KvGetOptions options) override {
+      if (key == uos::defaults::DEFAULT_KERNEL_POLICY_LIMIT_KEY) throw rt::JsError("controlled defaults read failure");
+      auto pending = inner.get(std::move(key), options);
+      auto result = co_await std::move(pending);
+      co_return result;
+    }
+  };
   rt::Task<void> runCase(std::size_t index) {
     Fixture fixture; rt::globalDateNow() = [] { return 1000000.0; }; const auto& row = vectors()[index]; const auto& scenario = row.at("scenario");
     if (rt::getString(scenario, "name") == "set_window") uos::kv::setKvForTest(std::make_shared<FixtureRevisionKv>(*h::kvStub()));
@@ -90,6 +101,30 @@ namespace {
     EXPECT_EQ(response.status(), rt::getNumber(row, "status").value()); const auto body = co_await response.json(); EXPECT(rt::deepEqual(body, row.at("body")));
     json::array rows; for (const auto& [key, value] : h::kvStore) rows.push_back(json::array{key, value.toJson()}); EXPECT(rt::deepEqual(rows, row.at("rows")));
   }
+}
+ASYNC_TEST("defaults diagnostics survive a failed KV read") {
+  Fixture fixture;
+  const auto store = std::make_shared<RejectingDefaultsStore>(*h::kvStub());
+  uos::kv::setKvForTest(store);
+  const auto resume = rt::withResolvers<void>();
+  const auto done = rt::withResolvers<void>();
+  auto capture = std::make_shared<std::string>("defaults diagnostics callback");
+  const std::weak_ptr observer = capture;
+  a::AdminDefaultsDependencies options;
+  options.getMeteredQuotaDiagnostics = [capture = std::move(capture), waiting = resume.promise, finish = done.resolve]()
+    -> rt::Task<uos::metered_quota::MeteredQuotaDiagnostics> {
+    co_await waiting.wait();
+    EXPECT_EQ(*capture, "defaults diagnostics callback");
+    finish();
+    co_return uos::metered_quota::MeteredQuotaDiagnostics{};
+  };
+  const rt::Request request("https://ai.ubq.fi/admin/defaults");
+  auto pending = a::handleAdminDefaults(request, std::move(options));
+  EXPECT_REJECTS_MESSAGE(std::move(pending), rt::JsError, "controlled defaults read failure");
+  ASSERT(!observer.expired());
+  resume.resolve();
+  co_await done.promise.wait();
+  EXPECT(observer.expired());
 }
 ASYNC_TEST("admin defaults Bun differential: empty_get") { auto task = runCase(0); co_await std::move(task); }
 ASYNC_TEST("admin defaults Bun differential: unsupported") { auto task = runCase(1); co_await std::move(task); }

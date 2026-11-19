@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <exception>
+#include <new>
 #include <unordered_set>
 #include <utility>
 
@@ -183,6 +184,7 @@ namespace uos::models::openrouter_models {
       std::optional<rt::Promise<SnapshotPointer>> fetchInFlight;
       double retryAfterMs = 0;
       OpenRouterFetch fetchForTest;
+      bool failIndexAllocationForTest = false;
     };
 
     ModuleState& moduleState() {
@@ -204,8 +206,10 @@ namespace uos::models::openrouter_models {
     SnapshotPointer publishOpenRouterSnapshot(std::vector<OpenRouterModelMetadata> models) {
       auto snapshot = std::make_shared<const OpenRouterModelsSnapshot>(OpenRouterModelsSnapshot{std::move(models), rt::dateNow()});
       ModuleState& state = moduleState();
+      if (state.failIndexAllocationForTest) throw std::bad_alloc();
+      auto index = std::make_shared<const OpenRouterMatchIndex>(buildMatchIndex(snapshot->models));
       state.cache = snapshot;
-      state.index = std::make_shared<const OpenRouterMatchIndex>(buildMatchIndex(snapshot->models));
+      state.index = std::move(index);
       state.retryAfterMs = 0;
       return snapshot;
     }
@@ -312,9 +316,11 @@ namespace uos::models::openrouter_models {
     state.index.reset();
     state.fetchInFlight.reset();
     state.retryAfterMs = 0;
+    state.failIndexAllocationForTest = false;
   }
 
   void setOpenRouterModelsFetchForTest(OpenRouterFetch fetcher) { moduleState().fetchForTest = std::move(fetcher); }
+  void setOpenRouterIndexAllocationFailureForTest(bool fail) { moduleState().failIndexAllocationForTest = fail; }
 
   rt::Task<std::shared_ptr<const OpenRouterModelsSnapshot>> fetchOpenRouterModels(FetchOpenRouterModelsOptions options) {
     ModuleState& state = moduleState();

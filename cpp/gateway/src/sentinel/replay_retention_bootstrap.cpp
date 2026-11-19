@@ -478,6 +478,7 @@ namespace uos::sentinel::replay_retention_bootstrap {
         failure = std::current_exception();
       }
       rt::clearTimeout(timer);
+      elapsed.resolve();
       if (failure) std::rethrow_exception(failure);
     }
 

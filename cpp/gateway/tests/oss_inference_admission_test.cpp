@@ -6,6 +6,7 @@
 #include "uos/rt/error.hpp"
 #include "uos/rt/test_async.hpp"
 
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <variant>
@@ -54,6 +55,30 @@ namespace {
     InferenceAdmissionResult result = co_await promise.wait();
     co_return result;
   }
+
+  rt::Task<std::weak_ptr<void>> abandonQueuedAdmission() {
+    const auto controller = createInferenceAdmissionController({.maxActive = 1, .maxWaiting = 1, .maxQueueWaitMs = 60'000});
+    const auto occupied = co_await acquire(controller);
+    ASSERT(std::holds_alternative<Admitted>(occupied));
+    const rt::AbortController caller;
+    InferenceAdmissionRequest request;
+    request.signal = caller.signal();
+    const auto queued = controller.acquire(request);
+    EXPECT_EQ(controller.snapshot().waiting, 1.0);
+    std::weak_ptr<void> signal = request.signal->state();
+    co_return signal;
+  }
+}
+
+TEST("abandoned queued admission releases its caller signal when the loop ends") {
+  std::weak_ptr<void> caller;
+  {
+    rt::FakeClock clock;
+    rt::Loop loop(clock);
+    caller = rt::blockOn(loop, abandonQueuedAdmission());
+    EXPECT(!caller.expired());
+  }
+  EXPECT(caller.expired());
 }
 
 ASYNC_TEST("admission bounds active permits and reports the queue wait to the integration") {

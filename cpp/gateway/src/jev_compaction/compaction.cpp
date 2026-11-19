@@ -243,6 +243,9 @@ namespace uos::jev_compaction::compaction {
       bool released = false;
       bool aborted = false;
       std::optional<rt::ReadableStreamDefaultReader<rt::ByteChunk>> reader;
+      ~TimeoutFetchState() {
+        try { release(); } catch (...) {}
+      }
       void release() {
         if (released) return;
         released = true;

@@ -1,5 +1,6 @@
 #include "uos/admin/codex.hpp"
 #include "uos/admin/api_keys.hpp"
+#include "uos/admin/callback_task.hpp"
 #include "uos/cache/prompt_analytics_read.hpp"
 #include "uos/cache/scope_experiment.hpp"
 #include "uos/catalog/store.hpp"
@@ -68,7 +69,11 @@ std::optional<rt::Response> runtimeConfigErrorResponse(rt::Reason failure) {
 }
 rt::Task<rt::Response> handleAdminDebugRouting(rt::Request req) {
   if (req.method() == "GET") { const auto routing = co_await debug_routing::loadDebugRoutingConfig(); co_return http::json(200, json::object{{"routing", json::value_from(routing)}}, rt::Headers{{"Cache-Control", "no-store"}}); }
-  if (req.method() == "DELETE") { const auto routing = co_await debug_routing::setDebugRoutingConfig(std::string("normal"), 0); co_return http::json(200, json::object{{"routing", json::value_from(routing)}}, rt::Headers{{"Cache-Control", "no-store"}}); }
+  if (req.method() == "DELETE") {
+    const std::string scenario = "normal";
+    const auto routing = co_await debug_routing::setDebugRoutingConfig(scenario, 0);
+    co_return http::json(200, json::object{{"routing", json::value_from(routing)}}, rt::Headers{{"Cache-Control", "no-store"}});
+  }
   const auto raw = co_await request::readJsonBody(req);
   if (!rt::truthy(raw) || !utils::isRecord(raw)) co_return error(400, "Invalid JSON body", "invalid_request_error");
   auto scenarioRaw = rt::getString(raw, "scenario"); const auto scenario = scenarioRaw ? rt::trim(*scenarioRaw) : std::string();
@@ -205,7 +210,9 @@ rt::Task<rt::Response> handleAdminCodexModelsWhitelistGet() {
 rt::Task<rt::Response> handleAdminModelsCatalogGet() { return handleAdminModelsCatalogGet(CatalogDependencies{}); }
 rt::Task<rt::Response> handleAdminModelsCatalogGet(CatalogDependencies dependencies) {
   auto database = co_await databaseForRequest(); if (!database) co_return error(500, "Deno KV is not available; cannot read the model catalog", "server_error", true);
-  rt::Promise<models::catalog::ModelCatalogSnapshot> c(dependencies.buildCatalog ? dependencies.buildCatalog() : models::catalog::buildModelCatalogSnapshot()); rt::Promise<std::optional<wl::CodexModelsWhitelist>> w(wl::loadCodexModelsWhitelist(database));
+  rt::Promise<models::catalog::ModelCatalogSnapshot> c(dependencies.buildCatalog
+    ? detail::invokeOwnedTask(std::move(dependencies.buildCatalog)) : models::catalog::buildModelCatalogSnapshot());
+  rt::Promise<std::optional<wl::CodexModelsWhitelist>> w(wl::loadCodexModelsWhitelist(database));
   const auto all = co_await rt::all(c, w).wait(); const auto& catalog = std::get<0>(all); const auto& whitelist = std::get<1>(all); auto encoded = json::value_from(catalog); const auto ids = whitelist ? whitelist->model_ids : std::vector<std::string>{};
   co_return http::json(200, json::object{{"ok", true}, {"data", json::object{{"models", *rt::get(encoded, "models")}, {"sources", *rt::get(encoded, "sources")}, {"whitelist", json::object{{"model_ids", json::value_from(ids)}, {"updated_at_ms", whitelist ? whitelist->updated_at_ms : 0}}}, {"filter_active", !ids.empty()}}}}, rt::Headers{{"Cache-Control", "no-store"}});
 }
@@ -213,11 +220,16 @@ rt::Task<rt::Response> handleAdminModelsRefresh() { return handleAdminModelsRefr
 rt::Task<rt::Response> handleAdminModelsRefresh(ModelsRefreshDependencies dependencies) {
   const auto before = models::openrouter_models::openRouterModelsSnapshot(); const auto beforeLithos = provider::lithos_models::lithosModelsSnapshot();
   models::openrouter_models::FetchOpenRouterModelsOptions eo; eo.force = true; provider::metered::FetchMeteredModelsOptions mo; mo.force = true; provider::surplus::FetchSurplusModelsOptions so; so.force = true; so.requireApiKey = false; provider::lithos_models::FetchLithosModelsOptions lo; lo.force = true; provider::claude_code_models::CatalogOptions co; co.force = true;
-  rt::Promise<std::shared_ptr<const models::openrouter_models::OpenRouterModelsSnapshot>> e(dependencies.refreshEnrichment ? dependencies.refreshEnrichment() : models::openrouter_models::fetchOpenRouterModels(eo));
-  rt::Promise<std::optional<provider::metered::MeteredModelsSnapshot>> m(dependencies.refreshOpenlux ? dependencies.refreshOpenlux(mo) : provider::metered::fetchMeteredModels(mo));
-  rt::Promise<std::optional<provider::surplus::SurplusModelsSnapshot>> s(dependencies.refreshSurplus ? dependencies.refreshSurplus(so) : provider::surplus::fetchSurplusModels(so));
-  rt::Promise<std::optional<provider::lithos_models::LithosModelsSnapshot>> l(dependencies.refreshLithos ? dependencies.refreshLithos(lo) : provider::lithos_models::fetchLithosModels(lo));
-  rt::Promise<std::optional<provider::claude_code_models::ClaudeCodeModelsSnapshot>> c(dependencies.refreshClaude ? dependencies.refreshClaude(co) : provider::claude_code_models::fetchClaudeCodeModels(co));
+  rt::Promise<std::shared_ptr<const models::openrouter_models::OpenRouterModelsSnapshot>> e(dependencies.refreshEnrichment
+    ? detail::invokeOwnedTask(std::move(dependencies.refreshEnrichment)) : models::openrouter_models::fetchOpenRouterModels(eo));
+  rt::Promise<std::optional<provider::metered::MeteredModelsSnapshot>> m(dependencies.refreshOpenlux
+    ? detail::invokeOwnedTask(std::move(dependencies.refreshOpenlux), mo) : provider::metered::fetchMeteredModels(mo));
+  rt::Promise<std::optional<provider::surplus::SurplusModelsSnapshot>> s(dependencies.refreshSurplus
+    ? detail::invokeOwnedTask(std::move(dependencies.refreshSurplus), so) : provider::surplus::fetchSurplusModels(so));
+  rt::Promise<std::optional<provider::lithos_models::LithosModelsSnapshot>> l(dependencies.refreshLithos
+    ? detail::invokeOwnedTask(std::move(dependencies.refreshLithos), lo) : provider::lithos_models::fetchLithosModels(lo));
+  rt::Promise<std::optional<provider::claude_code_models::ClaudeCodeModelsSnapshot>> c(dependencies.refreshClaude
+    ? detail::invokeOwnedTask(std::move(dependencies.refreshClaude), co) : provider::claude_code_models::fetchClaudeCodeModels(co));
   const auto all = co_await rt::all(e, m, s, l, c).wait(); const auto& enrichment = std::get<0>(all); const auto& metered = std::get<1>(all); const auto& surplus = std::get<2>(all); const auto& lithos = std::get<3>(all); const auto& claude = std::get<4>(all);
   const auto et = enrichment ? std::optional(enrichment->updated_at_ms) : std::nullopt, lt = lithos ? std::optional(lithos->updated_at_ms) : std::nullopt;
   auto nullable = [](std::optional<double> value) { return value ? json::value(*value) : json::value(nullptr); };
@@ -236,7 +248,10 @@ rt::Task<rt::Response> handleAdminCodexModelsWhitelistSet(rt::Request req) {
 rt::Task<rt::Response> handleAdminProviderSelectionGet() { return handleAdminProviderSelectionGet(CatalogDependencies{}); }
 rt::Task<rt::Response> handleAdminProviderSelectionGet(CatalogDependencies dependencies) {
   auto database = co_await databaseForRequest(); if (!database) co_return error(500, "Deno KV is not available; cannot read the provider selection", "server_error", true);
-  rt::Promise<models::catalog::ModelCatalogSnapshot> c(dependencies.buildCatalog ? dependencies.buildCatalog() : models::catalog::buildModelCatalogSnapshot()); rt::Promise<std::optional<sel::ProviderSelection>> s(sel::loadProviderSelection(database)); rt::Promise<json::array> r(codexSubscriptionRoster());
+  rt::Promise<models::catalog::ModelCatalogSnapshot> c(dependencies.buildCatalog
+    ? detail::invokeOwnedTask(std::move(dependencies.buildCatalog)) : models::catalog::buildModelCatalogSnapshot());
+  rt::Promise<std::optional<sel::ProviderSelection>> s(sel::loadProviderSelection(database));
+  rt::Promise<json::array> r(codexSubscriptionRoster());
   const auto all = co_await rt::all(c, s, r).wait(); const auto& catalog = std::get<0>(all); const auto& selection = std::get<1>(all); const auto& subscriptions = std::get<2>(all);
   rt::OrderedMap<std::string, double> counts; for (auto id : sel::SELECTABLE_PROVIDER_IDS) counts.set(std::string(id), 0);
   for (const auto& entry : catalog.models) for (const auto& p : entry.providers) if (auto* count = counts.get(p.id)) ++*count;

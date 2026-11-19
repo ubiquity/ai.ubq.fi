@@ -377,11 +377,13 @@ rt::Task<rt::Response> handleAdminProvidersQuotaProjectionBackfill(rt::Request r
 namespace {
   rt::Task<json::object> accountIdentity(ce::CodexCapacityAccount account) {
     const auto accountIdHash = co_await utils::sha256Hex(account.account_id);
-    const auto accountCohortId = co_await utils::sha256Hex(std::string("uos-prompt-cache-account-cohort-v1\0", 35) + account.account_id);
+    const std::string cohortInput = std::string("uos-prompt-cache-account-cohort-v1\0", 35) + account.account_id;
+    const auto accountCohortId = co_await utils::sha256Hex(cohortInput);
     co_return json::object{{"slot", rt::makeNumber(account.slot)}, {"account_id_hash", accountIdHash}, {"account_cohort_id", accountCohortId}};
   }
   rt::Task<json::object> resetSettingsRow(std::shared_ptr<rt::Kv> kv, json::object account, std::optional<ce::CodexCapacityAccount> credentials, rt::Request request) {
-    const auto usage = co_await cs::readCodexResetUsage(kv, std::string(*rt::getString(account, "account_id_hash")));
+    const std::string accountIdHash(*rt::getString(account, "account_id_hash"));
+    const auto usage = co_await cs::readCodexResetUsage(kv, accountIdHash);
     std::optional<double> availableCount; std::optional<std::vector<cp::CodexResetCreditDiagnostic>> credits;
     const auto diagnosticsSignal = rt::AbortSignal::any({request.signal(), rt::AbortSignal::timeout(5000)});
     std::optional<cp::UpstreamCodexUsageResetProviderOptions> inventoryOptions;
@@ -403,7 +405,8 @@ namespace {
     try { const auto entry = co_await ::uos::codex::auth::getAuthPoolEntry(true); auto task = co::loadOverageUsageSettings(entry.pool, true); co_await std::move(task); } catch (...) {}
   }
   rt::Task<json::object> overageSettingsRow(std::shared_ptr<rt::Kv> kv, json::object account, std::optional<ce::CodexCapacityAccount> credentials, rt::Request request) {
-    const auto allow = co_await co::readOverageUsage(kv, std::string(*rt::getString(account, "account_id_hash")));
+    const std::string accountIdHash(*rt::getString(account, "account_id_hash"));
+    const auto allow = co_await co::readOverageUsage(kv, accountIdHash);
     const auto signal = rt::AbortSignal::any({request.signal(), rt::AbortSignal::timeout(5000)});
     auto task = readOverageUsageDiagnostics(credentials, signal); const auto overage = co_await std::move(task);
     account["allow"] = allow; account["overage"] = orNullJson(overage); co_return account;
@@ -436,7 +439,9 @@ rt::Task<rt::Response> handleAdminCodexOverageUsage(rt::Request request) {
     const auto accountIdHash = rt::getString(raw, "account_id_hash"); const auto allow = rt::getBool(raw, "allow");
     if (!utils::isRecord(raw) || !accountIdHash || !allow) co_return http::openaiError(400, "account_id_hash and boolean allow are required", "invalid_request_error");
     if (std::none_of(identities.begin(), identities.end(), [&](const auto& account) { return rt::getString(account, "account_id_hash") == accountIdHash; })) co_return http::openaiError(409, "Subscription changed. Reload Providers.", "invalid_request_error");
-    co_await co::writeOverageUsage(kv, std::string(*accountIdHash), *allow); co_await refreshOverageUsageRoutingCache();
+    const std::string hash(*accountIdHash);
+    co_await co::writeOverageUsage(kv, hash, *allow);
+    co_await refreshOverageUsageRoutingCache();
     co_return http::json(200, json::object{{"account_id_hash", *accountIdHash}, {"allow", *allow}}, rt::Headers{{"Cache-Control", "no-store"}});
   }
   // The admin read refreshes the routing cache from the just-confirmed durable setting.

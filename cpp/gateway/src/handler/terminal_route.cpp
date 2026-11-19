@@ -520,10 +520,13 @@ namespace uos::handler::terminal_route {
       rt::isError(runError) ? rt::errorName(runError) : "unknown_exception", std::nullopt, "gateway"};
     auto replaySnapshot = sentinel::replay_observation::snapshotSentinelReplayInput(sentinelReplayInput);
     sentinel::replay_observation::zeroSentinelReplayInput(&sentinelReplayInput);
-    rt::Promise<sentinel::replay_observation::SentinelReplayPersistResult> persisted = options.persistSentinelReplay
-      ? options.persistSentinelReplay(replaySnapshot, observation)
+    auto persist = options.persistSentinelReplay
+      ? std::make_shared<decltype(options.persistSentinelReplay)>(std::move(options.persistSentinelReplay)) : nullptr;
+    rt::Promise<sentinel::replay_observation::SentinelReplayPersistResult> persisted = persist
+      ? (*persist)(replaySnapshot, observation)
       : rt::Promise<sentinel::replay_observation::SentinelReplayPersistResult>(sentinel::replay_store::persistSentinelReplayFromEnvironment(replaySnapshot, observation));
-    auto persistence = persisted.then([](const sentinel::replay_observation::SentinelReplayPersistResult&) {}, [](rt::Reason) {}).then([replaySnapshot] {
+    auto persistence = persisted.then([](const sentinel::replay_observation::SentinelReplayPersistResult&) {}, [](rt::Reason) {}).then([replaySnapshot, persist] {
+      (void)persist;
       sentinel::replay_observation::zeroSentinelReplayInput(&replaySnapshot);
     });
     if (!http::scheduleSentinelBackgroundTask(persistence, options.waitUntil)) co_await persistence.wait();

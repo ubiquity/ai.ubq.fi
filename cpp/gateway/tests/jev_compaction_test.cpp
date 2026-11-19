@@ -29,6 +29,7 @@
 #include "uos/rt/json.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/rt/test_async.hpp"
+#include "helpers/live_allocations.hpp"
 
 #include <map>
 #include <memory>
@@ -394,6 +395,26 @@ ASYNC_TEST("Jev timeout fetch releases timers on EOF absent bodies and explicit 
   auto cancellable = gateway::createJevTimeoutFetch(rt::Fetch([stream](rt::RequestInfo, rt::RequestInit) { return rt::Response(rt::BodyInit(stream)); }), 100); auto fetchingStream = cancellable(url, init); const auto streamResponse = co_await std::move(fetchingStream); const auto bodyStream = *streamResponse.body(); auto cancelling = bodyStream.cancel(); co_await std::move(cancelling); EXPECT_EQ(*cancelled, 1);
   auto throwing = gateway::createJevTimeoutFetch(rt::Fetch([](rt::RequestInfo, rt::RequestInit) -> rt::Task<rt::Response> { throw rt::JsError("bounded synthetic failure"); co_return rt::Response(); }), 100);
   auto failed = throwing(url, init); bool sanitized = false; try { const auto ignored = co_await std::move(failed); (void)ignored; } catch (const rt::JsError& error) { sanitized = error.message == "Jev transport error: bounded synthetic failure"; } EXPECT(sanitized);
+}
+
+ASYNC_TEST("discarded Jev response bodies detach from the reusable caller signal") {
+  const Isolation isolation;
+  const rt::AbortController caller;
+  rt::RequestInit init;
+  init.signal = caller.signal();
+  const rt::RequestInfo url = std::string("https://fixture.example.invalid");
+  const auto bounded = gateway::createJevTimeoutFetch(rt::Fetch([](rt::RequestInfo, rt::RequestInit) {
+    return rt::Response("buffered piece");
+  }), 100);
+  const auto discard = [bounded, url, init]() -> rt::Task<void> {
+    auto fetching = bounded(url, init);
+    const auto response = co_await std::move(fetching);
+    EXPECT_EQ(response.status(), 200);
+    co_await rt::microtask();
+  };
+  auto checking = uos::tests::helpers::expectStableLiveAllocations(discard, 64, 101);
+  co_await std::move(checking);
+  EXPECT(!caller.signal().aborted());
 }
 
 ASYNC_TEST("Compaction complete wire bodies and structural headers match exact isolated Bun records") {

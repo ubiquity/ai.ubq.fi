@@ -179,7 +179,12 @@ namespace uos::lib::jev_compaction::jev_codex_smoke {
       static rt::Task<std::shared_ptr<FakeChatUpstream>> start() {
         auto fake = std::make_shared<FakeChatUpstream>();
         runtime::http::ServeHttpOptions options{.hostname = "127.0.0.1", .port = 0};
-        runtime::http::ServeHandler handle = [fake](rt::Request request, runtime::http::ServeHandlerInfo) { return fake->handle(request); };
+        runtime::http::ServeHandler handle = [weak = std::weak_ptr(fake)](rt::Request request, runtime::http::ServeHandlerInfo) {
+          if (auto owner = weak.lock()) {
+            return rt::async([owner = std::move(owner), request = std::move(request)] { return owner->handle(request); });
+          }
+          return rt::fulfilledTask(rt::Response("Fixture closed", {.status = 503}));
+        };
         fake->server = runtime::http::serveHttp(options, handle);
         const auto addr = co_await fake->server->ready.wait();
         fake->url = "http://127.0.0.1:" + rt::numberToString(addr.port);

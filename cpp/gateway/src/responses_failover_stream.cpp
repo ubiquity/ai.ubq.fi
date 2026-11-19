@@ -941,7 +941,8 @@ namespace uos::responses_failover_stream {
         ResponsesStreamEvent failure = emptyCompletionEventAfterCommit(state->sequenceNumber++);
         const ResponsesStreamEvent* original = state->originalUpstreamEvents.find(event);
         std::optional<ResponsesStreamEvent> upstreamTerminal = original ? *original : event;
-        co_await emitFailureTerminal(state, controller, std::move(failure), std::move(error), std::move(upstreamTerminal));
+        auto emitting = emitFailureTerminal(state, controller, std::move(failure), std::move(error), std::move(upstreamTerminal));
+        co_await std::move(emitting);
         co_return;
       }
       state->terminalEmitted = event.terminal;
@@ -969,7 +970,8 @@ namespace uos::responses_failover_stream {
       }
       ResponsesStreamEvent failure = state->syntheticFailure();
       std::optional<ResponsesStreamEvent> noUpstreamTerminal;
-      co_await emitFailureTerminal(state, controller, std::move(failure), std::move(error), std::move(noUpstreamTerminal));
+      auto emitting = emitFailureTerminal(state, controller, std::move(failure), std::move(error), std::move(noUpstreamTerminal));
+      co_await std::move(emitting);
     }
 
     rt::Task<void> ownedPull(std::shared_ptr<OwnedState> state, Controller controller) {

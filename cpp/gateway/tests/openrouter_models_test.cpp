@@ -204,6 +204,35 @@ ASYNC_TEST("no fetcher means no request and no metadata") {
   EXPECT_EQ(idOf(openRouterMetadataFor("gpt-5.6-sol")), std::nullopt);
 }
 
+ASYNC_TEST("an index allocation failure keeps the previous catalog and its lookup rows") {
+  const CleanCache clean;
+  setOpenRouterModelsFetchForTest(OpenRouterFetch([](rt::RequestInfo, rt::RequestInit) {
+    return jsonResponse(payload({solEntry}));
+  }));
+  auto first = co_await fetchModels();
+  ASSERT(first);
+  const std::weak_ptr previous = first;
+  first.reset();
+
+  const json::value replacement = rt::jsonParse(R"({"id":"openai/gpt-replacement","context_length":8192})");
+  setOpenRouterModelsFetchForTest(OpenRouterFetch([replacement](rt::RequestInfo, rt::RequestInit) {
+    return jsonResponse(payload({replacement}));
+  }));
+  const FetchOpenRouterModelsOptions force{.force = true};
+  setOpenRouterIndexAllocationFailureForTest(true);
+  const auto failed = co_await fetchModels(force);
+  ASSERT(!previous.expired());
+  EXPECT_EQ(failed, previous.lock());
+  EXPECT_EQ(idOf(openRouterMetadataFor("gpt-5.6-sol")), "openai/gpt-5.6-sol");
+  EXPECT_EQ(idOf(openRouterMetadataFor("gpt-replacement")), std::nullopt);
+
+  setOpenRouterIndexAllocationFailureForTest(false);
+  const auto refreshed = co_await fetchModels(force);
+  EXPECT(refreshed != failed);
+  EXPECT_EQ(idOf(openRouterMetadataFor("gpt-5.6-sol")), std::nullopt);
+  EXPECT_EQ(idOf(openRouterMetadataFor("gpt-replacement")), "openai/gpt-replacement");
+}
+
 ASYNC_TEST("differential: coalesced refreshes share one request and cachedOnly never fetches") {
   const CleanCache clean;
   int calls = 0;

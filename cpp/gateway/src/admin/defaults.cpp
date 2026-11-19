@@ -1,4 +1,5 @@
 #include "uos/admin/defaults.hpp"
+#include "uos/admin/callback_task.hpp"
 #include "uos/admin/api_keys.hpp"
 #include "uos/admin/codex.hpp"
 #include "uos/cache/kv_migration_base.hpp"
@@ -50,7 +51,8 @@ namespace {
   rt::Task<rt::Response> adminDefaultsGetResponse(std::shared_ptr<rt::Kv> database, AdminDefaultsDependencies dependencies) {
     rt::Promise<std::optional<runtime_config::RuntimeConfigV2>> runtime(runtime_config::loadRuntimeConfig(database));
     rt::Promise<rt::KvEntryMaybe<>> limit(database->get(base::DEFAULT_KERNEL_POLICY_LIMIT_KEY)); rt::Promise<rt::KvEntryMaybe<>> window(database->get(base::DEFAULT_KERNEL_POLICY_WINDOW_KEY));
-    rt::Promise<metered_quota::MeteredQuotaDiagnostics> metered(dependencies.getMeteredQuotaDiagnostics ? dependencies.getMeteredQuotaDiagnostics() : metered_quota::getMeteredQuotaDiagnostics());
+    rt::Promise<metered_quota::MeteredQuotaDiagnostics> metered(dependencies.getMeteredQuotaDiagnostics
+      ? detail::invokeOwnedTask(std::move(dependencies.getMeteredQuotaDiagnostics)) : metered_quota::getMeteredQuotaDiagnostics());
     const auto all = co_await rt::all(runtime, limit, window, metered).wait(); const auto& config = std::get<0>(all);
     auto response = defaultsBody(config ? config->default_model : "", config ? config->default_reasoning_effort : base::DEFAULT_REASONING_EFFORT, api_keys::normalizeKernelUsageLimitInput(rt::storedJsonView(std::get<1>(all).value)).value_or(base::DEFAULT_KERNEL_POLICY_LIMIT_REQUESTS), api_keys::normalizeKernelWindowMsInput(rt::storedJsonView(std::get<2>(all).value)).value_or(base::DEFAULT_KERNEL_POLICY_WINDOW_MS));
     response["metered_quota"] = json::value_from(std::get<3>(all)); co_return http::json(200, response);
@@ -96,7 +98,12 @@ namespace {
     if (nextRuntime) atomic->set(runtime_config::RUNTIME_CONFIG_V2_KEY, rt::KvValue(runtime_config::toJson(*nextRuntime)));
     if (intent.writesKernelLimit) atomic->set(base::DEFAULT_KERNEL_POLICY_LIMIT_KEY, rt::KvValue(limit));
     if (intent.writesKernelWindow) atomic->set(base::DEFAULT_KERNEL_POLICY_WINDOW_KEY, rt::KvValue(window));
-    bool committed = false; rt::Reason failure; try { committed = (co_await atomic->commit()).ok; } catch (...) { failure = std::current_exception(); }
+    bool committed = false;
+    rt::Reason failure;
+    try {
+      const auto result = co_await atomic->commit();
+      committed = result.ok;
+    } catch (...) { failure = std::current_exception(); }
     if (!committed && guard) { auto task = kernel::releaseKernelDefaultWindowCutover(database, *guard); co_await std::move(task); }
     if (failure) std::rethrow_exception(failure);
     if (!committed) co_return std::nullopt;

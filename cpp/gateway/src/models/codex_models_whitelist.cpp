@@ -59,6 +59,7 @@
 #include "uos/utils.hpp"
 #include <algorithm>
 #include <unordered_set>
+#include <utility>
 namespace uos::models::codex_models_whitelist {
   namespace {
     std::string canonicalWhitelistModelId(std::string id) {
@@ -131,7 +132,9 @@ namespace uos::models::codex_models_whitelist {
   }
   rt::Task<std::optional<CodexModelsWhitelist>> loadCodexModelsWhitelist(std::shared_ptr<rt::Kv> kv) {
     if (!kv) co_return std::nullopt;
-    const auto entry = co_await kv->get(CODEX_MODELS_WHITELIST_KV_KEY, {.consistency = rt::KvConsistencyLevel::strong});
+    const rt::KvGetOptions options{.consistency = rt::KvConsistencyLevel::strong};
+    auto reading = kv->get(CODEX_MODELS_WHITELIST_KV_KEY, options);
+    const auto entry = co_await std::move(reading);
     co_return normalizeCodexModelsWhitelist(entry.value);
   }
   rt::Task<bool> storeCodexModelsWhitelist(std::shared_ptr<rt::Kv> kv, std::vector<std::string> modelIds) {
