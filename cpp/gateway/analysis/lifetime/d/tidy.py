@@ -11,7 +11,7 @@ import subprocess
 import tempfile
 import time
 
-from audit import GATEWAY, LEDGER
+from audit import GATEWAY, file_list, git
 
 CHECKS = (
     "cppcoreguidelines-avoid-capturing-lambda-coroutines",
@@ -63,9 +63,11 @@ def main():
     output = args.out.resolve()
     if GATEWAY.parents[1] == output or GATEWAY.parents[1] in output.parents:
         parser.error("use an output path outside the checkout")
+    commit = git("rev-parse", "HEAD")
+    source = args.source or [path for path in file_list(commit) if path.endswith(".cpp")]
+    if any(not (GATEWAY / path).is_file() for path in source):
+        parser.error("selected translation units must exist in the checkout")
     output.mkdir(parents=True, exist_ok=False)
-    ledger = json.loads(LEDGER.read_text())
-    source = args.source or [path for path in ledger["files"] if path.endswith(".cpp")]
     extra = ["-isystem", str(args.boost.resolve())]
     if args.icu:
         extra += ["-isystem", str(args.icu.resolve())]
@@ -74,7 +76,7 @@ def main():
         "--", "-std=c++20", "-DUOS_GATEWAY_NATIVE_LIBRARIES=1", "-DBOOST_JSON_NO_LIB", "-DBOOST_CONTAINER_NO_LIB",
         "-DBOOST_SYSTEM_NO_LIB", "-pthread", "-I" + str(GATEWAY / "include"), "-I" + str(GATEWAY), *extra,
     ]
-    (output / "command.json").write_text(json.dumps({"tool": args.tool, "settings": settings, "jobs": args.jobs, "timeout": args.timeout, "source_commit": ledger["source_commit"]}, indent=2) + "\n")
+    (output / "command.json").write_text(json.dumps({"tool": args.tool, "settings": settings, "jobs": args.jobs, "timeout": args.timeout, "source_commit": commit}, indent=2) + "\n")
     started = time.monotonic()
     with ThreadPoolExecutor(max_workers=args.jobs) as executor:
         results = list(executor.map(lambda path: run_unit(path, settings, output, args.tool, args.timeout), source))
