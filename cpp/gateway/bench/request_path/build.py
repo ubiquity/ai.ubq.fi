@@ -111,7 +111,7 @@ def main():
         archives.append(library.archive)
     startup = object_file("runtime/startup.cpp", flags)
     targets = []
-    for name in ("gateway", "kv-convert", "kv-proof"):
+    for name in ("gateway",):
         entry = object_file(f"entrypoints/{name}.cpp", flags)
         binary = "uos_" + name.replace("-", "_")
         # Explicit object linkage retains every module registrar, as does the CMake whole-archive link.
