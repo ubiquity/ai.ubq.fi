@@ -16,6 +16,9 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  CCACHE_MAXSIZE: 1900MB
+
 defaults:
   run:
     shell: bash
@@ -38,7 +41,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq clang llvm ninja-build pkg-config mold util-linux libboost-json-dev \
+          sudo apt-get install -y -qq clang llvm ninja-build pkg-config ccache mold util-linux libboost-json-dev \
             libboost-container-dev libssl-dev zlib1g-dev libicu-dev libbrotli-dev libzstd-dev
           clang++ --version
       - name: Build SQLite 3.54.0 (the suite's pinned version)
@@ -49,6 +52,20 @@ jobs:
           tar -xzf sqlite.tar.gz && cd sqlite-autoconf-3540000
           ./configure --prefix=/usr/local --disable-static --disable-readline CFLAGS='-O2 -DSQLITE_DQS=3' > /dev/null
           make -j4 > /dev/null && sudo make install > /dev/null && sudo ldconfig
+      - name: Fingerprint the toolchain and vendored sources
+        id: fingerprint
+        run: |
+          fingerprint=$(bash cpp/gateway/tools/ci-cache-key.sh)
+          printf 'hash=%s\n' "$fingerprint" >> "$GITHUB_OUTPUT"
+          printf 'CCACHE_DIR=%s/ccache\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Restore compiler cache
+        id: ccache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-ubuntu-26.04-arm-${{ matrix.config }}-${{ steps.fingerprint.outputs.hash }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-ubuntu-26.04-arm-${{ matrix.config }}-${{ steps.fingerprint.outputs.hash }}-
       - name: Build and test
         env:
           CC: clang
@@ -61,6 +78,12 @@ jobs:
         run: |
           mkdir -p "$UOS_CI_BUILD_DIR"
           bash cpp/gateway/tools/ci-build.sh --config "$CONFIG" --shard "$SHARD/4" 2>&1 | tee "$UOS_CI_BUILD_DIR/driver.log"
+      - name: Save compiler cache
+        if: matrix.shard == 1 && steps.ccache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ steps.ccache.outputs.cache-primary-key }}
       - name: Summarize results
         if: always()
         env:
@@ -153,9 +176,23 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq clang llvm util-linux libboost-json-dev libboost-container-dev libbrotli-dev \
+          sudo apt-get install -y -qq clang llvm ccache util-linux libboost-json-dev libboost-container-dev libbrotli-dev \
             libssl-dev libsqlite3-dev zlib1g-dev libzstd-dev libicu-dev
           clang++ --version
+      - name: Fingerprint the toolchain and vendored sources
+        id: fingerprint
+        run: |
+          fingerprint=$(bash cpp/gateway/tools/ci-cache-key.sh)
+          printf 'hash=%s\n' "$fingerprint" >> "$GITHUB_OUTPUT"
+          printf 'CCACHE_DIR=%s/ccache\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Restore compiler cache
+        id: ccache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-ubuntu-26.04-arm-fuzz-${{ steps.fingerprint.outputs.hash }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-ubuntu-26.04-arm-fuzz-${{ steps.fingerprint.outputs.hash }}-
       - name: Build and fuzz
         env:
           FUZZ_SECONDS: ${{ github.event_name == 'push' && github.ref == 'refs/heads/claude/cpp-gateway-port' && '2400' || '300' }}
@@ -165,8 +202,15 @@ jobs:
           mkdir -p "$fuzz_out/home" "$fuzz_out/tmp"
           sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-groups --no-new-privs \
             env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 HOME="$fuzz_out/home" TMPDIR="$fuzz_out/tmp" \
+            CCACHE_DIR="$CCACHE_DIR" CCACHE_MAXSIZE="$CCACHE_MAXSIZE" \
             python3 -B cpp/gateway/fuzz/ci.py "$FUZZ_TARGET" --seconds "$FUZZ_SECONDS" --jobs 4 --out "$fuzz_out" \
             2>&1 | tee "$fuzz_out/build.log"
+      - name: Save compiler cache
+        if: matrix.target == fromJSON(needs.targets.outputs.matrix)[0] && steps.ccache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ steps.ccache.outputs.cache-primary-key }}
       - name: Summarize campaign
         if: always()
         env:
