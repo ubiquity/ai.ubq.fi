@@ -146,7 +146,28 @@ compilation and isolated test execution. The copies under `receipts/` use the un
 | Catalog      | `4e525a2d8b37e72503294b4ff6fb207ca457a0c8` | `9091b8d1db4023580cc0686e2ba4b8f197d6384f` |              129/129 |       1,809/1,809 |          536.445 |       783.443 |
 | Callbacks    | `3eafbfe1d02698552d9f95d414f5ee08fd8d9d88` | `babc9578abd100a0b413a21f5239e3b45377bf56` |              231/231 |       3,086/3,086 |          273.445 |       497.255 |
 | Cycles       | `554240606eabd67d42e4dc8c98de37e43e3cf355` | `094bbd58dc9de3351e4d2743dd0b32cabceeb89e` |                51/51 |           623/623 |           75.023 |       129.316 |
-| Named awaits | `b9d90942d56bda718599cdd39a4093d7206e499c` | `c409743e10cafe2c4cfb917060a5280e2b5a94e3` |              running |                   |                  |               |
+| Named awaits | `b9d90942d56bda718599cdd39a4093d7206e499c` | `c409743e10cafe2c4cfb917060a5280e2b5a94e3` |              222/222 |       3,019/3,019 |        1,546.652 |     2,163.058 |
+
+### Final source gates
+
+All five receipts record commit `b9d90942d56bda718599cdd39a4093d7206e499c`, tree
+`c409743e10cafe2c4cfb917060a5280e2b5a94e3` and unchanged native inputs SHA-256
+`7abf14bf3b1d3202a4b3213e6b991014ae08cae1be4de4c32128c5a503da350b`. The sanitizer shards partition the
+sorted list of all 277 affected test binaries. The release gate is the unfiltered first shard. The release shard
+reused the separately warmed objects, which took 141.307 s to prepare.
+
+| Gate                     | Binaries passed | Cases passed | Driver wall (s) | Receipt SHA-256                                                    |
+| ------------------------ | --------------: | -----------: | --------------: | ------------------------------------------------------------------ |
+| Release 1/4              |         113/113 |  1,339/1,339 |          48.433 | `f1e9701c72b4e89f3ea7091839fa4fd42c4dd26245365e1e1253d4d53085a9fa` |
+| ASan, UBSan and LSan 1/4 |           70/70 |      906/906 |          39.729 | `4952aa2f2eace4aa110049d4265b19415616df0be038740b00f62bd0e38b9d6f` |
+| ASan, UBSan and LSan 2/4 |           69/69 |      999/999 |          27.556 | `10fd72389c50b8cf821a73fec0cae0585c743bf247c1ed1b56e39935b7690163` |
+| ASan, UBSan and LSan 3/4 |           69/69 |      731/731 |          36.790 | `6df2b6a388aab3d922aaa0c4a180e4e181290aca0709c60739e0554f72e15958` |
+| ASan, UBSan and LSan 4/4 |           69/69 |  1,017/1,017 |         126.873 | `e118e0a453d426c91de6c7ea237c5e2babaceb300945e3e4246b1b96e9c28669` |
+| Sanitizer total          |         277/277 |  3,653/3,653 |                 |                                                                    |
+
+The baseline controls are compiling with the integrated implementation from `fca4baf20114b7a4bd602eff2a14fcaf4598f11a`
+and the committed regression fixtures. The OpenRouter control retains the test fault and restores the old publication
+order. The overlay has its own input digest and is outside the five final-tree receipts above.
 
 ### Health fixture isolation
 
