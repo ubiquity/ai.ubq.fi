@@ -133,6 +133,7 @@ namespace uos::rt::regex_detail {
     // the library's loop polling cost per block low. The leading anchor allows
     // sticky execution without scanning every suffix after a failed match.
     if (mask == (LRE_FLAG_IGNORECASE | LRE_FLAG_UNICODE) && pattern == imageDataUrl) {
+      program->imageDataUrl = true;
       pattern = R"(^data:([^;,]+);base64,(?=((?:(?:[a-z0-9+/][a-z0-9+/][a-z0-9+/][a-z0-9+/])"
                 R"([a-z0-9+/][a-z0-9+/][a-z0-9+/][a-z0-9+/]){512})*[a-z0-9+/]{0,4095}={0,2}))(?-i:\2)$)";
       mask |= LRE_FLAG_STICKY;

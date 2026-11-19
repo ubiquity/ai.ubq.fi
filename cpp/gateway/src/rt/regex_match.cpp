@@ -4,9 +4,43 @@
 #include "libregexp.h"
 #include "uos/rt/error.hpp"
 
+#include <algorithm>
+#include <functional>
 #include <limits>
+#include <numeric>
 
 namespace uos::rt::regex_detail {
+  namespace {
+    bool equalAsciiCase(std::string_view input, std::string_view lower) {
+      return std::ranges::equal(input, lower, [](unsigned char left, unsigned char right) {
+        return (left >= 'A' && left <= 'Z' ? left + ('a' - 'A') : left) == right;
+      });
+    }
+
+    // The fixed image pattern has two captures and no other observable state.
+    // Match its large ASCII case with a linear scan to avoid VM work per base64 byte.
+    bool matchAsciiImage(std::string_view subject, std::size_t* offsets) {
+      constexpr std::string_view prefix = "data:";
+      constexpr std::string_view separator = ";base64,";
+      if (!equalAsciiCase(subject.substr(0, prefix.size()), prefix)) return false;
+      const auto mediaEnd = subject.find_first_of(";,", prefix.size());
+      if (mediaEnd == prefix.size() || mediaEnd == std::string_view::npos ||
+          !equalAsciiCase(subject.substr(mediaEnd, separator.size()), separator)) return false;
+      const auto dataStart = mediaEnd + separator.size();
+      auto alphabet = subject.substr(dataStart);
+      if (alphabet.ends_with("==")) alphabet.remove_suffix(2);
+      else if (alphabet.ends_with('=')) alphabet.remove_suffix(1);
+      const bool valid = std::transform_reduce(alphabet.begin(), alphabet.end(), true, std::bit_and<bool>(), [](unsigned char byte) {
+        const auto lower = byte | 0x20;
+        return (lower >= 'a' && lower <= 'z') || (byte >= '0' && byte <= '9') || byte == '+' || byte == '/';
+      });
+      if (!valid) return false;
+      const std::array spans{std::size_t{0}, subject.size(), prefix.size(), mediaEnd, dataStart, subject.size()};
+      std::ranges::copy(spans, offsets);
+      return true;
+    }
+  }
+
   Matcher::Matcher(const Program& program) : program_(program) {
     if (program.registerCount > inlineCount) registers_ = std::make_unique<std::uint8_t*[]>(program.registerCount);
     const std::size_t count = 2 * (static_cast<std::size_t>(program.captureCount) + 1);
@@ -19,6 +53,12 @@ namespace uos::rt::regex_detail {
     if (start > length) return false;
     // Also check the shared deadline between searches that are individually too short to poll.
     if (searches_++ % 256 == 0 && Limits::Clock::now() >= limits_.deadline) throw RangeError("regular expression execution limit exceeded");
+    auto* offsets = offsets_ ? offsets_.get() : inlineOffsets_.data();
+    if (program_.imageDataUrl && !wide && length > limits::kRegexSubjectBytes) {
+      const bool matched = start == 0 && matchAsciiImage({static_cast<const char*>(subject), length}, offsets);
+      if (Limits::Clock::now() >= limits_.deadline) throw RangeError("regular expression execution limit exceeded");
+      return matched;
+    }
     const auto* bytes = static_cast<const std::uint8_t*>(subject);
     const auto* bytecode = splitting && program_.splitBytecode ? program_.splitBytecode.get() : program_.bytecode.get();
     auto* registers = registers_ ? registers_.get() : inlineRegisters_.data();
@@ -27,7 +67,6 @@ namespace uos::rt::regex_detail {
     if (result == LRE_RET_TIMEOUT) throw RangeError("regular expression execution limit exceeded");
     if (result == LRE_RET_MEMORY_ERROR) throw RangeError("regular expression memory limit exceeded");
     if (result != 1) throw JsError("invalid regular expression bytecode");
-    auto* offsets = offsets_ ? offsets_.get() : inlineOffsets_.data();
     const std::size_t count = 2 * (static_cast<std::size_t>(program_.captureCount) + 1);
     for (std::size_t i = 0; i < count; ++i)
       offsets[i] = registers[i] ? static_cast<std::size_t>(registers[i] - bytes) >> shift : kNoPos;

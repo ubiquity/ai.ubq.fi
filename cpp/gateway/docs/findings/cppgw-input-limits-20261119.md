@@ -74,6 +74,21 @@ env -i PATH=/usr/local/bin:/usr/bin:/bin:/usr/lib/llvm-21/bin LANG=C.UTF-8 LC_AL
 
 `python3 -B cpp/gateway/tools/links.py --check` resolved 451 registered binaries. Bun 1.4.0 installed Prettier into a scratch copy of `package.json` and `bun.lock` using `bun --no-env-file install --frozen-lockfile --ignore-scripts`. Selected Markdown files passed `bun --no-env-file --no-install run --cwd "$scratch/formatter" format:check -- "$PWD/cpp/gateway/docs/SECURITY-LIMITS.md" "$PWD/cpp/gateway/docs/findings/cppgw-input-limits-20261119.md"`. `git diff --check` passed.
 
+## Regex deadline measurement
+
+Timing probes in the scratch build measured each `Matcher` lifetime from its deadline initialization to destruction. The probes logged elapsed microseconds, subject bytes, search count and a category. They did not record patterns or subject text. The diagnostic command was `bash "$scratch/run-focused.sh" <release|asan> 2 '(/rt/(base64|crypto|fetch_transport|http|json|kv|kv_sqlite|regex|text_codec|url|websocket_lifetime)_test|/legacy/(fetch_response_library|passkeys_asn1_library|passkeys_cbor|runtime_http_llhttp|string_icu|websocket_library)_test|/(images|jev_compaction|runtime_http|runtime_websocket)_test)\.cpp$'`. It selected exact fixture link closures from the CI driver and kept its real namespace isolation. The temporary instrumentation was removed before the acceptance runs.
+
+| Operation                                                                      |          Subject |    Release |                        ASan |
+| ------------------------------------------------------------------------------ | ---------------: | ---------: | --------------------------: |
+| Jev token estimation in the floor-bound compaction fixture, 1,284,750 searches |  8,101,176 bytes | 425.964 ms |                1,374.532 ms |
+| Large multipart image data URL capture                                         | 22,369,646 bytes | 139.858 ms |                  684.177 ms |
+| Full image subject ceiling before the ASCII fast path                          | 70,953,644 bytes | 399.991 ms | Interrupted at 1,500.449 ms |
+| Existing accepted million-byte regexp fixture                                  |  1,000,000 bytes |  43.022 ms |                  140.644 ms |
+
+The engine uses a single 1,800 ms deadline from `limits.hpp`, down from 2,500 ms. The 10 ms target would reject the legitimate compaction and image fixtures. The 1,800 ms choice gives the observed sanitizer compaction scan about 425 ms of scheduling margin. The fixed large ASCII image pattern now uses a bounded linear scan with the same captures, so the full image allowance fits without VM work for each base64 character. Other patterns retain QuickJS-ng execution and its polling and allocation ceilings.
+
+The timing diagnostics observed Release 16 passing binaries, three failing binaries and two build failures, with 322 of 325 reported cases passing. ASan observed 16 passing binaries, four failing binaries and one build failure, with 348 of 353 cases passing. They overlapped source edits and both receipts were invalidated. The compatibility and compile fixes are listed above. The acceptance totals below come from separate, uninstrumented runs.
+
 ## Outside the owned paths
 
 - `docs/RUNTIME.md` and `docs/rt/regex.md` still describe several limits from the combined base, including the 2.5-second regex deadline. The current inventory lives in `SECURITY-LIMITS.md`.

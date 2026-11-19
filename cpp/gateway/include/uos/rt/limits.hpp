@@ -25,7 +25,7 @@ namespace uos::rt::limits {
 
   inline constexpr std::size_t kRegexPatternBytes = 4 * 1024;
   inline constexpr std::size_t kRegexSubjectBytes = 1024 * 1024;
-  inline constexpr auto kRegexDeadline = std::chrono::milliseconds(1500);
+  inline constexpr auto kRegexDeadline = std::chrono::milliseconds(1800);
 
   inline constexpr std::size_t kJsonDocumentBytes = 16 * 1024 * 1024;
   inline constexpr std::size_t kJsonDepth = 128;
