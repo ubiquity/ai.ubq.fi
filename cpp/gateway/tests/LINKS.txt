@@ -626,3 +626,5 @@ tests/public_provider_cache_controls_test.cpp: src/responses_failover_stream.cpp
     src/authority/native_kernel_contracts.cpp src/kernel/quota_v2.cpp src/authority/native_kernel.cpp
     src/kernel/policy_queue.cpp src/auth/local_admin.cpp src/auth/local_development_key.cpp src/analytics.cpp
     note: preserve every original static source and add symbol-proven completed compatibility route closure
+
+tests/provider_kv_fanout_lifetime_test.cpp: (header)
