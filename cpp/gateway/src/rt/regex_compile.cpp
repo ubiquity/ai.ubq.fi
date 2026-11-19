@@ -142,14 +142,14 @@ namespace uos::rt::regex_detail {
     const std::size_t length = input.size();
     // The compiler and name parser can look ahead while decoding a UTF-8 character.
     input.resize(length + 8, '\0');
-    Limits limits;
-    limits.stackFloor = compileStackFloor(reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
-    program->bytecode = compileBytecode(input, length, mask, limits);
+    Limits budget(limits::kRegexCompileDeadline);
+    budget.stackFloor = compileStackFloor(reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
+    program->bytecode = compileBytecode(input, length, mask, budget);
     program->captureCount = static_cast<std::uint32_t>(lre_get_capture_count(program->bytecode.get()) - 1);
     program->registerCount = static_cast<std::size_t>(lre_get_alloc_count(program->bytecode.get()));
     readGroups(*program);
     if (program->sticky) {
-      program->splitBytecode = compileBytecode(input, length, mask & ~LRE_FLAG_STICKY, limits);
+      program->splitBytecode = compileBytecode(input, length, mask & ~LRE_FLAG_STICKY, budget);
       program->registerCount = std::max(program->registerCount, static_cast<std::size_t>(lre_get_alloc_count(program->splitBytecode.get())));
     }
     return program;

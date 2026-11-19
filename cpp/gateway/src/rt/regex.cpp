@@ -170,14 +170,14 @@ namespace uos::rt {
 
     std::optional<RegexMatch> execWith(const Program& program, std::string_view input, std::size_t& lastIndex) {
       Subject subject(input, program);
-      Matcher matcher(program);
+      Matcher matcher(program, input.size());
       if (!builtinExec(program, matcher, subject, lastIndex)) return std::nullopt;
       return buildMatch(program, matcher.captures(), subject, input);
     }
 
     bool testWith(const Program& program, std::string_view input, std::size_t& lastIndex) {
       Subject subject(input, program);
-      Matcher matcher(program);
+      Matcher matcher(program, input.size());
       return builtinExec(program, matcher, subject, lastIndex);
     }
 
@@ -248,7 +248,7 @@ namespace uos::rt {
     // RegExp.prototype[@@replace]: all matches are found first, then callbacks run in order.
     std::string replaceWith(const Program& program, std::string_view input, std::size_t& lastIndex, std::string_view replacement, const RegexReplacer* replacer) {
       Subject subject(input, program);
-      Matcher matcher(program);
+      Matcher matcher(program, input.size());
       std::size_t width = 2 * (static_cast<std::size_t>(program.captureCount) + 1);
       std::vector<std::size_t> found;
       if (program.global) {
@@ -282,7 +282,7 @@ namespace uos::rt {
     std::optional<std::vector<std::string>> matchGlobalWith(const Program& program, std::string_view input, std::size_t& lastIndex) {
       if (!program.global) throw std::logic_error("rt::matchGlobal: the regex has no g flag; use rt::match");
       Subject subject(input, program);
-      Matcher matcher(program);
+      Matcher matcher(program, input.size());
       std::vector<std::string> out;
       lastIndex = 0;
       while (builtinExec(program, matcher, subject, lastIndex)) {
@@ -298,7 +298,7 @@ namespace uos::rt {
       std::vector<Piece> out;
       if (limit == 0) return out;
       Subject subject(input, program);
-      Matcher matcher(program);
+      Matcher matcher(program, input.size());
       std::size_t size = subject.length();
       if (size == 0) {
         if (!subject.search(matcher, 0, true)) out.push_back(Piece(std::string(input)));
@@ -387,7 +387,7 @@ namespace uos::rt {
     const Program& program = re.program();
     if (!program.global) throw TypeError("String.prototype.matchAll argument must not be a non-global regular expression");
     Subject subject(input, program);
-    Matcher matcher(program);
+    Matcher matcher(program, input.size());
     std::vector<RegexMatch> out;
     std::size_t lastIndex = re.lastIndex;
     while (builtinExec(program, matcher, subject, lastIndex)) {
@@ -434,7 +434,7 @@ namespace uos::rt {
   std::int64_t search(std::string_view input, const Regex& re) {
     const Program& program = re.program();
     Subject subject(input, program);
-    Matcher matcher(program);
+    Matcher matcher(program, input.size());
     std::size_t lastIndex = 0;
     if (!builtinExec(program, matcher, subject, lastIndex)) return -1;
     return static_cast<std::int64_t>(matcher.captureStart(0));

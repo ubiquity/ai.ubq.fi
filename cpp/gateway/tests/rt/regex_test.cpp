@@ -880,6 +880,11 @@ TEST("regexp engine hooks enforce the shared deadline and retain the allocation 
   const auto after = Limits::Clock::now();
   EXPECT(budget.deadline >= before + rt::limits::kRegexDeadline);
   EXPECT(budget.deadline <= after + rt::limits::kRegexDeadline);
+  const auto compileStart = Limits::Clock::now();
+  const Limits compilation(rt::limits::kRegexCompileDeadline);
+  const auto compileEnd = Limits::Clock::now();
+  EXPECT(compilation.deadline >= compileStart + rt::limits::kRegexCompileDeadline);
+  EXPECT(compilation.deadline <= compileEnd + rt::limits::kRegexCompileDeadline);
   budget.deadline = Limits::Clock::time_point::max();
   EXPECT_EQ(lre_check_timeout(&budget), 0);
   budget.deadline = Limits::Clock::now();

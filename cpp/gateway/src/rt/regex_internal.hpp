@@ -53,7 +53,8 @@ namespace uos::rt::regex_detail {
 
   struct Limits {
     using Clock = std::chrono::steady_clock;
-    Clock::time_point deadline = Clock::now() + limits::kRegexDeadline;
+    explicit Limits(std::chrono::milliseconds timeout = limits::kRegexDeadline) : deadline(Clock::now() + timeout) {}
+    Clock::time_point deadline;
     std::uintptr_t stackFloor = 0;
     // libregexp calls the hook once per 10,000 backtracking/loop polls.
     unsigned pollsRemaining = 4096;
@@ -64,7 +65,7 @@ namespace uos::rt::regex_detail {
 
   class Matcher {
   public:
-    explicit Matcher(const Program& program);
+    Matcher(const Program& program, std::size_t subjectBytes);
     bool search(const void* subject, std::size_t length, std::size_t start, bool wide, bool splitting);
     const std::size_t* captures() const { return offsets_.get() ? offsets_.get() : inlineOffsets_.data(); }
     std::size_t captureStart(std::size_t group) const { return captures()[2 * group]; }

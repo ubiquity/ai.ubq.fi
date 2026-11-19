@@ -41,7 +41,9 @@ namespace uos::rt::regex_detail {
     }
   }
 
-  Matcher::Matcher(const Program& program) : program_(program) {
+  Matcher::Matcher(const Program& program, std::size_t subjectBytes)
+    : program_(program), limits_(subjectBytes > limits::kRegexSubjectBytes && program.subjectBytes > limits::kRegexSubjectBytes
+                                   ? limits::kRegexLargeSubjectDeadline : limits::kRegexDeadline) {
     if (program.registerCount > inlineCount) registers_ = std::make_unique<std::uint8_t*[]>(program.registerCount);
     const std::size_t count = 2 * (static_cast<std::size_t>(program.captureCount) + 1);
     if (count > inlineCount) offsets_ = std::make_unique_for_overwrite<std::size_t[]>(count);
