@@ -98,8 +98,31 @@ sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-g
   /usr/bin/time -p python3 -B cpp/gateway/fuzz/ci.py "$target" --seconds 20 --jobs 2 --out "$out"
 ```
 
-The Docker build invokes `bash cpp/gateway/packaging/portable/build.sh "$scratch/uos-gateway-linux-arm64.tar.gz"` with `PORTABLE_JOBS=3`. The same committed checkout queues `bash cpp/gateway/packaging/portable/verify.sh "$scratch/uos-gateway-linux-arm64.tar.gz" "$scratch/package-evidence"`. Both use fresh home and temp directories. Logs and exit status files begin with `package-build` and `package-verify` under `$scratch`.
+## Fuzz and portable package results
+
+All 25 discovered targets linked and completed their 20-second campaigns. The ASN.1 passkey target linked in 61.364 s and reported 22 s of fuzzing. The CBOR passkey target linked in 77.069 s and reported 21 s. The final campaign for each target reported 21–24 s of fuzzing, zero finding artifacts and one known ARM64 libFuzzer fork-exit leak.
+
+The first `http_server_library` campaign linked in 59.624 s and ended after 0.838 s after a child threw `uos::rt::RangeError` with `stack overflow`. It returned an incomplete receipt with zero seconds and an empty fork-parent leak artifact. The unchanged target completed on a fresh retry with the same runner, flags and seed directory, with a 3.032 s cached build and 21 s reported fuzzing. The initial child abort remains an out-of-scope finding. The original and retry receipts are under `$scratch/fuzz/http_server_library` and the path recorded in `$scratch/retry-http_server_library.dir`.
+
+```sh
+bash "$scratch/retry-fuzz.sh" "$scratch" http_server_library
+```
+
+The Docker build and verifier both returned 0. The 27,509,866-byte archive built in 1,573.62 s. A second invocation for the same commit with a new scratch context and the existing Docker cache took 9.10 s and produced identical bytes. The archive SHA-256 is `db6e8c8f8e39773bf27b18e2a4ea6efa4f9a225e86dae2e881240efbb1bc5d3e`.
+
+```sh
+# From the detached source checkout, with separate empty home and temp directories for build and proof.
+env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 HOME="$run/build-home" TMPDIR="$run/build-tmp" PORTABLE_JOBS=3 \
+  /usr/bin/time -p bash cpp/gateway/packaging/portable/build.sh "$scratch/uos-gateway-linux-arm64.tar.gz"
+env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 HOME="$run/proof-home" TMPDIR="$run/proof-tmp" \
+  /usr/bin/time -p bash cpp/gateway/packaging/portable/verify.sh "$scratch/uos-gateway-linux-arm64.tar.gz" "$scratch/package-evidence"
+env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 HOME="$repeat/home" TMPDIR="$repeat/tmp" PORTABLE_JOBS=3 \
+  /usr/bin/time -p bash cpp/gateway/packaging/portable/build.sh "$scratch/uos-gateway-linux-arm64-repeat.tar.gz"
+cmp "$scratch/uos-gateway-linux-arm64.tar.gz" "$scratch/uos-gateway-linux-arm64-repeat.tar.gz"
+```
+
+The verifier took 54.23 s. All four Debian 12/13 and 256/512 MiB configurations matched `e33972637da3514281e39b5a290789e77a150477` and its `vps-` deployment ID in the health body and headers, including on reopen. Each configuration refused two tampered startup fixtures and reopened with 1,161 accounted loopback requests. Peak cgroup use across all four was 87,789,568 bytes. Median throughput per configuration ranged from 214.08 to 230.21 requests/s. The executable SHA-256 was `6536c7e4d79649ed017f303723930ba11a6ba373bb200c3ec1f7c9d34873be8d` on both images. Build logs and proof receipts are under `$scratch/package-*.log` and `$scratch/package-evidence`.
 
 ## Status
 
-Release, fuzz and Docker jobs are running. Apple Silicon execution and the automatic hosted matrix are pending. The local model review launcher requires Node and model traffic, so this job uses a local diff review. The existing public auth guide still points to the legacy upload tooling. [Previous cleanup findings](cppgw-cpp-only-20261119.md)
+The interrupted Release test run resumed using the existing objects. Apple Silicon execution and the automatic hosted matrix are pending. The local model review launcher requires Node and model traffic, so this job uses a local diff review. The existing public auth guide still points to the legacy upload tooling. [Previous cleanup findings](cppgw-cpp-only-20261119.md)
