@@ -154,7 +154,7 @@ def verify_network(benchmark, parent):
 def run(args):
     benchmark = runpy.run_path(str(args.bench / "run.py"))
     sys.path.insert(0, str(HERE))
-    smoke = args.source / "cpp/gateway/tests/production_smoke"
+    smoke = benchmark["SMOKE"]
     sys.path.insert(2, str(smoke))
     from cases import synthetic_auth
     from compare import compare, expectations, markdown, redact
@@ -179,7 +179,7 @@ def run(args):
                "suite_tree": args.suite_tree, "binaries_sha256": identities, "network": network,
                "benchmark_revision": args.benchmark_revision,
                "benchmark_sha256": {path.name: benchmark["digest"](path) for path in sorted(args.bench.iterdir()) if path.is_file()},
-               "oracle_smoke_sha256": {path.name: benchmark["digest"](path) for path in sorted(smoke.iterdir()) if path.is_file()},
+               "smoke_sha256": {path.name: benchmark["digest"](path) for path in sorted(smoke.iterdir()) if path.is_file()},
                "fixture_sha256": {path.name: benchmark["digest"](path) for path in sorted(HERE.iterdir()) if path.is_file()},
                "launches": {name: gateway.launches for name, gateway in gateways.items()}, "cases": []}
     started = time.monotonic()

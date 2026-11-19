@@ -23,7 +23,7 @@ from driver import batch, connection, control, metrics, request, require
 from fixtures import ADMIN_TOKEN, API_TOKEN, INFERENCE, PROVIDER_TOKEN, SCENARIOS, encode
 from record import record
 
-SMOKE_LAUNCHER = "cpp/gateway/tests/production_smoke/bun.ts"
+SMOKE = HERE.parents[1] / "tests/production_smoke"
 PATH = os.defpath + ":/usr/sbin:/sbin"
 TICKS = os.sysconf("SC_CLK_TCK")
 LISTEN = re.compile(rb"Listening on http://127\.0\.0\.1:(\d+)/")
@@ -139,8 +139,8 @@ def command_for(args, runtime, root, mock_port, identities):
                         packageManifestSha256=identities["package_manifest"], nativeKvProvenanceSha256=identities["native_kv_provenance"])
         command = [args.package / "bin/uos-gateway", "--runtime-manifest", path]
     else:
-        command = [args.bun, "--no-env-file", "--no-install", "--config=" + str(args.source / "ops/runtime-bunfig.toml"),
-                   args.source / SMOKE_LAUNCHER, path, args.binding]
+        command = [args.bun, "--no-env-file", "--no-install", "--config=" + str(SMOKE / "bunfig.toml"),
+                   SMOKE / "bun.ts", args.source, path, args.binding]
     path.write_text(json.dumps(manifest) + "\n")
     return command
 
@@ -209,7 +209,8 @@ def trial(args, runtime, name, repetition, mock_port, mock_pid, identities):
 
 def identities_for(args):
     binding = json.loads(args.binding.read_text())
-    data = {"bun": digest(args.bun), "bun_lock": digest(args.source / "bun.lock"), "bun_launcher": digest(args.source / SMOKE_LAUNCHER),
+    data = {"bun": digest(args.bun), "bun_lock": digest(args.source / "bun.lock"), "bun_launcher": digest(SMOKE / "bun.ts"),
+            "bun_config": digest(SMOKE / "bunfig.toml"),
             "native_kv_provenance": binding["expectedProvenanceSha256"], "native_kv_addon": digest(Path(binding["artifactDirectory"]) / "native-kv.node")}
     if args.package:
         require(json.loads((args.package / "package.json").read_text())["nativeKvProvenanceSha256"] == data["native_kv_provenance"],

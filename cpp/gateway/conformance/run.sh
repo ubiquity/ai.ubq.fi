@@ -51,8 +51,8 @@ fi
 source="$launch/oracle"
 source_revision=$("${prep[@]}" bash "$here/oracle.sh" "$source")
 source_tree=$(git -C "$source" rev-parse 'HEAD^{tree}')
-if [[ ! -f $source/bun.lock || ! -f $source/tools/lint/bun.lock ]]; then
-  echo 'The historical frozen root and lint lockfiles are required' >&2
+if [[ ! -f $source/bun.lock ]]; then
+  echo 'The pinned Bun application must have a root lockfile' >&2
   exit 2
 fi
 cmp -- "$source/tools/native-kv/inputs.json" "$package/native/kv/inputs.json"
@@ -60,7 +60,10 @@ cmp -- "$source/tools/native-kv/inputs.json" "$package/native/kv/inputs.json"
   cd "$source"
   "${prep[@]}" "$bun" --no-env-file install --frozen-lockfile --ignore-scripts --backend=copyfile
 ) > "$launch/bun-preparation.log" 2>&1
-test -f "$source/node_modules/ws/package.json"
+if [[ $(jq -er .version "$source/node_modules/ws/package.json") != 8.18.3 ]]; then
+  echo 'The pinned Bun application must install ws@8.18.3' >&2
+  exit 2
+fi
 
 binding="$launch/oracle-binding.json"
 jq -n --arg dir "$package/native/kv" --arg hash "$provenance" --arg inputs "$source/tools/native-kv/inputs.json" \
