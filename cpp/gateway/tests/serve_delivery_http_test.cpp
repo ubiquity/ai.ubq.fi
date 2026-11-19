@@ -36,6 +36,7 @@
 #include "uos/runtime/http.hpp"
 #include "uos/runtime/http_tasks.hpp"
 #include "uos/handler/serve_handler.hpp"
+#include "uos/rt/limits.hpp"
 
 using namespace uos;
 namespace fixture = tests::helpers::terminal_log_harness;
@@ -73,6 +74,42 @@ ASYNC_TEST("dropping a delivery handoff releases its request signal") {
   EXPECT(observer.expired());
   completed.resolve();
   co_await rt::microtask();
+}
+
+ASYNC_TEST("the gateway rejects oversized Chat uploads at the head with the normal authenticated response") {
+  fixture::Isolation isolation;
+  const auto savedConfig = config::config;
+  const auto restore = rt::scopeExit([savedConfig] { config::config = savedConfig; });
+  config::config.isDeploy = true;
+  config::config.isProductionTimeline = true;
+  config::config.authTokens = {"fixture-chat-size"};
+  kv::setKvForTest(std::make_shared<rt::MemoryKv>(rt::dateNow));
+
+  auto options = loopbackOptions();
+  options.applicationChatBodyRejection = true;
+  const auto server = wire::serveHttp(options, handler::serve_handler::createServeHandler());
+  const auto address = co_await server.ready.wait();
+  const std::string head = "POST /v1/chat/completions HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\n"
+    "Expect: 100-continue\r\nContent-Length: " + std::to_string(rt::limits::kHttpBodyBytes + 1) + "\r\n";
+  for (const bool authenticated : {true, false}) {
+    const auto request = head + (authenticated ? "Authorization: Bearer fixture-chat-size\r\n\r\n" : "\r\n");
+    const auto closed = rt::withResolvers<void>();
+    const auto reply = std::make_shared<std::string>();
+    const auto socket = RawClient::connect(static_cast<int>(address.port));
+    socket->once("connect", [socket, request](const auto&) { socket->write(request); });
+    socket->on("data", [reply](const auto& part) { *reply += part; });
+    socket->once("close", [closed](const auto&) { closed.resolve(); });
+    co_await closed.promise.wait();
+    const auto received = rt::toLowerCase(*reply);
+    EXPECT(received.starts_with(authenticated ? "http/1.1 400" : "http/1.1 401"));
+    EXPECT(!rt::includes(received, "100 continue"));
+    EXPECT(rt::includes(received, "connection: close"));
+    EXPECT(rt::includes(received, "content-type: application/json"));
+    EXPECT(rt::includes(received, "x-uos-request-id:"));
+    EXPECT(rt::includes(received, authenticated ? "invalid_request_error" : "invalid_api_key"));
+  }
+  const auto stopped = server.shutdown();
+  co_await stopped.wait();
 }
 
 ASYNC_TEST("serve.ts classifies delivered and client-cancelled SSE responses from real HTTP completion") {

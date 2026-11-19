@@ -354,6 +354,8 @@ namespace uos::runtime::http {
     std::function<void(const NetAddr& address)> onListen{};
     std::optional<rt::AbortSignal> signal{};
     ServeUpgradeHandler upgrade{};
+    // Let the gateway format its usual Chat rejection for a refused Content-Length.
+    bool applicationChatBodyRejection = false;
   };
 
   // export type HttpServer = Readonly<{ addr: NetAddr; ready; finished; shutdown; ref; unref }>;

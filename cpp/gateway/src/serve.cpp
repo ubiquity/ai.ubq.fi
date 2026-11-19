@@ -154,7 +154,8 @@ namespace uos::serve {
   namespace {
     rt::Task<void> serveConfigured(std::string hostname, int port) {
       const auto migration = initializeModule().catch_(rt::ignoreRejection);
-      runtime::http::ServeHttpOptions options{.hostname = std::move(hostname), .port = static_cast<double>(port), .onListen = application.onListen, .upgrade = application.upgrade};
+      runtime::http::ServeHttpOptions options{.hostname = std::move(hostname), .port = static_cast<double>(port), .onListen = application.onListen, .upgrade = application.upgrade,
+                                             .applicationChatBodyRejection = true};
       const auto server = runtime::http::serveHttp(options, application.fetch);
       rt::process::Listener shutdown([server] {
         server.shutdown().catch_([](rt::Reason) { rt::console::error("[ai.ubq.fi] Development HTTP shutdown failed"); });
@@ -192,7 +193,8 @@ namespace uos::serve {
       std::optional<rt::Promise<void>> migration;
       try {
         migration = initializeModule().catch_(rt::ignoreRejection);
-        runtime::http::ServeHttpOptions options{.hostname = std::move(hostname), .port = static_cast<double>(port), .onListen = application.onListen, .upgrade = application.upgrade};
+        runtime::http::ServeHttpOptions options{.hostname = std::move(hostname), .port = static_cast<double>(port), .onListen = application.onListen, .upgrade = application.upgrade,
+                                               .applicationChatBodyRejection = true};
         const auto server = runtime::http::serveHttp(options, application.fetch);
         shutdown.emplace([server] {
           server.shutdown().catch_([](rt::Reason) { rt::console::error("[ai.ubq.fi] HTTP shutdown failed"); });

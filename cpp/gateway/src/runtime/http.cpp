@@ -179,6 +179,16 @@ namespace uos::runtime::http {
         return rt::limits::kHttpBodyBytes;
       }
 
+      bool isChatPost(std::string_view method, std::string_view target) {
+        if (method != "POST") return false;
+        try {
+          const auto path = rt::URL(target, "http://localhost").pathname();
+          return std::string_view(path).substr(0, path.find_last_not_of('/') + 1) == "/v1/chat/completions";
+        } catch (const rt::TypeError&) {
+          return false;
+        }
+      }
+
       bool isTokenChar(unsigned char character) {
         if (character >= '0' && character <= '9') return true;
         if ((character | 0x20) >= 'a' && (character | 0x20) <= 'z') return true;
@@ -300,6 +310,7 @@ namespace uos::runtime::http {
       bool closing = false;
       bool closeEmitted = false;
       bool referenced = true;
+      bool applicationChatBodyRejection = false;
       // The event loop's reference to a listening server (released by close()).
       std::shared_ptr<Server> keepAlive;
       rt::OrderedMap<const ConnectionState*, std::shared_ptr<ConnectionState>> connections;
@@ -743,9 +754,15 @@ namespace uos::runtime::http {
         framing = chunked ? Framing::chunked : remaining > 0 ? Framing::length : Framing::none;
         parser.bodyBytesRemaining = chunked || remaining > rt::limits::kHttpBodyBytes
                                       ? requestBodyLimit(method, target, contentType) : rt::limits::kHttpBodyBytes;
-        if (remaining > parser.bodyBytesRemaining) {
-          refuse(BODY_OVERFLOW);
-          return false;
+        const bool oversized = remaining > parser.bodyBytesRemaining;
+        if (oversized) {
+          if (chunked || isUpgrade || !server || !server->impl().applicationChatBodyRejection || !isChatPost(method, target)) {
+            refuse(BODY_OVERFLOW);
+            return false;
+          }
+          // Dispatch only the head. The application rejects Content-Length at the
+          // same cap and supplies the authenticated Chat error response.
+          keepAlive = false;
         }
 
         auto self = shared_from_this();
@@ -754,7 +771,8 @@ namespace uos::runtime::http {
         incoming->url = rt::decodeUtf8(target, {.ignoreBOM = true});
         incoming->httpVersion = http11 ? "1.1" : "1.0";
         incoming->rawHeaders = std::move(rawHeaders);
-        input.erase(input.begin(), input.begin() + static_cast<std::ptrdiff_t>(consumed));
+        if (oversized) input.clear();
+        else input.erase(input.begin(), input.begin() + static_cast<std::ptrdiff_t>(consumed));
         if (isUpgrade && server && server->impl().listenerCount("upgrade") > 0) {
           phase = Phase::upgrade;
           request = incoming;
@@ -777,14 +795,14 @@ namespace uos::runtime::http {
         state.isHeadRequest = method == "HEAD";
         state.http10 = !http11;
         response->shouldKeepAlive = keepAlive;
-        bodyComplete = framing == Framing::none;
-        incoming->complete_ = bodyComplete;
+        bodyComplete = oversized || framing == Framing::none;
+        incoming->complete_ = !oversized && bodyComplete;
         flowing = false;
         endScheduled = false;
         endEmitted = false;
         dumping = false;
         phase = bodyComplete ? Phase::waiting : Phase::body;
-        if (expectContinue && http11) write(bytesOf("HTTP/1.1 100 Continue\r\n\r\n"));
+        if (!oversized && expectContinue && http11) write(bytesOf("HTTP/1.1 100 Continue\r\n\r\n"));
         rearm();
         if (server) server->impl().emitRequest(incoming, response);
         return phase != Phase::closed && !destroyed;
@@ -2062,6 +2080,7 @@ namespace uos::runtime::http {
     // The server's listeners hold the state like the JS closures do; the server drops them
     // after its "close" event.
     state->server = node_http::createServer([state](std::shared_ptr<IncomingMessage> incoming, std::shared_ptr<ServerResponse> outgoing) { onRequest(state, incoming, outgoing); });
+    state->server->impl().applicationChatBodyRejection = state->options.applicationChatBodyRejection;
     // Inference has application-owned deadlines. A quiet SSE or pending handler
     // must not inherit Bun.serve's ten-second idle timeout through node:http.
     state->server->timeout = 0;

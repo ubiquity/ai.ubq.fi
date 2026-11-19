@@ -38,3 +38,9 @@ The portable Docker source stage and CMake dependency tracking now include `PORT
 - **3i FIXED.** CLI pipe tasks own their readers, cancellation removes its listener on every exit and drains the process before returning. The quota write awaits a named task. Fixture callbacks that borrow test state now finish that work before returning an owning task.
 
 The Gemini merge initially added disabled Gemini rows to provider health and the model and provider catalogs. Those public rows now require a validated CLI configuration. The provider picker rejects new Gemini selections when it is unavailable and retains saved selection policy. The two inference routes use the Gemini path only on explicit opt-in. The paired suite and its comparator are unchanged.
+
+## Paired Chat body refusal
+
+The first sealed run used commit `e30529f292f50f993c045f15016b83ad9adcc361`, tree `12e58de8cd58d8eb7a3d7cfeb9c884b4e4e89247`. `bash cpp/gateway/conformance/run.sh "$scratch/paired" "$scratch/paired/seal-receipt.json"` completed 186 cases in 9.577 s. It recorded 183 matches, two known shared failures and one functional difference. The 33,554,433-byte `chat-body-too-large` request exercised the starting branch's earlier transport-level 413, while the pinned Bun oracle returned a structured 400 with a request ID and policy headers. Neither dispatched upstream.
+
+The native gateway now passes the refused fixed-length Chat head to the existing authenticated rejection path. The same 16 MiB ceiling still prevents reading the body and the transport suppresses `100 Continue`. The connection closes after the response. The ordinary transport 413 remains for other routes and chunked wire overflow. A loopback test sends only the oversized head and checks the existing 400 and 401 responses for authenticated and unauthenticated clients. The paired case and comparator retain the original expectations. Reruns are pending.
