@@ -28,7 +28,7 @@ newer, zlib, ICU, Brotli and Zstd. The benchmark uses `ip`, `unshare` and `setpr
 LLVM symbolizer and any matching system debug packages before timing. Preparation uses network access for exact tool and dependency
 downloads. The benchmark itself has loopback access only.
 
-Run from the native checkout. The C++ build uses the current source. Bun loads the frozen legacy checkout prepared by the conformance oracle helper. See the conformance guide for a comparison using a sealed portable package. [Paired conformance](../../docs/CONFORMANCE.md)
+Run from the native checkout. The C++ build uses the current source. The native checkout's Bun launcher loads the pinned production application prepared by the conformance oracle helper. See the conformance guide for a comparison using a sealed portable package. [Paired conformance](../../docs/CONFORMANCE.md)
 
 ```sh
 bench=cpp/gateway/bench/request_path
@@ -38,9 +38,9 @@ bun_bin=$(command -v bun)
 rustup_bin=$(command -v rustup)
 mkdir "$scratch/prep-home" "$scratch/prep-tmp"
 revision=$(env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$scratch/prep-home" TMPDIR="$scratch/prep-tmp" \
-  bash cpp/gateway/conformance/oracle.sh "$scratch/oracle")
+  bash cpp/gateway/conformance/oracle.sh --production "$scratch/oracle")
 test "$("$bun_bin" --no-env-file --no-install --version)" = 1.4.0
-test -f "$scratch/oracle/bun.lock" && test -f "$scratch/oracle/tools/lint/bun.lock"
+test -f "$scratch/oracle/bun.lock"
 
 (
   cd "$scratch"

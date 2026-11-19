@@ -1,5 +1,6 @@
 // Port of all seven original tests/passport.test.ts registrations, in source order.
 // Links: tests/passport_test.cpp src/auth/passport.cpp src/agent_messages.cpp src/auth/passport_sessions.cpp tests/helpers/admin_auth_harness.cpp src/utils.cpp src/config.cpp src/models/catalog.cpp src/input_normalization.cpp src/models/codex_models.cpp src/release.cpp src/handler/index.cpp
+// src/provider/gemini.cpp src/admin/gemini_quota.cpp
 // src/provider/cerebras.cpp src/admin/claude_code.cpp src/static.cpp src/health.cpp src/deepseek/waterfall.cpp src/admin/codex.cpp src/models/openrouter_models.cpp src/codex/auth.cpp src/types.cpp src/admin/codex_reset.cpp src/runtime_config.cpp src/live/handler.cpp src/admin/kernel.cpp src/handler/http.cpp
 // src/provider/capacity_parse.cpp src/provider/presentation.cpp src/auth/passkeys.cpp src/request.cpp src/http.cpp src/admin/api_keys.cpp src/quota_projection.cpp src/api_key_policy.cpp src/provider/health.cpp src/catalog/store.cpp src/provider/claude_code_accounts.cpp src/catalog/types.cpp
 // src/paid_fallback/ledger_state.cpp src/kv_conversion/profile_json.cpp src/authority/native_paid_contracts.cpp src/codex/reset_settings.cpp src/provider/selection.cpp src/models/metadata.cpp src/paid_fallback/ledger_backfill.cpp src/codex/manual_reset.cpp src/metered_quota.cpp src/codex/banked_reset.cpp
@@ -97,6 +98,7 @@ namespace {
     std::string exchangedToken;
     json::array exchanges;
     int jwksStatus = 200;
+    int exchangeStatus = 200;
     std::optional<rt::GlobalFetchOverride> fetch;
     Fixture() {
       uos::config::config.codexAuthJsonB64.clear(); harness::resetHarness(); passport::resetPassportCacheForTest(); uos::tests::helpers::responses_conformance_client::stageGatewayAssets();
@@ -113,8 +115,10 @@ namespace {
           EXPECT_EQ(init.method, std::optional<std::string>("POST")); EXPECT_EQ(init.redirect, std::optional<std::string>("error"));
           const rt::Response reader(init.body.value_or(rt::BodyInit(nullptr)));
           AWAIT(body, reader.json()); exchanges.push_back(body);
+          const rt::ResponseInit responseInit{.status = static_cast<double>(exchangeStatus)};
+          if (exchangeStatus != 200) co_return rt::Response::json(json::object{{"error", "Exchange failed"}}, responseInit);
           const json::object exchanged{{"accessToken", exchangedToken}, {"appSession", appGrant}};
-          co_return rt::Response::json(exchanged);
+          co_return rt::Response::json(exchanged, responseInit);
         }
         if (url == ISSUER + "/api/auth/sso/session") {
           const json::object body{{"authenticated", true}, {"session", json::object{{"subject", "fixture-admin"}, {"clientId", "ai"}, {"audience", "ai"}, {"origin", ORIGIN}, {"redirectUri", ORIGIN + "/auth/callback"}, {"createdAt", "2026-01-01T00:00:00.000Z"}}}, {"user", json::object{{"id", "fixture-admin"}, {"handle", "administrator"}, {"isAdmin", true}, {"scopes", json::array()}}}};
@@ -148,6 +152,24 @@ namespace {
       co_return BeginResult{state, codeVerifier, rt::join(cookies, "; ")};
     }
   };
+
+  rt::Task<void> checkExchangeFailure(int exchangeStatus, std::string code, int status, std::string errorCode) {
+    Fixture fixture;
+    fixture.exchangeStatus = exchangeStatus;
+    AWAIT(begin, fixture.begin());
+    const rt::RequestInit init{.headers = rt::Headers{{"Cookie", begin.stateCookie}}};
+    const auto callback = request("/auth/callback?state=" + begin.state + "&code=" + code, "", init);
+    AWAIT(response, handler(callback));
+    EXPECT_EQ(fixture.exchanges.size(), 1u);
+    const std::vector<std::string> expectedCookies{
+      STATE_COOKIE + "=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax",
+      VERIFIER_COOKIE + "=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax",
+    };
+    EXPECT_EQ(response.headers().getSetCookie(), expectedCookies);
+    EXPECT_EQ(response.status(), status);
+    AWAIT(body, response.json());
+    EXPECT_EQ(rt::getString(member(body, "error"), "code"), errorCode);
+  }
 }
 
 ASYNC_TEST("Bun Passport button destination completes exchange, sets host cookies, returns to admin and authenticates protected reads") {
@@ -182,6 +204,22 @@ ASYNC_TEST("Passport callback rejects absent, mismatched and duplicated state be
     EXPECT_EQ(response.status(), 401); EXPECT(hasCookie(response, STATE_COOKIE + "=; Max-Age=0;"));
   }
   EXPECT_EQ(fixture.exchanges.size(), std::size_t(0));
+}
+
+ASYNC_TEST("Passport callback returns 401 and clears state for rejected exchange statuses") {
+  const std::vector<int> statuses{400, 401, 403, 422, 429};
+  for (const int status : statuses) {
+    auto checking = checkExchangeFailure(status, "rejected-code", 401, "invalid_api_key");
+    co_await std::move(checking);
+  }
+}
+
+ASYNC_TEST("Passport callback retains 502 and clears state for upstream exchange failures") {
+  const std::vector<int> statuses{500, 502, 503, 504};
+  for (const int status : statuses) {
+    auto checking = checkExchangeFailure(status, "valid-code", 502, "passport_unavailable");
+    co_await std::move(checking);
+  }
 }
 
 ASYNC_TEST("failed Passport callback clears only transient cookies and never creates a session from an agent") {

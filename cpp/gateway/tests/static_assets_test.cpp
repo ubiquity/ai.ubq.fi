@@ -1,6 +1,7 @@
 // Port of tests/static-assets.test.ts. Source scans read explicit repository paths; the real static module
 // reads the same assets through task-owned symlinks, retaining the isolated wrapper working directory.
 // Links: tests/static_assets_test.cpp
+// src/provider/gemini.cpp src/admin/gemini_quota.cpp
 // src/admin/api_key_audit.cpp src/admin/api_key_mutations.cpp src/admin/api_keys.cpp src/admin/capacity_observation_sync.cpp src/admin/chart_source_proxy.cpp src/admin/claude_code.cpp src/admin/codex.cpp src/admin/codex_reset.cpp src/admin/defaults.cpp src/admin/error_log.cpp
 // src/admin/kernel.cpp src/admin/sentinel_incident.cpp src/agent_messages.cpp src/analytics.cpp src/api_key_policy.cpp src/api_keys.cpp src/auth/index.cpp src/auth/local_admin.cpp src/auth/local_development_key.cpp src/auth/passkeys.cpp
 // src/auth/passport.cpp src/auth/passport_sessions.cpp src/auth/relay.cpp src/authority/native_api_key.cpp src/authority/native_api_key_audit.cpp src/authority/native_api_key_policy.cpp src/authority/native_codex.cpp src/authority/native_codex_429.cpp src/authority/native_codex_capacity.cpp src/authority/native_codex_contracts.cpp
@@ -568,7 +569,7 @@ TEST("admin analytics view places capacity history before current providers") {
   EXPECT_MATCH(adminHtml, R"re(id="view-tab-analytics"[\s\S]*?>\s*Analytics\s*<)re", "");
   EXPECT_NO_MATCH(adminHtml, R"re(Fifteen-minute capacity, cached-input, and cache-write history)re", "");
   EXPECT_MATCH(adminHtml, R"re(admin\.css\?v=claude-usage-refresh-20261025)re", "");
-  EXPECT_MATCH(adminHtml, R"re(admin\.js\?v=claude-usage-direct-20261025)re", "");
+  EXPECT_MATCH(adminHtml, R"re(admin\.js\?v=gemini-inference-20261118)re", "");
   EXPECT_MATCH(adminScript, R"re(endpoints\.has\("\/v1\/decisions"\))re", "");
   EXPECT_MATCH(adminScript, R"re(toLocaleString\(undefined,)re", "");
   EXPECT_MATCH(adminScript, R"re(timeZoneName: "short")re", "");

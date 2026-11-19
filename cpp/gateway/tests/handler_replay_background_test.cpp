@@ -1,5 +1,6 @@
 // Port of all four original tests/handler-replay-background.test.ts cases.
 // Links: tests/handler_replay_background_test.cpp
+// src/provider/gemini.cpp src/admin/gemini_quota.cpp
 //       src/kv.cpp src/storage/kv.cpp src/storage/sqlite_readonly.cpp src/config.cpp src/handler/http.cpp src/api_key_policy.cpp src/release.cpp src/cache/prompt_analytics_queue.cpp src/cache/prompt_analytics_core.cpp src/authority/native_api_key.cpp src/utils.cpp src/http.cpp src/storage/native_addon.cpp src/authority/native_api_key_policy.cpp
 //       src/authority/native_paid_policy.cpp src/optional_telemetry_queue.cpp src/api_keys.cpp src/types.cpp src/codex/quota.cpp src/handler/terminal_log.cpp src/handler/terminal_route.cpp src/handler/admission.cpp src/sentinel/replay_observation.cpp src/storage/native_kv.cpp src/auth/index.cpp src/kernel/attestation.cpp
 //       src/sentinel/replay_model.cpp src/kernel/quota_reserve.cpp src/kernel/quota_reservations.cpp src/authority/native_kernel.cpp src/inference_admission.cpp src/kernel/quota_v2.cpp src/auth/passport.cpp src/sentinel/replay_store.cpp src/kernel/policy_queue.cpp src/sentinel/incident_outbox.cpp src/paid_fallback/rollups.cpp

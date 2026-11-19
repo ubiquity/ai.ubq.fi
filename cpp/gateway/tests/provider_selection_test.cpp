@@ -1,4 +1,5 @@
 // Links: tests/provider_selection_test.cpp
+// src/provider/gemini.cpp src/admin/gemini_quota.cpp
 // src/admin/api_key_audit.cpp src/admin/api_key_mutations.cpp src/admin/api_keys.cpp src/admin/capacity_observation_sync.cpp src/admin/chart_source_proxy.cpp src/admin/claude_code.cpp src/admin/codex.cpp src/admin/codex_reset.cpp src/admin/defaults.cpp src/admin/error_log.cpp
 // src/admin/kernel.cpp src/admin/sentinel_incident.cpp src/agent_messages.cpp src/analytics.cpp src/api_key_policy.cpp src/api_keys.cpp src/auth/index.cpp src/auth/local_admin.cpp src/auth/local_development_key.cpp src/auth/passkeys.cpp
 // src/auth/passport.cpp src/auth/passport_sessions.cpp src/auth/relay.cpp src/authority/native_api_key.cpp src/authority/native_api_key_audit.cpp src/authority/native_api_key_policy.cpp src/authority/native_codex.cpp src/authority/native_codex_429.cpp src/authority/native_codex_capacity.cpp src/authority/native_codex_contracts.cpp
@@ -416,15 +417,29 @@ ASYNC_TEST("admin provider picker reports the roster, catalog counts, and the sa
   EXPECT_JSON(body.at("data").at("tiers"), tiers, "waterfall tier order");
   EXPECT_JSON(body.at("data").at("selection").at("provider_ids"), (json::array{"surplus"}), "saved selection");
   EXPECT_EQ(rt::getBool(body.at("data"), "filter_active"), true);
+  const auto unavailable = selectionRequest(json::object{{"provider_ids", json::array{"gemini"}}});
+  AWAIT(refused, admin::handleAdminProviderSelectionSet(unavailable));
+  EXPECT_EQ(refused.status(), 400);
 }
 ASYNC_TEST("every selectable provider carries a complete presentation and a health key the view reports") {
   const auto database = std::make_shared<SelectionKv>(); Fixture fixture(database); rt::env::set("DEEPSEEK_API_KEY", "fixture-deepseek-key");
+  const std::string home = rt::fs::mkdtempSync(rt::os::tmpdir() + "/gemini-picker-");
+  const auto cleanup = rt::scopeExit([home] { rt::fs::rmSync(home, {.recursive = true, .force = true}); });
+  const rt::env::ScopedOverride antigravity{{"HOME", home}, {"UOS_GATEWAY_ENABLE_ANTIGRAVITY", "1"}};
+  rt::fs::mkdirSync(home + "/.local/bin", {.recursive = true, .mode = 0700});
+  rt::fs::mkdirSync(home + "/.gemini/antigravity-cli", {.recursive = true, .mode = 0700});
+  rt::fs::writeFileSync(home + "/.local/bin/agy", "fixture", {.flag = "wx", .mode = 0700});
+  rt::fs::writeFileSync(home + "/.gemini/antigravity-cli/antigravity-oauth-token", "", {.flag = "wx", .mode = 0600});
   AWAIT(snapshot, catalog::buildModelCatalogSnapshot());
   admin::CatalogDependencies dependencies; dependencies.buildCatalog = [snapshot] { return rt::fulfilledTask(snapshot); };
   AWAIT(response, admin::handleAdminProviderSelectionGet(dependencies)); AWAIT(body, response.json());
   const auto& providers = body.at("data").at("providers").as_array(); std::vector<std::string> ids;
   for (const auto& row : providers) ids.push_back(std::string(*rt::getString(row, "id")));
   std::vector<std::string> roster; appendIds(roster, sel::SELECTABLE_PROVIDER_IDS); EXPECT_EQ(ids, roster);
+  const auto gemini = std::find_if(providers.begin(), providers.end(), [](const auto& row) { return rt::getString(row, "id") == "gemini"; });
+  ASSERT(gemini != providers.end());
+  EXPECT_EQ(rt::getNumber(*gemini, "model_count"), std::optional<double>(3));
+  EXPECT_EQ(rt::getBool(*gemini, "configured"), true);
   const auto gateway = std::find_if(providers.begin(), providers.end(), [](const auto& row) { return rt::getString(row, "id") == presentation::GATEWAY_PROVIDER_ID; });
   EXPECT(gateway != providers.end()); EXPECT(rt::getBool(*gateway, "selectable") != false);
   std::vector<std::string> actualTiers, expectedTiers;

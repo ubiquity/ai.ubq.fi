@@ -128,30 +128,57 @@ namespace uos::rt::detail::fetch {
   std::string requestHead(const std::string& method, const URL& url, const Headers& headers, RequestFraming framing, std::uint64_t length, const std::string& userAgent,
                           const std::string& acceptEncoding) {
     std::string target = url.pathname() + url.search();
+    if (target.size() > limits::kHttpHeaderBlockBytes || method.size() > limits::kHttpHeaderBlockBytes)
+      throw verboseError("RequestHeadersTooLarge", url.href());
     if (target.empty()) target = "/";
     std::string head = method + " " + target + " HTTP/1.1\r\n";
     std::vector<std::pair<std::string, std::string>> lines;
     std::vector<std::string> cookies;
+    std::size_t fieldCount = 0;
+    std::size_t bytes = head.size();
+    const auto charge = [&](std::size_t nameBytes, std::size_t valueBytes) {
+      if (++fieldCount > limits::kHttpHeaderFields || bytes >= limits::kHttpHeaderBlockBytes ||
+          nameBytes + valueBytes + 4 > limits::kHttpHeaderBlockBytes - bytes)
+        throw verboseError("RequestHeadersTooLarge", url.href());
+      bytes += nameBytes + valueBytes + 4;
+    };
     for (const auto& [name, value] : detail::headerWireFields(headers)) {
+      if (name.size() > limits::kHttpHeaderBlockBytes || value.size() > 2 * limits::kHttpHeaderBlockBytes)
+        throw verboseError("RequestHeadersTooLarge", url.href());
       if (iequals(name, "content-length") || iequals(name, "transfer-encoding")) continue;
-      lines.emplace_back(wireName(name), latin1Bytes(value));
+      auto encoded = latin1Bytes(value);
+      charge(name.size(), encoded.size());
+      lines.emplace_back(wireName(name), std::move(encoded));
     }
-    for (const std::string& value : headers.getSetCookie()) cookies.push_back(latin1Bytes(value));
+    for (const std::string& value : headers.getSetCookie()) {
+      if (value.size() > 2 * limits::kHttpHeaderBlockBytes) throw verboseError("RequestHeadersTooLarge", url.href());
+      auto encoded = latin1Bytes(value);
+      charge("set-cookie"sv.size(), encoded.size());
+      cookies.push_back(std::move(encoded));
+    }
     std::sort(lines.begin(), lines.end(), [](const auto& left, const auto& right) { return left.first < right.first; });
     for (const auto& [name, value] : lines) head += name + ": " + value + "\r\n";
     for (const std::string& cookie : cookies) head += "set-cookie: " + cookie + "\r\n";
-    if (!headers.has("connection")) head += "Connection: keep-alive\r\n";
-    if (!headers.has("user-agent")) head += "User-Agent: " + latin1Bytes(userAgent) + "\r\n";
-    if (!headers.has("accept")) head += "Accept: */*\r\n";
-    if (!headers.has("host")) head += "Host: " + url.host() + "\r\n";
-    if (!headers.has("accept-encoding")) head += "Accept-Encoding: " + acceptEncoding + "\r\n";
+    const auto appendField = [&](std::string_view name, std::string_view value) {
+      charge(name.size(), value.size());
+      head.append(name).append(": ").append(value).append("\r\n");
+    };
+    if (!headers.has("connection")) appendField("Connection", "keep-alive");
+    if (!headers.has("user-agent")) {
+      if (userAgent.size() > 2 * limits::kHttpHeaderBlockBytes) throw verboseError("RequestHeadersTooLarge", url.href());
+      appendField("User-Agent", latin1Bytes(userAgent));
+    }
+    if (!headers.has("accept")) appendField("Accept", "*/*");
+    if (!headers.has("host")) appendField("Host", url.host());
+    if (!headers.has("accept-encoding")) appendField("Accept-Encoding", acceptEncoding);
     switch (framing) {
-      case RequestFraming::length: head += "Content-Length: " + std::to_string(length) + "\r\n"; break;
-      case RequestFraming::chunked: head += "Transfer-Encoding: chunked\r\n"; break;
+      case RequestFraming::length: appendField("Content-Length", std::to_string(length)); break;
+      case RequestFraming::chunked: appendField("Transfer-Encoding", "chunked"); break;
       case RequestFraming::none:
-        if (method != "GET" && method != "HEAD" && method != "TRACE") head += "Content-Length: 0\r\n";
+        if (method != "GET" && method != "HEAD" && method != "TRACE") appendField("Content-Length", "0");
         break;
     }
+    if (head.size() > limits::kHttpHeaderBlockBytes - 2) throw verboseError("RequestHeadersTooLarge", url.href());
     head += "\r\n";
     return head;
   }
@@ -222,10 +249,35 @@ namespace uos::rt::detail::fetch {
       self.startField_ = true;
       return 0;
     };
+    settings.on_header_field_complete = [](llhttp_t* parser) -> int {
+      auto& self = *static_cast<ResponseParser*>(parser->data);
+      if ((parser->flags & F_TRAILING) && ++self.trailerCount_ > self.maxFields_) {
+        llhttp_set_error_reason(parser, "Too many HTTP response trailers");
+        return HPE_USER;
+      }
+      return 0;
+    };
     settings.on_headers_complete = [](llhttp_t*) { return static_cast<int>(HPE_PAUSED); };
+    settings.on_chunk_header = [](llhttp_t* parser) -> int {
+      auto& self = *static_cast<ResponseParser*>(parser->data);
+      if (parser->content_length > self.bodyBytesRemaining_) {
+        self.bodyLimitExceeded_ = true;
+        llhttp_set_error_reason(parser, "HTTP response body exceeds limit");
+        return HPE_USER;
+      }
+      self.chunkPart_ = parser->content_length == 0 ? ChunkPart::trailers : ChunkPart::data;
+      return HPE_PAUSED;
+    };
+    settings.on_chunk_complete = [](llhttp_t* parser) -> int {
+      auto& self = *static_cast<ResponseParser*>(parser->data);
+      if (self.chunkPart_ == ChunkPart::trailers) return HPE_OK;
+      self.chunkPart_ = ChunkPart::size;
+      return HPE_PAUSED;
+    };
     settings.on_body = [](llhttp_t* parser, const char* data, std::size_t size) {
       if (size == 0) return 0;
       auto& self = *static_cast<ResponseParser*>(parser->data);
+      self.bodyBytesRemaining_ -= size;
       if (auto* out = self.bodyBytes_) {
         const auto* first = reinterpret_cast<const std::uint8_t*>(data);
         return storeParserBytes(parser, [&] {
@@ -236,11 +288,15 @@ namespace uos::rt::detail::fetch {
       if (self.body_) return storeParserBytes(parser, [&] { self.body_->append(data, size); });
       return 0;
     };
-    settings.on_message_complete = [](llhttp_t*) { return static_cast<int>(HPE_PAUSED); };
+    settings.on_message_complete = [](llhttp_t* parser) -> int {
+      static_cast<ResponseParser*>(parser->data)->bodyComplete_ = true;
+      return HPE_PAUSED;
+    };
     return settings;
   }();
 
-  ResponseParser::ResponseParser(std::size_t maxFields) : maxFields_(maxFields) {
+  ResponseParser::ResponseParser(std::size_t maxFields, std::size_t maxHeadBytes)
+      : maxFields_(std::min(maxFields, limits::kHttpHeaderFields)), maxHeadBytes_(std::min(maxHeadBytes, limits::kFetchResponseHeaderBlockBytes)) {
     llhttp_init(&parser_, HTTP_RESPONSE, &settings_);
     parser_.data = this;
   }
@@ -258,13 +314,18 @@ namespace uos::rt::detail::fetch {
   llhttp_errno_t ResponseParser::readHead(std::string_view input, std::size_t& consumed) {
     const bool invalidPrefix = firstHeadBytes_ && !input.empty() && input.front() != 'H';
     firstHeadBytes_ = firstHeadBytes_ && input.empty();
-    const auto result = execute(input, consumed);
+    const auto result = execute(input.substr(0, maxHeadBytes_ - headBytes_), consumed);
+    headBytes_ += consumed;
     // llhttp also accepts leading blank lines, RTSP and ICE. The client
     // transports expect the response to start directly with HTTP.
     if (invalidPrefix && (result == HPE_OK || result == HPE_PAUSED)) {
       consumed = 0;
       llhttp_set_error_reason(&parser_, "Expected an HTTP response");
       return HPE_INVALID_CONSTANT;
+    }
+    if (result == HPE_OK && headBytes_ == maxHeadBytes_) {
+      llhttp_set_error_reason(&parser_, "HTTP response head exceeds limit");
+      return HPE_USER;
     }
     if (result != HPE_PAUSED) return result;
     if (llhttp_get_http_major(&parser_) != 1) {
@@ -291,36 +352,84 @@ namespace uos::rt::detail::fetch {
     if (headRequest || parser_.status_code / 100 == 1) parser_.flags |= F_SKIPBODY;
     llhttp_resume(&parser_);
     std::size_t consumed;
-    return execute({}, consumed);
+    const auto result = execute({}, consumed);
+    if (result != HPE_OK) return result;
+    chunked_ = head_.framing.framing == Framing::chunked;
+    if (head_.framing.framing == Framing::length && head_.framing.length > bodyBytesRemaining_) {
+      bodyLimitExceeded_ = true;
+      llhttp_set_error_reason(&parser_, "HTTP response body exceeds limit");
+      return HPE_USER;
+    }
+    return result;
   }
 
   void ResponseParser::reset() {
     llhttp_reset(&parser_);
     head_ = {};
+    headBytes_ = 0;
+    bodyBytesRemaining_ = limits::kHttpBodyBytes;
+    metadataBytes_ = 0;
+    metadataRemaining_ = limits::kHttpChunkMetadataBytes;
+    trailerCount_ = 0;
+    chunkPart_ = ChunkPart::size;
+    bodyComplete_ = false;
+    bodyLimitExceeded_ = false;
+    chunked_ = false;
     firstHeadBytes_ = true;
     startField_ = true;
   }
 
   llhttp_errno_t ResponseParser::readBody(std::string_view input, std::size_t& consumed, ByteChunk* out) {
     bodyBytes_ = out;
-    bodyInputSize_ = input.size();
-    const auto result = execute(input, consumed);
+    bodyInputSize_ = std::min(input.size(), bodyBytesRemaining_);
+    consumed = 0;
+    auto result = static_cast<llhttp_errno_t>(parser_.error);
+    while (!input.empty() && result == HPE_OK) {
+      std::size_t capacity = bodyBytesRemaining_;
+      const bool metadata = chunked_ && chunkPart_ != ChunkPart::data;
+      if (metadata) {
+        const auto limit = chunkPart_ == ChunkPart::size ? limits::kHttpChunkLineBytes : std::min(maxHeadBytes_, limits::kHttpHeaderBlockBytes);
+        capacity = std::min(limit - metadataBytes_, metadataRemaining_);
+      } else if (chunked_) {
+        // A finished chunk still has its CRLF delimiter to consume.
+        capacity = parser_.content_length == 0 ? 2 : static_cast<std::size_t>(parser_.content_length);
+      }
+      if (capacity == 0) {
+        bodyLimitExceeded_ = !metadata;
+        llhttp_set_error_reason(&parser_, metadata ? "HTTP response chunk metadata exceeds limit" : "HTTP response body exceeds limit");
+        result = HPE_USER;
+        break;
+      }
+      std::size_t step = 0;
+      result = execute(input.substr(0, capacity), step);
+      consumed += step;
+      input.remove_prefix(step);
+      if (metadata) {
+        metadataBytes_ += step;
+        metadataRemaining_ -= step;
+      }
+      if (result == HPE_PAUSED && !bodyComplete_) {
+        metadataBytes_ = 0;
+        llhttp_resume(&parser_);
+        result = HPE_OK;
+      }
+    }
     bodyBytes_ = nullptr;
     return result;
   }
 
   llhttp_errno_t ResponseParser::readBody(std::string_view input, std::size_t& consumed, std::string& out) {
     body_ = &out;
-    const auto result = execute(input, consumed);
+    const auto result = readBody(input, consumed);
     body_ = nullptr;
     return result;
   }
 
   HeadParse parseResponseHead(std::string_view data, std::size_t maxBytes, std::size_t maxFields) {
-    ResponseParser parser(maxFields);
+    ResponseParser parser(maxFields, maxBytes);
     HeadParse parsed;
-    parsed.error = parser.readHead(data.substr(0, maxBytes), parsed.length);
-    if (parsed.error == HPE_OK) {
+    parsed.error = parser.readHead(data, parsed.length);
+    if (parsed.error == HPE_OK || (parsed.error == HPE_USER && parser.headLimitReached())) {
       parsed.length = 0;
     } else if (parsed.error == HPE_PAUSED) {
       parsed.head = parser.takeHead();

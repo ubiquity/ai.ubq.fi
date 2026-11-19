@@ -1,17 +1,15 @@
 #pragma once
-// Port of src/runtime/permissions-linux.ts.
-//
-// The packaged Landlock/seccomp addon is built from packaging/confinement/permissions-native.c with
-// process.dlopen after verifying it against .uos-permissions/manifest.json. The port keeps every
-// check on the manifest and the artifact file, and binds the addon's three functions (support,
-// readonlyMount, enforce) to their translation compiled into this binary instead of loading the
-// Node-API module. `import.meta.url` is the module's place in the release: the directory of the
-// running executable stands for the release root that holds serve.ts.
+// Built-in native Linux confinement. The bootstrap also verifies the separate,
+// packaged Landlock/seccomp addon from packaging/confinement/permissions-native.c.
 #include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
+
+#if defined(__linux__) && defined(__aarch64__)
+#include <linux/filter.h>
+#endif
 
 namespace uos::runtime::permissions_linux {
   struct LinuxPermissionsArtifact {
@@ -37,6 +35,10 @@ namespace uos::runtime::permissions_linux {
     std::vector<std::string> write = {};
     /** An overlapping writable parent requires an actual read-only mount, not chmod or unit text. */
     std::optional<std::vector<std::string>> immutable = std::nullopt;
+    /** Exact executable paths. Empty keeps the original no-child-process boundary. */
+    std::vector<std::string> execute = {};
+    /** Explicitly permits child process creation. Executable grants require this opt-in. */
+    bool allowChildProcess = false;
     /** Operator opt-in with TCP grants for kernels that support TCP port restrictions. */
     std::optional<LinuxPermissionsTcpPorts> allowReducedConfinement = std::nullopt;
   };
@@ -48,6 +50,16 @@ namespace uos::runtime::permissions_linux {
     std::vector<std::string> activeProtections = {};
     std::vector<std::string> missingProtections = {};
   };
+
+  struct LinuxGatewayPermissions {
+    LinuxPermissions gateway;
+    std::optional<LinuxPermissions> antigravity;
+  };
+
+  // Compute the service policy without applying it. The optional profile is used
+  // to apply an additional restriction to each Antigravity child.
+  LinuxGatewayPermissions gatewayLinuxPermissions(const std::string& package, const std::string& state);
+  void restrictLinuxChildThread(const LinuxPermissions& permissions);
 
   /** Query only: this does not restrict the caller or change host configuration. */
   LinuxPermissionsSupport getLinuxPermissionsSupport(const std::optional<LinuxPermissionsArtifact>& artifact = std::nullopt);
@@ -77,6 +89,10 @@ namespace uos::runtime::permissions_linux {
     };
 
     LandlockPolicy landlockPolicy(int abi, bool seccomp, bool allowReduced);
+
+#if defined(__linux__) && defined(__aarch64__)
+    std::vector<sock_filter> seccompProcessFilter(bool allowChildProcess);
+#endif
 
     // Lower the real kernel's ABI for a test child. There is no launch-time ABI override.
     LinuxPermissionsReceipt applyLinuxPermissionsWithAbiCap(const LinuxPermissions& permissions, const LinuxPermissionsArtifact& artifact, int abiCap);

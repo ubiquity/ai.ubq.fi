@@ -83,7 +83,7 @@ namespace uos::openai_telemetry {
     std::function<void(std::optional<UsageTokens> usage, bool completed)> onTerminalUsage{};
   };
 
-  // "cerebras" | "chatgpt_codex" | "claude_code" | "deepseek" | "lithos" | "openrouter" | "removed_provider" | "metered" | "surplus"
+  // "cerebras" | "chatgpt_codex" | "claude_code" | "deepseek" | "gemini" | "lithos" | "openrouter" | "removed_provider" | "metered" | "surplus"
   using UpstreamProvider = std::string;
   bool supportsReasoningProgressRelease(const UpstreamProvider& provider);
   using InferenceFallbackReason = std::string;  // "primary_quota_blocked" | "primary_subscriptions_unavailable" | "dynamic_paid_model"

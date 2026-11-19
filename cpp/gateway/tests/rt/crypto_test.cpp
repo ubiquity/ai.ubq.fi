@@ -1,6 +1,7 @@
 // Known-answer vectors and error texts recorded from Bun 1.4.0 (crypto.subtle and node:crypto).
 #include "uos/rt/abort.hpp"
 #include "uos/rt/crypto.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/test.hpp"
 #include <array>
 #include <cstdint>
@@ -716,6 +717,14 @@ TEST("RSASSA-PKCS1-v1_5 JWK and DER edge cases match Bun") {
   Bytes pkcs8Trailing = hex(RSA_PKCS8);
   pkcs8Trailing.push_back(7);
   EXPECT_EQ(subtle::importKey("pkcs8", pkcs8Trailing, rs256, true, {"sign"}).type(), "private");
+  spkiTrailing.resize(uos::rt::limits::kCertificateBytes, 0);
+  EXPECT_EQ(subtle::importKey("spki", spkiTrailing, rs256, true, {"verify"}).type(), "public");
+  spkiTrailing.push_back(0);
+  EXPECT_EQ(errorOf([&] { subtle::importKey("spki", spkiTrailing, rs256, true, {"verify"}); }), invalid);
+  pkcs8Trailing.resize(uos::rt::limits::kCertificateBytes, 0);
+  EXPECT_EQ(subtle::importKey("pkcs8", pkcs8Trailing, rs256, true, {"sign"}).type(), "private");
+  pkcs8Trailing.push_back(0);
+  EXPECT_EQ(errorOf([&] { subtle::importKey("pkcs8", pkcs8Trailing, rs256, true, {"sign"}); }), invalid);
   const Bytes spki = hex(RSA_SPKI);
   const Bytes truncated(spki.begin(), spki.begin() + 100);
   EXPECT_EQ(errorOf([&] { subtle::importKey("spki", truncated, rs256, true, {"verify"}); }), invalid);

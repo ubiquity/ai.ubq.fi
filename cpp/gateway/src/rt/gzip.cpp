@@ -1,5 +1,7 @@
 #include "uos/rt/gzip.hpp"
 
+#include "decompression_budget.hpp"
+
 #if defined(UOS_GATEWAY_NATIVE_LIBRARIES)
 #define ZLIB_CONST
 #include <zlib.h>
@@ -214,6 +216,7 @@ namespace uos::rt::gzip {
     bool handedOut = false;
     // Written input zlib has not taken yet.
     std::span<const std::uint8_t> pending;
+    detail::DecompressionBudget budget{limits::kStoredGzipBytes};
     // The stream (or member) ended and nothing began since.
     bool atEnd = false;
     // Past the end under Trailing::ignore / magicMembers: input is dropped.
@@ -228,12 +231,14 @@ namespace uos::rt::gzip {
       wipe(buffer);
     }
 
-    [[noreturn]] void fail(InflateFailure reason) {
+    [[noreturn]] void fail(InflateFailure reason, bool exceededLimit = false) {
       wipe(buffer);
       filled = 0;
       handedOut = false;
       pending = {};
-      failure = std::make_exception_ptr(InflateError(reason));
+      InflateError error(reason);
+      if (exceededLimit) error.code = detail::decompressionLimitCode;
+      failure = std::make_exception_ptr(std::move(error));
       std::rethrow_exception(failure);
     }
 
@@ -279,7 +284,7 @@ namespace uos::rt::gzip {
         stream.next_in = pending.data();
         stream.avail_in = static_cast<unsigned int>(slice);
         stream.next_out = buffer.data() + filled;
-        stream.avail_out = static_cast<unsigned int>(capacity - filled);
+        stream.avail_out = static_cast<unsigned int>(std::min(capacity - filled, budget.remainingOutput() + 1));
         const unsigned int room = stream.avail_out;
         const int status = z->inflate(&stream, Z_NO_FLUSH);
         const std::size_t consumed = slice - stream.avail_in;
@@ -288,6 +293,7 @@ namespace uos::rt::gzip {
         filled += produced;
         stream.next_in = nullptr;
         stream.avail_in = 0;
+        if (!budget.advance(consumed, produced)) fail(InflateFailure::corrupt, true);
         if (status == Z_STREAM_END) {
           atEnd = true;
         } else if (status == Z_NEED_DICT) {
@@ -341,12 +347,13 @@ namespace uos::rt::gzip {
     State& s = *state;
     if (s.failure) std::rethrow_exception(s.failure);
     if (!s.pending.empty()) throw std::logic_error("rt::gzip::Inflater::write: the previous chunk is not used up (read() until it returns std::nullopt)");
+    if (!s.budget.feed(chunk.size())) s.fail(InflateFailure::corrupt, true);
     if (s.discarding) return;
     if (s.handedOut) {
       s.filled = 0;
       s.handedOut = false;
     }
-    s.capacity = std::min(std::max(s.options.pieceBytes, chunk.size()), MAX_SLICE);
+    s.capacity = std::min(std::max(s.options.pieceBytes, chunk.size()), limits::kStoredGzipBytes);
     if (s.buffer.size() < s.capacity) {
       wipe(s.buffer);
       s.buffer = Bytes(s.capacity);
@@ -369,6 +376,7 @@ namespace uos::rt::gzip {
   }
 
   Bytes gzipSync(std::span<const std::uint8_t> input) {
+    if (input.size() > limits::kStoredGzipBytes) throw JsError("gzip input exceeds its size limit");
     const Zlib& z = zlib();
     ZStream stream{};
     stream.zalloc = allocate;

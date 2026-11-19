@@ -132,6 +132,9 @@ namespace uos::rt::process {
     Stdio stdin = Stdio::ignore;
     Stdio stdout = Stdio::pipe;
     Stdio stderr = Stdio::inherit;
+    // On Linux, apply thread-local restrictions in a dedicated spawning thread.
+    // The child inherits them, its own process group, and only the three stdio descriptors.
+    std::function<void()> confine = {};
   };
 
   // `subprocess.stdin` for stdin: "pipe" (Bun's FileSink).
@@ -146,6 +149,8 @@ namespace uos::rt::process {
     Promise<void> flush();
     // `await sink.end()`: flushes, then closes the pipe (the child sees EOF).
     Promise<void> end();
+    // Discard buffered input and cancel a pending write when terminating a child.
+    void close() noexcept;
 
   private:
     std::shared_ptr<State> state_;

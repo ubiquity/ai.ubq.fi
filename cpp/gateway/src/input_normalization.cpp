@@ -47,8 +47,10 @@
 #include "uos/models/metadata.hpp"
 #include "uos/models/openrouter_models.hpp"
 #include "uos/provider/cerebras.hpp"
+#include "uos/provider/gemini.hpp"
 #include "uos/provider/lithos.hpp"
 #include "uos/provider/openrouter.hpp"
+#include "uos/recent_model_context.hpp"
 #include "uos/request_policy.hpp"
 #include "uos/rt/json.hpp"
 #include "uos/rt/number.hpp"
@@ -260,7 +262,24 @@ namespace uos::input_normalization {
     }
     json::array configuredDeepSeekWaterfallModelCapabilities() {
       if (!anyWaterfallConfigured()) return {};
-      return {json::object{{"id", wf::DEEPSEEK_WATERFALL_MODEL_ID}, {"object", "uos.model_capabilities"}, {"owned_by", "ubiquity"}, {"display_name", wf::DEEPSEEK_WATERFALL_DISPLAY_NAME}, {"upstream_provider", "ubiquity"}, {"supported_endpoints", json::array{"/v1/responses"}}, {"supported_reasoning_levels", strings(wf::DEEPSEEK_WATERFALL_REASONING_LEVELS)}, {"default_reasoning_effort", wf::DEEPSEEK_WATERFALL_DEFAULT_REASONING_LEVEL}, {"reasoning_effort_wire_map", json::object{}}, {"context_window_tokens", rt::makeNumber(wf::DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS)}, {"max_context_window_tokens", rt::makeNumber(wf::DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS)}, {"auto_compact_token_limit_tokens", rt::makeNumber(wf::DEEPSEEK_WATERFALL_AUTO_COMPACT_TOKEN_LIMIT)}, {"effective_context_window_percent", rt::makeNumber(wf::DEEPSEEK_WATERFALL_EFFECTIVE_CONTEXT_WINDOW_PERCENT)}, {"context_source", "openrouter"}, {"reasoning_source", "provider_discovery"}}};
+      const auto window = wf::DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS;
+      return {json::object{
+        {"id", wf::DEEPSEEK_WATERFALL_MODEL_ID},
+        {"object", "uos.model_capabilities"},
+        {"owned_by", "ubiquity"},
+        {"display_name", wf::DEEPSEEK_WATERFALL_DISPLAY_NAME},
+        {"upstream_provider", "ubiquity"},
+        {"supported_endpoints", json::array{"/v1/responses"}},
+        {"supported_reasoning_levels", strings(wf::DEEPSEEK_WATERFALL_REASONING_LEVELS)},
+        {"default_reasoning_effort", wf::DEEPSEEK_WATERFALL_DEFAULT_REASONING_LEVEL},
+        {"reasoning_effort_wire_map", json::object{}},
+        {"context_window_tokens", rt::makeNumber(window)},
+        {"max_context_window_tokens", rt::makeNumber(window)},
+        {"auto_compact_token_limit_tokens", rt::makeNumber(recent_model_context::deriveAutoCompactTokenLimit(window))},
+        {"effective_context_window_percent", rt::makeNumber(wf::DEEPSEEK_WATERFALL_EFFECTIVE_CONTEXT_WINDOW_PERCENT)},
+        {"context_source", "openrouter"},
+        {"reasoning_source", "provider_discovery"},
+      }};
     }
     json::array replaceConfigured(const json::array& models, const json::array& configured) {
       if (configured.empty()) return models;
@@ -468,6 +487,27 @@ namespace uos::input_normalization {
     auto result = models;
     for (const auto& candidate : configured) if (std::none_of(models.begin(), models.end(), [&](const auto& model) { const auto* id = rt::get(model, "id"); return id && rt::strictEquals(*id, *rt::get(candidate, "id")); })) result.push_back(candidate);
     return result;
+  }
+  json::array withConfiguredGeminiModels(const json::array& models, bool enabled) {
+    const auto configured = enabled && provider::gemini::geminiCliConfigured() ? configuredModels(provider::gemini::GEMINI_MODEL_IDS, "google") : json::array{};
+    return replaceConfigured(models, configured);
+  }
+  json::array withConfiguredGeminiCapabilities(const json::array& data, bool enabled) {
+    if (!enabled || !provider::gemini::geminiCliConfigured()) return data;
+    json::array rows;
+    for (const auto id : provider::gemini::GEMINI_MODEL_IDS) {
+      const std::string effort = rt::endsWith(id, "-high") ? "high" : rt::endsWith(id, "-medium") ? "medium" : "low";
+      const std::string display = std::string("Gemini 3.8 Flash (") + (effort == "high" ? "High" : effort == "medium" ? "Medium" : "Low") + ")";
+      json::object row{{"id", id}, {"object", "uos.model_capabilities"}, {"owned_by", "google"}, {"display_name", display},
+        {"upstream_provider", "gemini"}, {"supported_endpoints", json::array{"/v1/responses", "/v1/chat/completions"}},
+        {"supported_reasoning_levels", json::array{effort}}, {"default_reasoning_effort", effort}, {"reasoning_effort_wire_map", json::object{}},
+        {"context_window_tokens", rt::makeNumber(provider::gemini::GEMINI_CONTEXT_WINDOW_TOKENS)},
+        {"max_context_window_tokens", rt::makeNumber(provider::gemini::GEMINI_CONTEXT_WINDOW_TOKENS)},
+        {"auto_compact_token_limit_tokens", rt::makeNumber(provider::gemini::GEMINI_CONTEXT_WINDOW_TOKENS * 0.8)},
+        {"context_source", "provider_documented"}, {"reasoning_source", "model_id"}};
+      rows.push_back(std::move(row));
+    }
+    return replaceConfigured(data, rows);
   }
   json::array withConfiguredDeepSeekModels(const json::array& models, bool enabled) { return replaceConfigured(models, enabled && ds::readDeepSeekApiKey() ? configuredModels(ds::DEEPSEEK_OFFICIAL_MODEL_IDS, "deepseek") : json::array{}); }
   json::array withConfiguredDeepSeekCapabilities(const json::array& data, bool enabled) { return replaceConfigured(data, enabled ? configuredDeepSeekModelCapabilities() : json::array{}); }

@@ -1,4 +1,5 @@
 // Links: tests/kv_budget_part1_test.cpp
+// src/provider/gemini.cpp src/admin/gemini_quota.cpp
 // src/utils.cpp tests/helpers/kv_budget_harness.cpp src/auth/index.cpp src/authority/native_kernel.cpp src/auth/passport.cpp src/auth/passkeys.cpp src/kernel/attestation.cpp src/api_key_policy.cpp
 // src/models/catalog.cpp src/provider/metered.cpp src/authority/native_api_key.cpp src/provider/claude_code_models.cpp src/auth/passport_sessions.cpp src/input_normalization.cpp src/kv.cpp src/models/codex_models_fetch.cpp
 // src/provider/claude_code_accounts.cpp src/models/metadata.cpp src/provider/selection.cpp src/handler/index.cpp src/request_policy.cpp src/admin/defaults.cpp src/auth/relay.cpp src/provider/claude_code_credentials.cpp

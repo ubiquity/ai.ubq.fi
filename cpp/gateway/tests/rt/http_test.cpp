@@ -1,5 +1,6 @@
 #include "uos/rt/http.hpp"
 #include "uos/rt/json.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/test_async.hpp"
 #include <algorithm>
 #include <cmath>
@@ -1877,6 +1878,35 @@ TEST("Multipart preserves field order and first lookup across text and file coll
     if (name == "a") all.push_back(std::holds_alternative<FormFile>(value) ? "file" : std::get<std::string>(value));
   }
   EXPECT_EQ(all, (std::vector<std::string>{"1", "file", "x\ny\rz\r\nw"}));
+}
+
+TEST("multipart checks the exact part count and byte limits before decoding") {
+  const InboundFormDecoder decoder("multipart/form-data; boundary=b");
+  constexpr auto field = "--b\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nx\r\n"sv;
+  constexpr auto file = "--b\r\nContent-Disposition: form-data; name=\"image\"; filename=\"a.png\"\r\n\r\n"sv;
+  constexpr auto end = "\r\n--b--\r\n"sv;
+  for (const std::size_t extra : {0u, 1u}) {
+    Bytes body;
+    for (std::size_t i = 0; i < limits::kMultipartParts + extra; ++i) body.insert(body.end(), field.begin(), field.end());
+    body.insert(body.end(), end.begin() + 2, end.end());
+    if (extra == 0) EXPECT_EQ(decoder.decode(body).size(), limits::kMultipartParts);
+    else EXPECT_THROWS_MATCHING(decoder.decode(body), "part count exceeds limit");
+
+    body.assign(file.begin(), file.end());
+    body.resize(body.size() + limits::kMultipartPartBytes + extra, 'a');
+    body.insert(body.end(), end.begin(), end.end());
+    if (extra == 0) {
+      const auto parts = decoder.decode(body);
+      ASSERT_EQ(parts.size(), 1u);
+      EXPECT_EQ(std::get<FormFile>(parts.front().second).bytes.size(), limits::kMultipartPartBytes);
+    } else EXPECT_THROWS_MATCHING(decoder.decode(body), "part size exceeds limit");
+
+    body.assign(field.begin(), field.end());
+    body.insert(body.end(), end.begin() + 2, end.end());
+    body.resize(limits::kImageEditMultipartBytes + extra, ' ');
+    if (extra == 0) EXPECT_EQ(decoder.decode(body).size(), 1u);
+    else EXPECT_THROWS_MATCHING(decoder.decode(body), "body exceeds limit");
+  }
 }
 
 TEST("Request and Response are handles with identity") {

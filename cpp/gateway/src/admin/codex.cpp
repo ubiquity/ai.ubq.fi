@@ -15,6 +15,7 @@
 #include "uos/models/codex_models_fetch.hpp"
 #include "uos/models/codex_models_whitelist.hpp"
 #include "uos/provider/capacity.hpp"
+#include "uos/provider/gemini.hpp"
 #include "uos/provider/openrouter.hpp"
 #include "uos/provider/presentation.hpp"
 #include "uos/request.hpp"
@@ -257,7 +258,10 @@ rt::Task<rt::Response> handleAdminProviderSelectionGet(CatalogDependencies depen
   for (const auto& entry : catalog.models) for (const auto& p : entry.providers) if (auto* count = counts.get(p.id)) ++*count;
   json::array providers;
   for (auto idView : sel::SELECTABLE_PROVIDER_IDS) {
-    const std::string id(idView); if (id == provider::presentation::GATEWAY_PROVIDER_ID) continue; const auto* source = catalog.sources.get(id); const auto presentation = provider::presentation::providerPresentation(id);
+    const std::string id(idView);
+    const auto* source = catalog.sources.get(id);
+    if (id == provider::presentation::GATEWAY_PROVIDER_ID || (id == provider::gemini::GEMINI_PROVIDER_ID && !source)) continue;
+    const auto presentation = provider::presentation::providerPresentation(id);
     const std::optional<bool> credential = id == "openrouter" ? std::optional(provider::openrouter::readOpenRouterApiKey().has_value()) : std::nullopt;
     json::object row{{"id", id}, {"label", presentation.label}, {"tier", presentation.tier}, {"tier_label", tierLabel(presentation.tier)}, {"detail", presentation.detail}, {"endpoints", json::value_from(presentation.endpoints)}, {"health_key", presentation.health_key}, {"model_count", *counts.get(id)}, {"status", credential ? (*credential ? "available" : "unavailable") : source ? source->status : "unavailable"}, {"configured", credential.value_or(source ? source->configured.value_or(source->status == "available") : false)}};
     if (id == "codex") row["subscriptions"] = subscriptions;
@@ -273,7 +277,12 @@ rt::Task<rt::Response> handleAdminProviderSelectionSet(rt::Request req) {
   const auto raw = co_await request::readJsonBody(req); if (!rt::truthy(raw) || !utils::isRecord(raw)) co_return error(400, "Invalid JSON body", "invalid_request_error");
   const auto* ids = rt::getArray(raw, "provider_ids"); if (!ids) co_return error(400, "provider_ids must be an array", "invalid_request_error"); std::vector<std::string> submitted, unknown;
   for (const auto& id : *ids) if (!id.is_string()) co_return error(400, "provider_ids must contain only strings", "invalid_request_error");
-  for (const auto& id : *ids) { auto value = rt::trim(id.as_string()); submitted.push_back(value); if (!sel::isProviderSelectionId(std::string_view(value))) unknown.push_back(value); }
+  for (const auto& id : *ids) {
+    auto value = rt::trim(id.as_string());
+    submitted.push_back(value);
+    if (!sel::isProviderSelectionId(std::string_view(value)) ||
+        (value == provider::gemini::GEMINI_PROVIDER_ID && !provider::gemini::geminiCliConfigured())) unknown.push_back(value);
+  }
   if (!unknown.empty()) co_return paramError("unknown provider ids: " + rt::join(unknown, ", "), "provider_ids");
   const auto stored = co_await sel::storeProviderSelection(database, submitted); if (!stored) co_return error(500, "Deno KV is not available; cannot persist the provider selection", "server_error", true);
   co_return http::json(200, json::object{{"ok", true}, {"stored", true}, {"provider_ids", json::value_from(stored->provider_ids)}, {"updated_at_ms", stored->updated_at_ms}});

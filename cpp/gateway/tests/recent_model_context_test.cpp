@@ -16,19 +16,20 @@ namespace {
   namespace rt = uos::rt;
 }
 
-TEST("auto-compaction uses the earlier 85 percent or 50k-reserve boundary") {
-  EXPECT_EQ(deriveAutoCompactTokenLimit(1'000'000), 850'000);
-  EXPECT_EQ(deriveAutoCompactTokenLimit(400'000), 340'000);
+TEST("auto-compaction uses the earlier 90 percent or 50k-reserve boundary") {
+  EXPECT_EQ(deriveAutoCompactTokenLimit(1'000'000), 900'000);
+  EXPECT_EQ(deriveAutoCompactTokenLimit(400'000), 350'000);
   EXPECT_EQ(deriveAutoCompactTokenLimit(262'144), 212'144);
   EXPECT_EQ(deriveAutoCompactTokenLimit(204'800), 154'800);
   EXPECT_THROWS(deriveAutoCompactTokenLimit(50'000), rt::RangeError);
 }
 
-TEST("a declared auto-compaction threshold inside the window outranks the derived one") {
+TEST("a declared earlier threshold is preserved and a later threshold is clamped") {
   EXPECT_EQ(resolvedAutoCompactTokenLimit(272'000, 200'000), 200'000);
+  EXPECT_EQ(resolvedAutoCompactTokenLimit(1'050'000, 990'000), 945'000);
   EXPECT_EQ(resolvedAutoCompactTokenLimit(272'000, std::nullopt), 222'000);
   // A threshold larger than the window it belongs to is not a usable limit.
-  EXPECT_EQ(resolvedAutoCompactTokenLimit(272'000, 892'500), 222'000);
+  EXPECT_EQ(resolvedAutoCompactTokenLimit(272'000, 1'000'000), 222'000);
   EXPECT_EQ(resolvedAutoCompactTokenLimit(272'000, std::nullopt), 222'000);
 }
 

@@ -5,6 +5,7 @@
 
 #include "uos/rt/async.hpp"
 #include "uos/rt/fs.hpp"
+#include "uos/rt/prelude.hpp"
 #include "uos/rt/stream.hpp"
 #include <boost/asio/posix/stream_descriptor.hpp>
 #include <boost/asio/redirect_error.hpp>
@@ -25,6 +26,7 @@
 #include <cstdlib>
 #include <map>
 #include <stdexcept>
+#include <thread>
 
 #if defined(__APPLE__)
 #include <crt_externs.h>
@@ -338,9 +340,16 @@ namespace uos::rt::process {
 
   Promise<void> FileSink::flush() { return Promise<void>(flushSink(state_)); }
   Promise<void> FileSink::end() { return Promise<void>(endSink(state_)); }
+  void FileSink::close() noexcept {
+    state_->pending.clear();
+    state_->ended = true;
+    boost::system::error_code ignored;
+    state_->descriptor->close(ignored);
+  }
 
   struct Subprocess::State {
     int pid = -1;
+    bool ownProcessGroup = false;
     Promise<int> exited;
     std::optional<Resolve<int>> resolveExited;
     std::optional<int> exitCode;
@@ -439,11 +448,14 @@ namespace uos::rt::process {
       if (number >= 32) throw TypeError("Invalid signal: must be < 32");
     }
     if (state_->observed) return;
-    ::kill(state_->pid, number);
+    ::kill(state_->ownProcessGroup ? -state_->pid : state_->pid, number);
   }
 
   Subprocess spawn(std::vector<std::string> cmd, SpawnOptions options) {
     if (cmd.empty()) throw TypeError("cmd must not be empty");
+#if !defined(__linux__)
+    if (options.confine) throw TypeError("Confined subprocesses require Linux");
+#endif
     std::string file = cmd.front();
     if (file.find('/') == std::string::npos) {
       auto found = findExecutable(file, lookupPath(options));
@@ -468,12 +480,12 @@ namespace uos::rt::process {
     auto childExit = std::make_shared<asio::signal_set>(rt::executor(), SIGCHLD);
 #endif
     Pipe in, out, err;
-    auto release = [&] {
+    auto release = rt::scopeExit([&] {
       for (Pipe* pipe : {&in, &out, &err}) {
         closeFd(pipe->read);
         closeFd(pipe->write);
       }
-    };
+    });
     auto makePipe = [&](Pipe& pipe) {
       int fds[2];
 #if defined(__APPLE__) || defined(UOS_GATEWAY_TEST_POSIX_CHILD_WATCHER)
@@ -481,11 +493,7 @@ namespace uos::rt::process {
 #else
       const int pipeStatus = ::pipe2(fds, O_CLOEXEC);
 #endif
-      if (pipeStatus != 0) {
-        const int error = errno;
-        release();
-        throw fs::errnoError(error, "pipe");
-      }
+      if (pipeStatus != 0) throw fs::errnoError(errno, "pipe");
       pipe.read = fds[0];
       pipe.write = fds[1];
     };
@@ -493,28 +501,42 @@ namespace uos::rt::process {
     if (options.stdout == Stdio::pipe) makePipe(out);
     if (options.stderr == Stdio::pipe) makePipe(err);
 
+    const auto checked = [&](int status) {
+      if (status != 0) throw fs::errnoError(status, "posix_spawn", file);
+    };
     posix_spawn_file_actions_t actions;
-    posix_spawn_file_actions_init(&actions);
-    if (options.stdin == Stdio::pipe) posix_spawn_file_actions_adddup2(&actions, in.read, 0);
-    else if (options.stdin == Stdio::ignore) posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0);
-    if (options.stdout == Stdio::pipe) posix_spawn_file_actions_adddup2(&actions, out.write, 1);
-    else if (options.stdout == Stdio::ignore) posix_spawn_file_actions_addopen(&actions, 1, "/dev/null", O_WRONLY, 0);
-    if (options.stderr == Stdio::pipe) posix_spawn_file_actions_adddup2(&actions, err.write, 2);
-    else if (options.stderr == Stdio::ignore) posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0);
+    checked(posix_spawn_file_actions_init(&actions));
+    auto releaseActions = rt::scopeExit([&] { posix_spawn_file_actions_destroy(&actions); });
+    const auto setupStdio = [&](Stdio mode, int fd, int standard) {
+      if (mode == Stdio::pipe) checked(posix_spawn_file_actions_adddup2(&actions, fd, standard));
+      if (mode == Stdio::ignore) checked(posix_spawn_file_actions_addopen(&actions, standard, "/dev/null", standard == 0 ? O_RDONLY : O_WRONLY, 0));
+    };
+    setupStdio(options.stdin, in.read, 0);
+    setupStdio(options.stdout, out.write, 1);
+    setupStdio(options.stderr, err.write, 2);
 #if defined(__APPLE__) && __MAC_OS_X_VERSION_MIN_REQUIRED >= 260000
-    if (options.cwd) posix_spawn_file_actions_addchdir(&actions, options.cwd->c_str());
+    if (options.cwd) checked(posix_spawn_file_actions_addchdir(&actions, options.cwd->c_str()));
 #else
-    if (options.cwd) posix_spawn_file_actions_addchdir_np(&actions, options.cwd->c_str());
+    if (options.cwd) checked(posix_spawn_file_actions_addchdir_np(&actions, options.cwd->c_str()));
+#endif
+#if defined(__linux__)
+    if (options.confine) checked(posix_spawn_file_actions_addclosefrom_np(&actions, 3));
 #endif
 
     posix_spawnattr_t attributes;
-    posix_spawnattr_init(&attributes);
+    checked(posix_spawnattr_init(&attributes));
+    auto releaseAttributes = rt::scopeExit([&] { posix_spawnattr_destroy(&attributes); });
     sigset_t empty, all;
     sigemptyset(&empty);
     sigfillset(&all);
-    posix_spawnattr_setsigmask(&attributes, &empty);
-    posix_spawnattr_setsigdefault(&attributes, &all);
-    posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF);
+    checked(posix_spawnattr_setsigmask(&attributes, &empty));
+    checked(posix_spawnattr_setsigdefault(&attributes, &all));
+    short flags = POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF;
+    if (options.confine) {
+      checked(posix_spawnattr_setpgroup(&attributes, 0));
+      flags |= POSIX_SPAWN_SETPGROUP;
+    }
+    checked(posix_spawnattr_setflags(&attributes, flags));
 
     pid_t child = -1;
 #if defined(__APPLE__)
@@ -522,19 +544,37 @@ namespace uos::rt::process {
 #else
     char** inheritedEnvironment = environ;
 #endif
-    const int status = ::posix_spawn(&child, file.c_str(), &actions, &attributes, args.data(), options.env ? envp.data() : inheritedEnvironment);
-    posix_spawn_file_actions_destroy(&actions);
-    posix_spawnattr_destroy(&attributes);
+    const auto launch = [&] {
+      checked(::posix_spawn(&child, file.c_str(), &actions, &attributes, args.data(), options.env ? envp.data() : inheritedEnvironment));
+    };
+    if (options.confine) {
+      // Landlock restrictions survive exec and apply only to this thread and its child.
+      std::exception_ptr failure;
+      std::thread launcher([&] {
+        try {
+          options.confine();
+          launch();
+        } catch (...) {
+          failure = std::current_exception();
+        }
+      });
+      launcher.join();
+      if (failure) std::rethrow_exception(failure);
+    } else {
+      launch();
+    }
+    auto reapOnFailure = rt::scopeExit([&] {
+      if (child <= 0) return;
+      ::kill(options.confine ? -child : child, SIGKILL);
+      while (::waitpid(child, nullptr, 0) < 0 && errno == EINTR) {}
+    });
     closeFd(in.read);
     closeFd(out.write);
     closeFd(err.write);
-    if (status != 0) {
-      release();
-      throw fs::errnoError(status, "posix_spawn", file);
-    }
 
     auto state = std::make_shared<Subprocess::State>();
     state->pid = static_cast<int>(child);
+    state->ownProcessGroup = static_cast<bool>(options.confine);
     auto resolvers = withResolvers<int>();
     state->exited = resolvers.promise;
     state->resolveExited.emplace(resolvers.resolve);
@@ -554,6 +594,7 @@ namespace uos::rt::process {
     ::fcntl(pidfd, F_SETFD, FD_CLOEXEC);
     rt::spawn(watchExit(state, pidfd));
 #endif
+    child = -1;
     return Subprocess(state);
   }
 }

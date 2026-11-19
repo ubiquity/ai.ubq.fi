@@ -1,5 +1,6 @@
 #include "uos/rt/base64.hpp"
 
+#include "uos/rt/limits.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/rt/text_codec.hpp"
 
@@ -10,7 +11,7 @@
 #pragma GCC diagnostic pop
 
 #include <boost/algorithm/hex.hpp>
-#include <limits>
+#include <algorithm>
 #include <optional>
 #include <stdexcept>
 #include <utility>
@@ -21,7 +22,7 @@ namespace uos::rt {
 
     std::string encode(std::span<const Byte> bytes, simdutf::base64_options options) {
       if (bytes.empty()) return {};
-      if (bytes.size() > std::numeric_limits<std::size_t>::max() / 4 * 3) throw std::length_error("Base64 output is too large");
+      if (bytes.size() > limits::kTextInputBytes) throw std::length_error("Base64 output is too large");
       std::string out(simdutf::base64_length_from_binary(bytes.size(), options), '\0');
       simdutf::binary_to_base64(reinterpret_cast<const char*>(bytes.data()), bytes.size(), out.data(), options);
       return out;
@@ -29,9 +30,10 @@ namespace uos::rt {
 
     std::optional<std::vector<Byte>> decode(std::string_view text, simdutf::base64_options options) {
       if (text.empty()) return std::vector<Byte>{};
-      std::vector<Byte> out(simdutf::maximal_binary_length_from_base64(text.data(), text.size()));
+      std::vector<Byte> out(std::min(limits::kBase64DecodedBytes, simdutf::maximal_binary_length_from_base64(text.data(), text.size())));
       std::size_t written = out.size();
       const auto result = simdutf::base64_to_binary_safe(text.data(), text.size(), reinterpret_cast<char*>(out.data()), written, options);
+      if (result.error == simdutf::OUTPUT_BUFFER_TOO_SMALL) throw RangeError("Base64 decoded input is too large");
       if (result.error != simdutf::SUCCESS) return std::nullopt;
       out.resize(written);
       return out;
@@ -57,6 +59,7 @@ namespace uos::rt {
   }
 
   std::string btoa(std::string_view data) {
+    if (data.size() > limits::kTextInputBytes) throw InvalidCharacterError();
     if (data.empty()) return {};
     std::vector<Byte> bytes(data.size());
     const auto written = simdutf::convert_utf8_to_latin1(data.data(), data.size(), reinterpret_cast<char*>(bytes.data()));
@@ -67,14 +70,18 @@ namespace uos::rt {
   std::string atob(std::string_view data) { return binaryString(atobBytes(data)); }
 
   std::vector<std::uint8_t> atobBytes(std::string_view data) {
-    auto bytes = decode(data, simdutf::base64_default);
-    if (!bytes) throw InvalidCharacterError();
-    return std::move(*bytes);
+    if (data.size() > limits::kBase64InputBytes) throw InvalidCharacterError();
+    try {
+      if (auto bytes = decode(data, simdutf::base64_default)) return std::move(*bytes);
+    } catch (const RangeError&) {
+      throw InvalidCharacterError();
+    }
+    throw InvalidCharacterError();
   }
 
   std::string binaryString(std::span<const std::uint8_t> bytes) {
     if (bytes.empty()) return {};
-    if (bytes.size() > std::numeric_limits<std::size_t>::max() / 2) throw std::length_error("Binary string is too large");
+    if (bytes.size() > limits::kTextInputBytes) throw std::length_error("Binary string is too large");
     const auto* input = reinterpret_cast<const char*>(bytes.data());
     std::string out(simdutf::utf8_length_from_latin1(input, bytes.size()), '\0');
     out.resize(simdutf::convert_latin1_to_utf8(input, bytes.size(), out.data()));
@@ -94,6 +101,7 @@ namespace uos::rt {
   }
 
   std::vector<std::uint8_t> fromBase64(std::string_view text) {
+    if (text.size() > limits::kBase64InputBytes) throw RangeError("Base64 encoded input is too large");
     if (!isAscii(text)) return {};
     return decode(text, simdutf::base64_default_or_url_accept_garbage).value_or(std::vector<Byte>{});
   }

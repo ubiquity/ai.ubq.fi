@@ -103,19 +103,45 @@ namespace uos::rt::regex_detail {
         name += current.size() + LRE_GROUP_NAME_TRAILER_LEN;
       }
     }
+
+    constexpr std::string_view imageDataUrl = R"(^data:([^;,]+);base64,([a-z0-9+/]*={0,2})$)";
+    constexpr std::string_view standardBase64 = R"(^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$)";
+    constexpr std::string_view credentialKey = R"re(\b(?=\w*(?:key|token|secret|password))(?=(\w*))\1(?:[.-]\w*){0,16}(["']?)\s*(?=[:=]))re";
+
+    std::size_t subjectBudget(Program& program, std::string_view pattern, int flags) {
+      if (flags == (LRE_FLAG_IGNORECASE | LRE_FLAG_UNICODE) && (pattern == "^data:" || pattern == "^https?://" || pattern == imageDataUrl)) {
+        return limits::kImageRegexSubjectBytes;
+      }
+      if (flags == LRE_FLAG_GLOBAL && (pattern == R"([A-Za-z]+|\d+|[^\sA-Za-z\d])" || pattern == R"(\s+)")) {
+        return limits::kCompactionRegexSubjectBytes;
+      }
+      if (flags == 0 && pattern == standardBase64) {
+        program.standardBase64 = true;
+        return limits::kBase64InputBytes;
+      }
+      if (flags == 0 && (pattern == R"(\r?\n\r?\n)" || pattern == R"(\r\n\r\n|\n\n|\r\r)" || pattern == R"(\r\n|\r|\n)" || pattern == R"(\r?\n)")) {
+        program.sseFraming = true;
+        return limits::kSseRegexSubjectBytes;
+      }
+      return limits::kRegexSubjectBytes;
+    }
   }
 
   std::shared_ptr<const Program> compile(std::string_view pattern, std::string_view flags) {
-    if (pattern.size() > 64 * 1024) throw RangeError("regular expression pattern is too large");
+    if (pattern.size() > limits::kRegexPatternBytes) throw RangeError("regular expression pattern is too large");
     auto program = std::make_shared<Program>();
     int mask = parseFlags(*program, flags);
+    program->subjectBytes = subjectBudget(*program, pattern, mask);
+    // The fixed supervisor scan took 593 ms in isolation and exceeded 750 ms in the parallel sanitizer shard.
+    if (mask == (LRE_FLAG_GLOBAL | LRE_FLAG_IGNORECASE) && pattern == credentialKey) program->matchDeadline = limits::kRegexDeadline * 5;
     program->source = escapeSource(pattern, program->unicodeSets);
     // The image data URL validator accepts tens of MiB of encoded data. Fixed-size
     // blocks avoid a backtracking entry per byte, and the lookahead commits to the
     // maximal run before checking the end anchor. Spelling out eight atoms keeps
     // the library's loop polling cost per block low. The leading anchor allows
     // sticky execution without scanning every suffix after a failed match.
-    if (mask == (LRE_FLAG_IGNORECASE | LRE_FLAG_UNICODE) && pattern == R"(^data:([^;,]+);base64,([a-z0-9+/]*={0,2})$)") {
+    if (mask == (LRE_FLAG_IGNORECASE | LRE_FLAG_UNICODE) && pattern == imageDataUrl) {
+      program->imageDataUrl = true;
       pattern = R"(^data:([^;,]+);base64,(?=((?:(?:[a-z0-9+/][a-z0-9+/][a-z0-9+/][a-z0-9+/])"
                 R"([a-z0-9+/][a-z0-9+/][a-z0-9+/][a-z0-9+/]){512})*[a-z0-9+/]{0,4095}={0,2}))(?-i:\2)$)";
       mask |= LRE_FLAG_STICKY;
@@ -124,14 +150,14 @@ namespace uos::rt::regex_detail {
     const std::size_t length = input.size();
     // The compiler and name parser can look ahead while decoding a UTF-8 character.
     input.resize(length + 8, '\0');
-    Limits limits;
-    limits.stackFloor = compileStackFloor(reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
-    program->bytecode = compileBytecode(input, length, mask, limits);
+    Limits budget(limits::kRegexCompileDeadline);
+    budget.stackFloor = compileStackFloor(reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
+    program->bytecode = compileBytecode(input, length, mask, budget);
     program->captureCount = static_cast<std::uint32_t>(lre_get_capture_count(program->bytecode.get()) - 1);
     program->registerCount = static_cast<std::size_t>(lre_get_alloc_count(program->bytecode.get()));
     readGroups(*program);
     if (program->sticky) {
-      program->splitBytecode = compileBytecode(input, length, mask & ~LRE_FLAG_STICKY, limits);
+      program->splitBytecode = compileBytecode(input, length, mask & ~LRE_FLAG_STICKY, budget);
       program->registerCount = std::max(program->registerCount, static_cast<std::size_t>(lre_get_alloc_count(program->splitBytecode.get())));
     }
     return program;

@@ -27,7 +27,7 @@ namespace asio = boost::asio;
 namespace uos::rt::ws::detail {
   namespace {
     // node:http's default limit on a response head.
-    constexpr std::size_t MAX_HEADER_SIZE = 16 * 1024;
+    constexpr std::size_t MAX_HEADER_SIZE = std::min<std::size_t>(16 * 1024, limits::kHttpHeaderBlockBytes);
 
     Reason parseError(std::string reason, std::string code) { return codedError("Parse Error: " + reason, std::move(code)); }
 
@@ -128,7 +128,7 @@ namespace uos::rt::ws::detail {
   std::optional<ParsedResponse> parseResponseHead(BytesView data) {
     const std::string_view text(reinterpret_cast<const char*>(data.data()), data.size());
     namespace http = ::uos::rt::detail::fetch;
-    auto parsedHead = http::parseResponseHead(text, MAX_HEADER_SIZE, MAX_HEADER_SIZE);
+    auto parsedHead = http::parseResponseHead(text, MAX_HEADER_SIZE);
     if (parsedHead.status == http::HeadStatus::malformed) {
       const char* const code = llhttp_errno_name(parsedHead.error);
       rethrow(parseError(parsedHead.errorReason ? parsedHead.errorReason : code, code));

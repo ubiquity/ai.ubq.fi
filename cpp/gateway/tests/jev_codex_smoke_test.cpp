@@ -1,4 +1,5 @@
 // Links: tests/jev_codex_smoke_test.cpp
+// src/provider/gemini.cpp src/admin/gemini_quota.cpp
 //   src/models/catalog.cpp src/input_normalization.cpp src/provider/selection.cpp src/provider/surplus.cpp src/models/metadata.cpp src/utils.cpp src/authority/native_api_key_policy.cpp src/provider/lithos.cpp src/storage/native_addon.cpp
 //   src/models/codex_models_fetch.cpp src/authority/native_api_key.cpp src/models/codex_models_whitelist.cpp src/types.cpp src/codex/auth_refresh.cpp src/provider/openrouter.cpp src/http.cpp src/request_policy.cpp src/runtime_config.cpp
 //   src/runtime/native_kv_bootstrap.cpp src/provider/anthropic_chat_responses.cpp src/deepseek/index.cpp src/models/codex_models.cpp src/handler/admission.cpp src/codex/dispatch.cpp src/provider/cerebras.cpp src/api_keys.cpp src/codex/auth.cpp

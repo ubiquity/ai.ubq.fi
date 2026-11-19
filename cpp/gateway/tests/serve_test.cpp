@@ -1,4 +1,5 @@
 // Links: tests/serve_test.cpp
+// src/provider/gemini.cpp src/admin/gemini_quota.cpp
 //   src/serve.cpp src/kv.cpp src/auth/local_admin.cpp src/runtime/native_kv_bootstrap.cpp src/config.cpp src/auth/local_development_key.cpp src/authority/native_paid.cpp src/types.cpp src/cache/prompt_analytics_queue.cpp
 //   src/optional_telemetry_queue.cpp src/provider/metered.cpp src/utils.cpp src/authority/native_paid_policy.cpp src/api_key_policy.cpp src/authority/native_api_key_policy.cpp src/paid_fallback/index.cpp src/paid_fallback/ledger_settlement.cpp src/paid_fallback/ledger_stats.cpp
 //   src/cache/prompt_analytics_core.cpp src/provider/surplus_claude_request.cpp tests/helpers/counting_kv.cpp src/storage/native_addon.cpp src/authority/native_paid_contracts.cpp src/runtime/http.cpp src/authority/native_api_key.cpp src/runtime/http_body.cpp src/http.cpp

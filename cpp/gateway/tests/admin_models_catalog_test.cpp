@@ -1,4 +1,5 @@
 // Links: tests/admin_models_catalog_test.cpp
+// src/provider/gemini.cpp src/admin/gemini_quota.cpp
 // src/admin/api_key_audit.cpp src/admin/api_key_mutations.cpp src/admin/api_keys.cpp src/admin/capacity_observation_sync.cpp src/admin/chart_source_proxy.cpp src/admin/claude_code.cpp src/admin/codex.cpp src/admin/codex_reset.cpp src/admin/defaults.cpp src/admin/error_log.cpp
 // src/admin/kernel.cpp src/admin/sentinel_incident.cpp src/agent_messages.cpp src/analytics.cpp src/api_key_policy.cpp src/api_keys.cpp src/auth/index.cpp src/auth/local_admin.cpp src/auth/local_development_key.cpp src/auth/passkeys.cpp
 // src/auth/passport.cpp src/auth/passport_sessions.cpp src/auth/relay.cpp src/authority/native_api_key.cpp src/authority/native_api_key_audit.cpp src/authority/native_api_key_policy.cpp src/authority/native_codex.cpp src/authority/native_codex_429.cpp src/authority/native_codex_capacity.cpp src/authority/native_codex_contracts.cpp
@@ -182,14 +183,114 @@ ASYNC_TEST("an empty stored whitelist is reported as no filter, not as nothing s
 ASYNC_TEST("the official DeepSeek ids are cataloged as their own provider category") {
   PickerFixture fixture;rt::env::set("DEEPSEEK_API_KEY","fixture-deepseek-key");AWAIT(snapshot,catalog::buildModelCatalogSnapshot());std::vector<catalog::PublicModelCatalogEntry> rows;for(const auto& row:snapshot.models)if(row.id!=WATERFALL&&std::any_of(row.providers.begin(),row.providers.end(),[](const auto& provider){return provider.id=="deepseek";}))rows.push_back(row);EXPECT(rt::deepEqual(rowIds(rows),json::array{"deepseek-flash","deepseek-v4-flash","deepseek-v4-pro"}));for(const auto& row:rows){EXPECT(rt::deepEqual(providerIds(row),json::array{"deepseek"}));EXPECT_EQ(row.providers[0].supported_endpoints,(std::vector<std::string>{"/v1/chat/completions","/v1/responses"}));EXPECT_EQ(row.context_source,"provider_discovery");EXPECT_EQ(row.context_window_tokens,1000000);}EXPECT(rt::deepEqual(json::value_from(*snapshot.sources.get("deepseek")),json::object{{"status","available"},{"count",3},{"updated_at_ms",nullptr},{"configured",true}}));EXPECT(rt::deepEqual(json::value_from(*snapshot.sources.get("cerebras")),json::object{{"status","unavailable"},{"count",0},{"updated_at_ms",nullptr},{"configured",false}}));
 }
+ASYNC_TEST("openai: model capabilities are exposed outside /v1 model objects") {
+  PickerFixture fixture;
+  const auto snapshot = rt::jsonParse(R"({
+    "source":"chatgpt_codex","client_version":"0.125.0","updated_at_ms":1800000000000,
+    "models":[{
+      "slug":"gpt-5-fixture-default","display_name":"GPT-5 Fixture Default",
+      "context_window":272000,"max_context_window":1000000,"auto_compact_token_limit":null,
+      "default_reasoning_level":"medium","supported_reasoning_levels":["none","low","medium","high","xhigh","max","ultra"],
+      "reasoning_effort_wire_map":{"ultra":"max"}
+    }]
+  })");
+  fixture.kv->put(uos::codex::auth::CODEX_MODELS_KV_KEY, snapshot);
+  AWAIT(response, catalog::handleModelCapabilities());
+  EXPECT_EQ(response.status(), 200);
+  AWAIT(body, response.json());
+  EXPECT_EQ(rt::getString(body, "object"), "list");
+  const auto* row = jsonRow(body.at("data").as_array(), "gpt-5-fixture-default");
+  ASSERT(row);
+  EXPECT_EQ(rt::getString(*row, "object"), "uos.model_capabilities");
+  EXPECT_EQ(rt::getString(*row, "upstream_provider"), "codex_chatgpt");
+  EXPECT(rt::deepEqual(row->at("supported_reasoning_levels"), json::array{"none", "low", "medium", "high", "xhigh", "max", "ultra"}));
+  EXPECT_EQ(rt::getString(*row, "default_reasoning_effort"), "medium");
+  EXPECT(rt::deepEqual(row->at("reasoning_effort_wire_map"), json::object{{"ultra", "max"}}));
+  EXPECT_EQ(rt::getNumber(*row, "context_window_tokens"), 272'000);
+  EXPECT_EQ(rt::getNumber(*row, "max_context_window_tokens"), 1'000'000);
+  EXPECT_EQ(rt::getNumber(*row, "auto_compact_token_limit_tokens"), 222'000);
+  const auto& endpoints = row->at("supported_endpoints").as_array();
+  EXPECT(rt::includes(endpoints, json::value("/v1/chat/completions")));
+  EXPECT(rt::includes(endpoints, json::value("/v1/responses")));
+}
+ASYNC_TEST("openai: configured DeepSeek official models replace a row from the Codex snapshot") {
+  PickerFixture fixture;
+  rt::env::set("DEEPSEEK_API_KEY", "deepseek-test-key");
+  const auto snapshot = rt::jsonParse(R"({
+    "source":"chatgpt_codex","client_version":"0.125.0","updated_at_ms":1800000000000,
+    "models":[{"slug":"gpt-5-fixture-default"},{"slug":"deepseek-v4-flash","display_name":"DeepSeek V4 Flash"}]
+  })");
+  fixture.kv->put(uos::codex::auth::CODEX_MODELS_KV_KEY, snapshot);
+  fixture.kv->put(uos::runtime_config::RUNTIME_CONFIG_V2_KEY, json::value_from(uos::runtime_config::buildRuntimeConfig(snapshot.as_object())));
+  AWAIT(models, catalog::handleModels());
+  EXPECT_EQ(models.status(), 200);
+  AWAIT(modelList, models.json());
+  AWAIT(capabilities, catalog::handleModelCapabilities());
+  EXPECT_EQ(capabilities.status(), 200);
+  AWAIT(capabilityList, capabilities.json());
+  for (const std::string_view id : {"deepseek-flash", "deepseek-v4-flash"}) {
+    const auto matchesId = [id](const json::value& row) { return rt::getString(row, "id") == id; };
+    const auto& modelRows = modelList.at("data").as_array();
+    EXPECT_EQ(std::count_if(modelRows.begin(), modelRows.end(), matchesId), 1);
+    const auto* model = jsonRow(modelRows, id);
+    ASSERT(model);
+    EXPECT(rt::deepEqual(*model, json::object{{"id", id}, {"object", "model"}, {"created", 0}, {"owned_by", "deepseek"}}));
+    const auto& capabilityRows = capabilityList.at("data").as_array();
+    EXPECT_EQ(std::count_if(capabilityRows.begin(), capabilityRows.end(), matchesId), 1);
+    const auto* row = jsonRow(capabilityRows, id);
+    ASSERT(row);
+    const json::object expected{
+      {"id", id}, {"object", "uos.model_capabilities"}, {"owned_by", "deepseek"},
+      {"display_name", id == "deepseek-flash" ? "DeepSeek Flash" : "DeepSeek Flash (legacy id)"},
+      {"upstream_provider", "deepseek"}, {"supported_endpoints", json::array{"/v1/chat/completions", "/v1/responses"}},
+      {"supported_reasoning_levels", json::array{"none", "low", "high", "max"}}, {"default_reasoning_effort", "high"},
+      {"reasoning_effort_wire_map", json::object{{"ultra", "max"}}}, {"context_window_tokens", 1'000'000},
+      {"max_context_window_tokens", 1'000'000}, {"auto_compact_token_limit_tokens", 900'000},
+      {"effective_context_window_percent", 95}, {"context_source", "provider_discovery"},
+    };
+    EXPECT(rt::deepEqual(*row, expected));
+  }
+}
 ASYNC_TEST("a paid-discovered DeepSeek id receives the later official route metadata") {
   PickerFixture fixture;rt::env::set("SURPLUS_API_KEY","fixture-surplus-key");rt::env::set("DEEPSEEK_API_KEY","fixture-deepseek-key");const json::array rows{json::object{{"id","deepseek-v4-flash"},{"context_length",1048576},{"top_provider",json::object{{"context_length",1048576}}},{"reasoning",json::object{{"supported_efforts",json::array{"third-party"}},{"default_effort","third-party"}}}}};auto enrichment=enrich(rows);co_await std::move(enrichment);rt::GlobalFetchOverride fetch(rt::Fetch([](rt::RequestInfo input,rt::RequestInit)->rt::Response{if(requestUrl(input).find("surplusintelligence.ai/v1/models")!=std::string::npos)return rt::Response::json(json::object{{"data",json::array{json::object{{"id","deepseek-v4-flash"},{"created",1800000000},{"provider","surplus"}}}}});throw rt::JsError("Unexpected discovery request: "+requestUrl(input));}));AWAIT(snapshot,catalog::buildModelCatalogSnapshot());const auto* row=rowById(snapshot,"deepseek-v4-flash");ASSERT(row);EXPECT(rt::deepEqual(providerIds(*row),json::array{"surplus","deepseek"}));EXPECT_EQ(row->context_window_tokens,1000000);EXPECT_EQ(row->max_context_window_tokens,1000000);EXPECT_EQ(row->supported_reasoning_levels,(std::vector<std::string>{"none","low","high","max"}));EXPECT_EQ(row->default_reasoning_effort,"high");EXPECT_EQ(row->context_source,"provider_discovery");EXPECT_EQ(row->reasoning_source,"provider_discovery");
 }
 ASYNC_TEST("the gateway waterfall model is cataloged with one provider row per usable hop in cost-first order") {
-  PickerFixture fixture;rt::env::set("OPENROUTER_API_KEY","fixture-openrouter-key");rt::env::set("DEEPSEEK_API_KEY","fixture-deepseek-key");AWAIT(snapshot,catalog::buildModelCatalogSnapshot());const auto* row=rowById(snapshot,WATERFALL);ASSERT(row);EXPECT(rt::deepEqual(providerIds(*row),json::array{"ubiquity","deepseek","openrouter"}));EXPECT_EQ(row->providers[0].supported_endpoints,(std::vector<std::string>{"/v1/responses"}));EXPECT_EQ(row->providers[0].owned_by,"ubiquity");EXPECT_EQ(row->context_window_tokens,1048576);EXPECT_EQ(row->context_source,"provider_discovery");EXPECT_EQ(row->supported_reasoning_levels,(std::vector<std::string>{"low","high","max"}));EXPECT_EQ(row->default_reasoning_effort,"high");
+  PickerFixture fixture;
+  rt::env::set("OPENROUTER_API_KEY", "fixture-openrouter-key");
+  rt::env::set("DEEPSEEK_API_KEY", "fixture-deepseek-key");
+  const auto rows = rt::jsonParse(R"([{"id":"~deepseek/deepseek-flash-latest","context_length":1048576,"top_provider":{"context_length":1048576}}])").as_array();
+  auto enrichment = enrich(rows);
+  co_await std::move(enrichment);
+  AWAIT(snapshot, catalog::buildModelCatalogSnapshot());
+  const auto* row = rowById(snapshot, WATERFALL);
+  ASSERT(row);
+  EXPECT(rt::deepEqual(providerIds(*row), json::array{"ubiquity", "deepseek", "openrouter"}));
+  EXPECT_EQ(row->providers[0].supported_endpoints, (std::vector<std::string>{"/v1/responses"}));
+  EXPECT_EQ(row->providers[0].owned_by, "ubiquity");
+  EXPECT_EQ(row->context_window_tokens, 800'000);
+  EXPECT_EQ(row->max_context_window_tokens, 800'000);
+  EXPECT_EQ(row->auto_compact_token_limit_tokens, 720'000);
+  EXPECT_EQ(row->context_source, "provider_discovery");
+  EXPECT_EQ(row->supported_reasoning_levels, (std::vector<std::string>{"low", "high", "max"}));
+  EXPECT_EQ(row->default_reasoning_effort, "high");
 }
 ASYNC_TEST("the gateway waterfall model lists the paid hops, OpenLux last, when their credentials are configured") {
-  PickerFixture fixture;rt::env::set("SURPLUS_API_KEY","fixture-surplus-key");rt::env::set("METERED_API_KEY","fixture-metered-key");AWAIT(snapshot,catalog::buildModelCatalogSnapshot());const auto* row=rowById(snapshot,WATERFALL);ASSERT(row);EXPECT(rt::deepEqual(providerIds(*row),json::array{"ubiquity","surplus","openlux"}));for(std::size_t i=1;i<row->providers.size();++i){EXPECT_EQ(row->providers[i].owned_by,"ubiquity");EXPECT_EQ(row->providers[i].supported_endpoints,(std::vector<std::string>{"/v1/responses"}));}EXPECT_EQ(row->context_window_tokens,1048576);EXPECT_EQ(row->supported_reasoning_levels,(std::vector<std::string>{"low","high","max"}));EXPECT_EQ(row->default_reasoning_effort,"high");
+  PickerFixture fixture;
+  rt::env::set("SURPLUS_API_KEY", "fixture-surplus-key");
+  rt::env::set("METERED_API_KEY", "fixture-metered-key");
+  AWAIT(snapshot, catalog::buildModelCatalogSnapshot());
+  const auto* row = rowById(snapshot, WATERFALL);
+  ASSERT(row);
+  EXPECT(rt::deepEqual(providerIds(*row), json::array{"ubiquity", "surplus", "openlux"}));
+  for (std::size_t i = 1; i < row->providers.size(); ++i) {
+    EXPECT_EQ(row->providers[i].owned_by, "ubiquity");
+    EXPECT_EQ(row->providers[i].supported_endpoints, (std::vector<std::string>{"/v1/responses"}));
+  }
+  EXPECT_EQ(row->context_window_tokens, 800'000);
+  EXPECT_EQ(row->max_context_window_tokens, 800'000);
+  EXPECT_EQ(row->auto_compact_token_limit_tokens, 720'000);
+  EXPECT_EQ(row->supported_reasoning_levels, (std::vector<std::string>{"low", "high", "max"}));
+  EXPECT_EQ(row->default_reasoning_effort, "high");
 }
 ASYNC_TEST("a credential-gated provider with no key is absent instead of unavailable") {
   PickerFixture fixture;AWAIT(snapshot,catalog::buildModelCatalogSnapshot());for(const auto& row:snapshot.models)for(const auto& provider:row.providers){EXPECT(provider.id!="deepseek");EXPECT(provider.id!="cerebras");}EXPECT_EQ(snapshot.sources.get("deepseek")->configured,false);EXPECT_EQ(snapshot.sources.get("deepseek")->status,"unavailable");EXPECT_EQ(snapshot.sources.get("cerebras")->configured,false);

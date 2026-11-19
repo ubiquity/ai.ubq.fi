@@ -14,8 +14,10 @@
 #include <boost/asio/redirect_error.hpp>
 #include <boost/asio/this_coro.hpp>
 #include <boost/asio/use_awaitable.hpp>
+#include <boost/beast/core/string.hpp>
 #include <boost/system/system_error.hpp>
 
+#include <algorithm>
 #include <cstdio>
 
 namespace uos::rt::detail::fetch {
@@ -39,6 +41,14 @@ namespace uos::rt::detail::fetch {
     // response head arrived when the method is idempotent.
     bool retryable(const std::string& method) {
       return method == "GET" || method == "HEAD" || method == "PUT" || method == "DELETE" || method == "OPTIONS" || method == "TRACE";
+    }
+
+    bool eventStreamMediaType(std::string_view mediaType) {
+      mediaType = mediaType.substr(0, mediaType.find(';'));
+      if (mediaType.size() > limits::kHttpHeaderBlockBytes) return false;
+      const auto first = mediaType.find_first_not_of(" \t");
+      if (first == std::string_view::npos) return false;
+      return boost::beast::iequals(mediaType.substr(first, mediaType.find_last_not_of(" \t") - first + 1), "text/event-stream");
     }
 
     struct RequestBody {
@@ -254,7 +264,7 @@ namespace uos::rt::detail::fetch {
     // ---- one exchange -------------------------------------------------------------
 
     struct Exchange {
-      ResponseParser parser;
+      ResponseParser parser{limits::kHttpHeaderFields, limits::kFetchResponseHeaderBlockBytes};
       std::weak_ptr<Pool> pool;
       std::shared_ptr<Connection> connection;
       std::unique_ptr<ContentDecoder> decoder;
@@ -262,6 +272,8 @@ namespace uos::rt::detail::fetch {
       std::string url;
       // The response and the request allow the connection to be reused.
       bool keepAlive = false;
+      bool eventStream = false;
+      std::size_t lineBytes = 0;
 
       ~Exchange() {
         if (connection) connection->close();
@@ -294,10 +306,10 @@ namespace uos::rt::detail::fetch {
       });
       spawn(writeRequest(connection, head, body, writer, signal));
       auto exchange = std::make_shared<Exchange>();
-      std::size_t headBytes = 0;
+      std::size_t informational = 0;
       for (;;) {
         std::size_t consumed = 0;
-        const auto parsed = exchange->parser.readHead(connection->input.view().substr(0, kMaxResponseHead - headBytes), consumed);
+        const auto parsed = exchange->parser.readHead(connection->input.view(), consumed);
         connection->input.consume(consumed);
         if (parsed == HPE_PAUSED) {
           const ResponseHead& response = exchange->parser.head();
@@ -305,17 +317,17 @@ namespace uos::rt::detail::fetch {
           if (status == 101) throw verboseError("UnrequestedUpgrade", originalUrl);
           if (response.framing.error) throw verboseError(response.framing.error, originalUrl);
           const auto bodyStatus = exchange->parser.beginBody(method == "HEAD");
+          if (bodyStatus == HPE_USER) throw verboseError("ResponseBodyTooLarge", originalUrl);
           if (bodyStatus != HPE_OK && bodyStatus != HPE_PAUSED) throw verboseError("Malformed_HTTP_Response", originalUrl);
           if (status >= 100 && status < 200) {
+            if (++informational > limits::kHttpInformationalResponses) throw verboseError("TooManyInformationalResponses", originalUrl);
             exchange->parser.reset();
-            headBytes = 0;
             continue;
           }
           break;
         }
+        if (parsed == HPE_USER && exchange->parser.headLimitReached()) throw verboseError("ResponseHeadersTooLarge", originalUrl);
         if (parsed != HPE_OK) throw verboseError("Malformed_HTTP_Response", originalUrl);
-        headBytes += consumed;
-        if (headBytes >= kMaxResponseHead) throw verboseError("ResponseHeadersTooLarge", originalUrl);
         auto filling = connection->fill();
         const ReadStatus status = co_await std::move(filling);
         if (status == ReadStatus::data) continue;
@@ -375,12 +387,27 @@ namespace uos::rt::detail::fetch {
       std::size_t consumed = 0;
       const auto result = pump.parser.readBody(input.view(), consumed, out);
       input.consume(consumed);
+      if (pump.parser.bodyLimitExceeded()) throw verboseError("ResponseBodyTooLarge", pump.url);
       if (result != HPE_OK && result != HPE_PAUSED) throw verboseError("InvalidHTTPResponse", pump.url);
       return result == HPE_PAUSED;
     }
 
     void closeBody(Exchange& pump) {
       if (auto connection = std::move(pump.connection)) connection->close();
+    }
+
+    void checkEventStreamLines(Exchange& pump, std::string_view input) {
+      while (!input.empty()) {
+        const auto end = input.find_first_of("\r\n");
+        const auto length = std::min(end, input.size());
+        if (length > limits::kSseLineBytes - pump.lineBytes) throw verboseError("ResponseSseLineTooLarge", pump.url);
+        if (end == std::string_view::npos) {
+          pump.lineBytes += length;
+          return;
+        }
+        pump.lineBytes = 0;
+        input.remove_prefix(length + 1);
+      }
     }
 
     Task<void> pullBody(std::shared_ptr<Exchange> pump, ReadableStreamDefaultController<ByteChunk> controller) {
@@ -404,6 +431,7 @@ namespace uos::rt::detail::fetch {
             if (ended) pump->decoder->finish(decoded);
             out.assign(decoded.begin(), decoded.end());
           }
+          if (pump->eventStream && !out.empty()) checkEventStreamLines(*pump, {reinterpret_cast<const char*>(out.data()), out.size()});
           if (ended) finishBody(*pump);
           if (!out.empty()) {
             controller.enqueue(std::move(out));
@@ -420,7 +448,7 @@ namespace uos::rt::detail::fetch {
       }
     }
 
-    Response makeResponse(const std::shared_ptr<Exchange>& pump) {
+    Response makeResponse(const std::shared_ptr<Exchange>& pump, const Headers& requestHeaders) {
       const ResponseHead head = pump->parser.takeHead();
       Headers headers;
       for (const auto& [name, value] : head.fields) headers.append(name, latin1Text(value));
@@ -430,6 +458,16 @@ namespace uos::rt::detail::fetch {
         source.start = [](ReadableStreamDefaultController<ByteChunk> controller) { controller.close(); };
       } else {
         pump->decoder = contentDecoder(head.field("content-encoding"), pump->url);
+        if (const auto type = head.field("content-type")) pump->eventStream = eventStreamMediaType(*type);
+        else if (const auto accept = requestHeaders.get("accept")) {
+          std::string_view remaining = *accept;
+          while (!remaining.empty() && !pump->eventStream) {
+            const auto comma = remaining.find(',');
+            pump->eventStream = eventStreamMediaType(remaining.substr(0, comma));
+            if (comma == std::string_view::npos) break;
+            remaining.remove_prefix(comma + 1);
+          }
+        }
         source.pull = [pump](ReadableStreamDefaultController<ByteChunk> controller) { return pullBody(pump, controller); };
         source.cancel = [pump](Reason) { closeBody(*pump); };
       }
@@ -517,7 +555,7 @@ namespace uos::rt::detail::fetch {
         ++redirects;
         continue;
       }
-      Response response = makeResponse(current);
+      Response response = makeResponse(current, headers);
       response.setFetchResult(redirects > 0 ? url.href() : originalUrl, redirects > 0);
       co_return response;
     }

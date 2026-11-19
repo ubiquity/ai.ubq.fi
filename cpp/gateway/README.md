@@ -129,7 +129,7 @@ review. [Configuration source](src/config.cpp) · [Auth policy](src/auth/index.c
 
 1. Startup verifies the sealed package, host libraries and native artifacts before opening KV or binding the listener. [Startup](runtime/startup.cpp)
 2. Linux ARM64 startup requires Landlock ABI 8+ by default. On ABI 3–7, `UOS_GATEWAY_ALLOW_REDUCED_CONFINEMENT=1` explicitly selects the controls that the kernel supports. Seccomp thread synchronization remains required. [Confinement](docs/RUNTIME.md#linux-confinement)
-3. The service reads the package, private state and required OS files. It writes under private `.data` and cannot execute subprocesses. [Startup enforcement](runtime/startup.cpp)
+3. By default the service reads the package, private state and required OS files, writes under private `.data` and denies subprocesses. The Antigravity setting explicitly enables the CLI and its tighter child filesystem profile. [Confinement](docs/RUNTIME.md#linux-confinement)
 4. The loopback service applies the gateway's authentication, validation and admission rules at its routes. [Request routing](src/handler/index.cpp)
 5. HTTP heads cap at 16,408 bytes and 198 fields. Default JSON parsing caps at 16 MiB and 128 levels, with route-specific limits including allowances for image edits. [HTTP parser](src/runtime/http.cpp) · [Limits](include/uos/rt/limits.hpp)
 

@@ -1,6 +1,7 @@
 // JSON and runtime value controls. The original vectors were recorded with Bun 1.4.
 // JSON validation follows the selected library with the gateway's input bounds.
 #include "uos/rt/json.hpp"
+#include "uos/rt/json_document.hpp"
 #include "uos/rt/limits.hpp"
 
 #include "uos/rt/error.hpp"
@@ -2166,6 +2167,17 @@ TEST("JSON parse accepts the exact document byte limit and refuses the next byte
   EXPECT_EQ(rt::jsonParse(document).get_string().size(), document.size() - 2);
   document += ' ';
   EXPECT_THROWS_MESSAGE(rt::jsonParse(document), rt::SyntaxError, "Invalid JSON");
+}
+
+TEST("explicit JSON allowances respect both route limits and the image ceiling") {
+  EXPECT_EQ(rt::jsonParseWithLimit("null", 4), json::value(nullptr));
+  EXPECT_THROWS_MESSAGE(rt::jsonParseWithLimit("null ", 4), rt::SyntaxError, "Invalid JSON");
+
+  std::string document = "null";
+  document.resize(rt::limits::kImageEditJsonBytes, ' ');
+  EXPECT_EQ(rt::jsonParseWithLimit(document, rt::limits::kImageEditJsonBytes), json::value(nullptr));
+  document.push_back(' ');
+  EXPECT_THROWS_MESSAGE(rt::jsonParseWithLimit(document, rt::limits::kImageEditJsonBytes), rt::SyntaxError, "Invalid JSON");
 }
 
 TEST("JSON values at the nesting limit can be copied and destroyed") {

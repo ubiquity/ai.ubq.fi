@@ -1,4 +1,5 @@
 // Links: tests/kernel_quota_admission_test.cpp
+// src/provider/gemini.cpp src/admin/gemini_quota.cpp
 // src/utils.cpp tests/helpers/counting_kv.cpp tests/helpers/kv_budget_harness.cpp src/agent_messages.cpp src/runtime_config.cpp src/api_key_policy.cpp src/types.cpp src/authority/native_api_key.cpp
 // src/handler/index.cpp src/config.cpp src/codex/supervisor_brief.cpp src/admin/kernel.cpp src/provider/capacity.cpp src/provider/claude_capacity_rollups.cpp src/quota_projection.cpp src/provider/capacity_history.cpp
 // src/admin/codex.cpp src/metered_quota.cpp src/static.cpp src/paid_fallback/ledger_backfill.cpp src/provider/capacity_rollups.cpp src/auth/passkeys.cpp src/authority/native_paid.cpp src/cache/telemetry_gate.cpp

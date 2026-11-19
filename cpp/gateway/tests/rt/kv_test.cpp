@@ -4,6 +4,7 @@
 // after tests/storage-bun-kv.test.ts port that file's store-semantics cases to
 // MemoryKv (docs/rt/kv.md lists the ones that need a file or a process).
 #include "uos/rt/kv.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/test.hpp"
 #include "uos/rt/weak.hpp"
 #include <boost/asio/co_spawn.hpp>
@@ -304,6 +305,15 @@ TEST("versionstamps and list cursors use the SDK's formats") {
   for (const std::string& bad : {std::string("garbage"), std::string(""), base64("5"), base64("null"), base64("{\"lastYieldedKeyBytes\":\"zz\"}"),
                                 base64("{\"lastYieldedKeyBytes\":\"abc\"}"), base64("{\"lastYieldedKeyBytes\":1}"), base64("[\"02\"]"), std::string("e30=@")})
     EXPECT_EQ(thrown([&] { unpackCursor(bad); }), std::string("Error: Invalid cursor"));
+}
+
+TEST("list cursor bytes are bounded before base64 and JSON parsing") {
+  const KvBytes key = packKey({"p", 3});
+  std::string cursor = packCursor(key);
+  cursor.resize(limits::kKvCursorBytes, ' ');
+  EXPECT_EQ(unpackCursor(cursor), key);
+  cursor.push_back(' ');
+  EXPECT_THROWS_MESSAGE(unpackCursor(cursor), JsError, "Invalid cursor");
 }
 
 // ---- Values ------------------------------------------------------------------------------------

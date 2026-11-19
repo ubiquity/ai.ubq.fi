@@ -3,7 +3,12 @@ set -euo pipefail
 
 here=$(cd -- "$(dirname -- "$0")" && pwd -P)
 root=$(git -C "$here" rev-parse --show-toplevel)
-revision=$(<"$here/oracle-revision.txt")
+pin=legacy-oracle-revision.txt
+if [[ ${1:-} == --production ]]; then
+  pin=oracle-revision.txt
+  shift
+fi
+revision=$(<"$here/$pin")
 [[ $revision =~ ^[0-9a-f]{40}$ ]]
 
 if [[ $# == 1 ]]; then
@@ -17,7 +22,7 @@ if [[ $# == 1 ]]; then
 elif [[ $# == 2 && $1 == --check ]]; then
   destination=$(realpath -- "$2")
 else
-  echo 'Usage: bash oracle.sh [--check] /absolute/oracle-worktree' >&2
+  echo 'Usage: bash oracle.sh [--production] [--check] /absolute/oracle-worktree' >&2
   exit 2
 fi
 

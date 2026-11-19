@@ -32,7 +32,6 @@ namespace uos::decisions::handlers {
     namespace telemetry = openai_telemetry;
     namespace router = provider::openrouter;
     constexpr double DECISIONS_MAX_QUESTIONS = 24;
-    constexpr double DECISIONS_MAX_MODEL_LENGTH = 200;
     constexpr double DECISIONS_MAX_METADATA_LENGTH = 256;
     constexpr double DECISIONS_MAX_QUESTION_NAME_LENGTH = 120;
     constexpr std::array<std::string_view, 7> DECISIONS_REQUEST_KEYS{"model", "state", "questions", "provider", "session_id", "trace", "user"};
@@ -79,7 +78,7 @@ namespace uos::decisions::handlers {
       const auto value = rt::getString(raw, "model");
       if (!value) return invalid("model must be a string", "model");
       const auto model = rt::trim(*value);
-      if (model.empty() || static_cast<double>(rt::length(model)) > DECISIONS_MAX_MODEL_LENGTH || !DECISIONS_MODEL_PATTERN.test(model))
+      if (model.empty() || static_cast<std::size_t>(rt::length(model)) > rt::limits::kModelIdCodeUnits || !DECISIONS_MODEL_PATTERN.test(model))
         return invalid("model must be an OpenRouter decision model id", "model");
       return std::nullopt;
     }

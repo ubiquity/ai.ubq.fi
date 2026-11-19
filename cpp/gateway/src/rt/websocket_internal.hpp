@@ -198,7 +198,7 @@ namespace uos::rt::ws::detail {
     void controlMessage(Bytes data);
     void fail(std::string name, std::string message, bool prefix, int statusCode, std::string errorCode);
 
-    std::int32_t maxPayload_;
+    std::size_t maxPayload_;
     bool isServer_;
     Bytes buffer_;
     std::size_t bufferOffset_ = 0;
@@ -208,7 +208,8 @@ namespace uos::rt::ws::detail {
     bool masked_ = false;
     bool fin_ = false;
     int opcode_ = 0;
-    std::uint64_t totalPayloadLength_ = 0;
+    std::size_t totalPayloadLength_ = 0;
+    std::size_t dataFrames_ = 0;
     std::vector<Bytes> fragments_;
     bool errored_ = false;
     bool loop_ = false;
@@ -238,6 +239,8 @@ namespace uos::rt::ws::detail {
     void sendFrame(Bytes frame, Callback cb);
     std::shared_ptr<Socket> socket_;
     bool firstFragment_ = true;
+    std::size_t messageBytes_ = 0;
+    std::size_t dataFrames_ = 0;
   };
 
   // node:http's ClientRequest for ws's opening handshake: connects (TCP, Unix
@@ -318,6 +321,7 @@ namespace uos::rt::ws {
     bool closeFrameSent = false;
     Bytes closeMessage;
     Timeout closeTimer;
+    Timeout idleTimer;
     bool errorEmitted = false;
     std::string protocol;
     int readyState = WebSocket::CONNECTING;

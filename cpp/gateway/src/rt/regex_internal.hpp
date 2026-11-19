@@ -1,5 +1,7 @@
 #pragma once
 
+#include "uos/rt/limits.hpp"
+
 #include <array>
 #include <chrono>
 #include <cstddef>
@@ -40,6 +42,11 @@ namespace uos::rt::regex_detail {
     bool fullUnicode() const { return unicode || unicodeSets; }
     std::uint32_t captureCount = 0;
     std::size_t registerCount = 0;
+    std::size_t subjectBytes = limits::kRegexSubjectBytes;
+    std::chrono::milliseconds matchDeadline = limits::kRegexDeadline;
+    bool sseFraming = false;
+    bool imageDataUrl = false;
+    bool standardBase64 = false;
     std::vector<NamedGroup> names;
     Bytecode bytecode;
     // String.prototype.split searches even if the input regex was sticky.
@@ -48,7 +55,8 @@ namespace uos::rt::regex_detail {
 
   struct Limits {
     using Clock = std::chrono::steady_clock;
-    Clock::time_point deadline = Clock::now() + std::chrono::milliseconds(2500);
+    explicit Limits(std::chrono::milliseconds timeout = limits::kRegexDeadline) : deadline(Clock::now() + timeout) {}
+    Clock::time_point deadline;
     std::uintptr_t stackFloor = 0;
     // libregexp calls the hook once per 10,000 backtracking/loop polls.
     unsigned pollsRemaining = 4096;
@@ -59,7 +67,7 @@ namespace uos::rt::regex_detail {
 
   class Matcher {
   public:
-    explicit Matcher(const Program& program);
+    Matcher(const Program& program, std::size_t subjectBytes);
     bool search(const void* subject, std::size_t length, std::size_t start, bool wide, bool splitting);
     const std::size_t* captures() const { return offsets_.get() ? offsets_.get() : inlineOffsets_.data(); }
     std::size_t captureStart(std::size_t group) const { return captures()[2 * group]; }

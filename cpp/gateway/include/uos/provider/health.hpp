@@ -61,8 +61,8 @@ namespace uos::provider::health {
    * top-level key for, named after the route each one reports on: OpenLux
    * reports through `metered`.
    */
-  inline constexpr std::array<std::string_view, 9> RECORD_PROVIDER_IDS = {"cerebras", "claude_code", "codex",      "deepseek", "lithos",
-                                                                          "metered",  "openrouter",  "surplus", "ubiquity"};
+  inline constexpr std::array<std::string_view, 10> RECORD_PROVIDER_IDS = {"cerebras", "claude_code", "codex", "deepseek", "gemini",
+                                                                           "lithos",   "metered",     "openrouter", "surplus", "ubiquity"};
 
   // `(typeof RECORD_PROVIDER_IDS)[number]`
   using RecordProvider = std::string;
@@ -90,6 +90,9 @@ namespace uos::provider::health {
   rt::Promise<void> recordDeepSeekProviderHealth(ProviderHealthEvent event, std::optional<double> status = std::nullopt, std::function<double()> now = {},
                                                  std::optional<std::string> providerRequestId = std::nullopt);
 
+  rt::Promise<void> recordGeminiProviderHealth(ProviderHealthEvent event, std::optional<double> status = std::nullopt, std::function<double()> now = {},
+                                                std::optional<std::string> providerRequestId = std::nullopt);
+
   rt::Promise<void> recordLithosProviderHealth(ProviderHealthEvent event, std::optional<double> status = std::nullopt, std::function<double()> now = {},
                                                std::optional<std::string> providerRequestId = std::nullopt);
 
@@ -114,6 +117,9 @@ namespace uos::provider::health {
 
   rt::Task<ProviderHealthView> getDeepSeekProviderHealth();
   rt::Task<ProviderHealthView> getDeepSeekProviderHealth(std::function<double()> now);
+
+  rt::Task<ProviderHealthView> getGeminiProviderHealth();
+  rt::Task<ProviderHealthView> getGeminiProviderHealth(std::function<double()> now);
 
   rt::Task<ProviderHealthView> getLithosProviderHealth();
   rt::Task<ProviderHealthView> getLithosProviderHealth(std::function<double()> now);

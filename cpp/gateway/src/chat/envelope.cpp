@@ -6,6 +6,7 @@
 #include "uos/provider/lithos_handlers.hpp"
 #include "uos/provider/lithos.hpp"
 #include "uos/provider/cerebras.hpp"
+#include "uos/provider/gemini.hpp"
 #include "uos/provider/cerebras_handlers.hpp"
 #include "uos/provider/openrouter_handlers.hpp"
 #include "uos/provider/openrouter_request_controls.hpp"
@@ -23,6 +24,7 @@
 #include "uos/utils.hpp"
 #include "uos/http.hpp"
 #include "uos/rt/json.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/string.hpp"
 namespace uos::chat::envelope {
 namespace {
@@ -49,8 +51,10 @@ namespace {
     rt::Promise<json::value> bodyPromise(request::readJsonBody(req)); auto body = co_await bodyPromise.wait();
     if (!rt::truthy(body) || !utils::isRecord(body)) co_return NotOk{invalid("Invalid JSON body")};
     auto raw = body.is_object() ? std::move(body.as_object()) : recordOf(body);
+    const auto model = rt::trim(rt::getString(raw, "model").value_or(""));
+    if (model.size() > rt::limits::kRegexSubjectBytes) co_return NotOk{invalid("model is too long", "model")};
     rt::Promise<std::optional<sel::ProviderSelection>> selected(sel::loadProviderSelectionCached()); const auto selection = co_await selected.wait();
-    const auto requested = deepseek::index::deepSeekUpstreamModelFor(rt::trim(utils::getString(rt::get(raw, "model")).value_or("")));
+    const auto requested = deepseek::index::deepSeekUpstreamModelFor(model);
     const bool enabled = sel::isProviderEnabled("deepseek", selection);
     if (requested && !enabled && rt::hasOwn(raw, "thinking")) co_return NotOk{invalid("The DeepSeek `thinking` extension requires the DeepSeek provider to be enabled; remove `thinking` or enable provider `deepseek`.", "thinking")};
     std::optional<rt::OrderedSet<std::string>> extensions;
@@ -200,6 +204,12 @@ namespace {
     const auto* context = usageContext ? &*usageContext : nullptr;
     rt::Promise<Step<Envelope>> envelopePending(parseChatCompletionsEnvelope(req)); auto envelopeResult = co_await envelopePending.wait(); if (const auto* error = std::get_if<NotOk>(&envelopeResult)) co_return error->response; auto& envelope = std::get<Envelope>(envelopeResult);
     auto modelTask = resolveChatCompletionsModel(envelope.rawRecord, context); rt::Promise<Step<Model>> modelPending(std::move(modelTask)); const auto modelResult = co_await modelPending.wait(); if (const auto* error = std::get_if<NotOk>(&modelResult)) co_return error->response; const auto model = std::get<Model>(modelResult);
+    if (provider::gemini::isGeminiModel(model.model) && provider::gemini::geminiOperatorOptIn() && sel::isProviderEnabled("gemini", envelope.selection)) {
+      auto task = provider::gemini::handleGeminiChatCompletions(req, envelope.rawRecord, model.modelRaw, context);
+      rt::Promise<rt::Response> pending(std::move(task));
+      auto response = co_await pending.wait();
+      co_return response;
+    }
     const auto cerebras = provider::cerebras::cerebrasUpstreamModelFor(model.model);
     if (sel::isProviderEnabled("cerebras", envelope.selection) && cerebras) { auto task = provider::cerebras_handlers::handleCerebrasChatCompletions(req, envelope.rawRecord, model.modelRaw, context, *cerebras); rt::Promise<rt::Response> pending(std::move(task)); auto response = co_await pending.wait(); co_return response; }
     if (sel::isProviderEnabled("deepseek", envelope.selection) && deepseek::index::deepSeekUpstreamModelFor(model.model)) { auto task = deepseek::handlers::handleDeepSeekChatCompletions(req, std::move(envelope.rawRecord), model.modelRaw, context); rt::Promise<rt::Response> pending(std::move(task)); auto response = co_await pending.wait(); co_return response; }

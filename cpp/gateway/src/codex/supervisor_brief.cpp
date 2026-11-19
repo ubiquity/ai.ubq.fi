@@ -571,8 +571,8 @@ namespace uos::codex::supervisor_brief {
       if (!isRecord(&payload)) co_return briefError(400, "Expected a JSON body with source and id");
       const std::string sourceId = textOrNull(rt::get(payload, "source")).value_or("");
       const std::string threadId = textOrNull(rt::get(payload, "id")).value_or("");
-      if (!supervisor_config::SOURCE_ID_PATTERN.test(sourceId)) co_return briefError(400, "Invalid supervisor source id");
-      if (!supervisor_config::THREAD_ID_PATTERN.test(threadId)) co_return briefError(400, "Invalid thread id");
+      if (sourceId.size() > 32 || !supervisor_config::SOURCE_ID_PATTERN.test(sourceId)) co_return briefError(400, "Invalid supervisor source id");
+      if (threadId.size() > 200 || !supervisor_config::THREAD_ID_PATTERN.test(threadId)) co_return briefError(400, "Invalid thread id");
       co_return BriefBody{.sourceId = sourceId, .threadId = threadId};
     }
 

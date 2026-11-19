@@ -1,4 +1,5 @@
 // Links: tests/sentinel_incident_index_test.cpp
+// src/provider/gemini.cpp src/admin/gemini_quota.cpp
 //        src/utils.cpp src/sentinel/incident_outbox.cpp src/kv.cpp src/auth/passkeys.cpp src/http.cpp src/provider/cerebras_rate_limits.cpp src/auth/index.cpp src/sentinel/replay_model.cpp src/config.cpp src/api_keys.cpp src/api_key_policy.cpp src/agent_messages.cpp src/auth/passport.cpp src/authority/native_api_key.cpp src/storage/kv.cpp
 //        src/auth/passport_sessions.cpp src/handler/index.cpp src/admin/codex.cpp src/admin/kernel.cpp src/health.cpp src/provider/metered.cpp src/models/codex_models_fetch.cpp src/metered_quota.cpp src/paid_fallback/ledger_backfill.cpp src/authority/native_api_key_policy.cpp src/codex/dispatch.cpp src/authority/native_paid_policy.cpp
 //        src/auth/local_admin.cpp src/provider/lithos.cpp src/models/codex_models.cpp src/admin/error_log.cpp src/provider/surplus.cpp src/admin/defaults.cpp src/models/catalog.cpp src/runtime_config.cpp src/provider/health.cpp src/storage/native_addon.cpp src/models/codex_models_availability.cpp src/authority/native_paid_contracts.cpp

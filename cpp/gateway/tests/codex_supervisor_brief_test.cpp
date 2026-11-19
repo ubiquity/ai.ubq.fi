@@ -6,6 +6,7 @@
 // "redactBriefText takes linear time ..." keeps the TS 2 s bound and, for an input the -O0 unit build cannot
 // redact within it, checks linear scaling against the half-length input instead (see the case).
 // Links: tests/codex_supervisor_brief_test.cpp
+// src/provider/gemini.cpp src/admin/gemini_quota.cpp
 // src/admin/api_key_audit.cpp src/admin/api_key_mutations.cpp src/admin/api_keys.cpp src/admin/capacity_observation_sync.cpp src/admin/chart_source_proxy.cpp src/admin/claude_code.cpp src/admin/codex.cpp src/admin/codex_reset.cpp src/admin/defaults.cpp src/admin/error_log.cpp
 // src/admin/kernel.cpp src/admin/sentinel_incident.cpp src/agent_messages.cpp src/analytics.cpp src/api_key_policy.cpp src/api_keys.cpp src/auth/index.cpp src/auth/local_admin.cpp src/auth/local_development_key.cpp src/auth/passkeys.cpp
 // src/auth/passport.cpp src/auth/passport_sessions.cpp src/auth/relay.cpp src/authority/native_api_key.cpp src/authority/native_api_key_audit.cpp src/authority/native_api_key_policy.cpp src/authority/native_codex.cpp src/authority/native_codex_429.cpp src/authority/native_codex_capacity.cpp src/authority/native_codex_contracts.cpp
@@ -105,6 +106,7 @@ namespace {
 #include "uos/rt/date.hpp"
 #include "uos/rt/env.hpp"
 #include "uos/rt/json.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/number.hpp"
 #include "uos/rt/regex.hpp"
 #include "uos/rt/string.hpp"
@@ -1116,6 +1118,26 @@ TEST("brief output parsing accepts only a grounded {about,status} object") {
   EXPECT(!parseSupervisorBriefOutput(json::value(R"({"about":"only one field"})")).has_value());
   EXPECT(!parseSupervisorBriefOutput(json::value("not json at all")).has_value());
   EXPECT(!parseSupervisorBriefOutput(json::value(nullptr)).has_value());
+}
+
+ASYNC_TEST("the brief route rejects oversized source and thread IDs with the normal errors") {
+  IsolatedEnvironment isolated;
+  const std::string oversized(rt::limits::kRegexSubjectBytes + 1, 'x');
+  const std::array keys{"source", "id"};
+  for (const auto key : keys) {
+    json::object payload{{"source", "local"}, {"id", "thread-1"}};
+    payload[key] = oversized;
+    rt::RequestInit init;
+    init.method = "POST";
+    init.body = rt::jsonStringify(payload);
+    const rt::Request request("http://localhost/admin/codex/supervisor/brief", init);
+    auto handling = handleAdminCodexSupervisorBrief(request);
+    const auto response = co_await std::move(handling);
+    EXPECT_EQ(response.status(), 400);
+    const auto body = co_await response.json();
+    EXPECT_EQ(rt::getString(body.at("error"), "message"),
+              std::string_view(key) == "source" ? "Invalid supervisor source id" : "Invalid thread id");
+  }
 }
 
 ASYNC_TEST("the brief route stays behind admin auth in the real router") {

@@ -24,6 +24,7 @@
 #include "uos/rt/crypto.hpp"
 #include "uos/rt/error.hpp"
 #include "uos/rt/json.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/rt/test_async.hpp"
 
@@ -558,4 +559,12 @@ TEST("a missing zlib fails at first use with an error naming the library") {
   EXPECT_THROWS_MATCHING(gz::gunzipSync(bytesOf("x")), "cannot load libuos-missing-zlib\\.so\\.1");
   gz::setZlibLibraryForTest("");
   EXPECT_EQ(gz::gunzipSync(gz::gzipSync(bytesOf("back"))), bytesOf("back"));
+}
+
+TEST("stored gzip has an exact decoded budget across members") {
+  auto compressed = gz::gzipSync(gz::Bytes(rt::limits::kStoredGzipBytes, 'a'));
+  EXPECT_EQ(gz::gunzipSync(compressed).size(), rt::limits::kStoredGzipBytes);
+  const auto next = gz::gzipSync(bytesOf("b"));
+  compressed.insert(compressed.end(), next.begin(), next.end());
+  EXPECT_THROWS_MESSAGE(gz::gunzipSync(compressed), gz::InflateError, "inflate failed");
 }

@@ -63,6 +63,50 @@ TEST("OCTET STRING consumes one primitive value") {
   }
 }
 
+TEST("DER certificate parsing admits the byte ceiling and rejects the next byte") {
+  const auto leaf = rt::atobBytes(packedLeaf);
+  auto paddedCertificate = [&](std::size_t padding) {
+    const auto parsed = passkeys::parseCertificate(leaf);
+    const Bytes contents(padding, 'a');
+    const passkeys::asn1::Ptr<ASN1_OCTET_STRING, ASN1_OCTET_STRING_free> value(ASN1_OCTET_STRING_new());
+    ASSERT_EQ(ASN1_OCTET_STRING_set(value.get(), contents.data(), static_cast<int>(contents.size())), 1);
+    const passkeys::asn1::Ptr<X509_EXTENSION, X509_EXTENSION_free> extension(
+        X509_EXTENSION_create_by_NID(nullptr, NID_netscape_comment, 0, value.get()));
+    ASSERT(extension);
+    ASSERT_EQ(X509_add_ext(parsed.x509.get(), extension.get(), -1), 1);
+    ASSERT(i2d_re_X509_tbs(parsed.x509.get(), nullptr) > 0);
+    const int length = i2d_X509(parsed.x509.get(), nullptr);
+    ASSERT(length > 0);
+    Bytes der(static_cast<std::size_t>(length));
+    unsigned char* cursor = der.data();
+    ASSERT_EQ(i2d_X509(parsed.x509.get(), &cursor), length);
+    return der;
+  };
+  constexpr auto limit = rt::limits::kCertificateBytes;
+  const auto initialPadding = limit - leaf.size() - 64;
+  const auto sample = paddedCertificate(initialPadding);
+  ASSERT(sample.size() < limit);
+  const auto padding = initialPadding + limit - sample.size();
+  const auto atLimit = paddedCertificate(padding);
+  ASSERT_EQ(atLimit.size(), limit);
+  EXPECT(passkeys::parseCertificate(atLimit).x509);
+  const auto overLimit = paddedCertificate(padding + 1);
+  ASSERT_EQ(overLimit.size(), limit + 1);
+  EXPECT_THROWS_MATCHING(passkeys::parseCertificate(overLimit), "certificate exceeds limit");
+}
+
+TEST("attestation chains budget every decoded certificate before parsing the leaf") {
+  constexpr auto certificate = rt::limits::kCertificateBytes;
+  constexpr auto chainBytes = rt::limits::kCertificateChainBytes;
+  passkeys::Cbor::Array values;
+  for (std::size_t size = 0; size < chainBytes; size += certificate) values.push_back(passkeys::bytesCbor(Bytes(certificate, 'a')));
+  passkeys::Cbor chain{values};
+  EXPECT_EQ(passkeys::firstCertificate(&chain).size(), certificate);
+  values.push_back(passkeys::bytesCbor(Bytes{0}));
+  const passkeys::Cbor extra{std::move(values)};
+  EXPECT_THROWS_MATCHING(passkeys::firstCertificate(&extra), "certificate chain exceeds limit");
+}
+
 TEST("private attestation extensions enforce their tags and challenge shape") {
   EXPECT_EQ(rt::toHex(passkeys::parseAppleNonce(rt::fromHex("3005a103040161"))), "61");
   EXPECT_THROWS(passkeys::parseAppleNonce(rt::fromHex("3005a003040161")), rt::JsError);

@@ -1,5 +1,6 @@
 #include "uos/rt/http.hpp"
 #include "uos/rt/json.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/rt/text_codec.hpp"
 #include <algorithm>
@@ -471,26 +472,34 @@ namespace uos::rt {
     std::string decodeUtf8KeepingBom(std::string_view bytes) { return decodeUtf8(bytes, TextDecoderOptions{.fatal = false, .ignoreBOM = true}); }
 
     FormParts parseMultipart(std::string_view input, std::string_view boundary) {
-      if (boundary.size() + 4 > 76) throw formDataError("FormData parse error boundary is too long");
+      if (boundary.size() > limits::kMultipartBoundaryBytes) throw formDataError("FormData parse error boundary is too long");
       const std::string finalBoundary = "--" + std::string(boundary) + "--";
       const std::size_t finalIndex = input.rfind(finalBoundary);
       if (finalIndex == std::string_view::npos) throw formDataError("FormData parse error missing final boundary");
       const std::string separator = "--" + std::string(boundary) + "\r\n";
       input = input.substr(0, finalIndex);
       FormParts parts;
+      std::size_t partCount = 0;
       for (auto next = input.find(separator); next != std::string_view::npos;) {
+        if (++partCount > limits::kMultipartParts) throw formDataError("FormData part count exceeds limit");
         input.remove_prefix(next + separator.size());
         next = input.find(separator);
         const auto part = input.substr(0, next);
-        const std::size_t headerEnd = part.find("\r\n\r\n");
+        const auto head = part.substr(0, limits::kHttpHeaderBlockBytes);
+        const std::size_t headerEnd = head.find("\r\n\r\n");
         if (headerEnd == std::string_view::npos) throw formDataError("FormData parse error is missing header end");
+        auto body = part.substr(headerEnd + 4);
+        if (body.ends_with("\r\n")) body.remove_suffix(2);
+        if (body.size() > limits::kMultipartPartBytes) throw formDataError("FormData part size exceeds limit");
         std::string_view name, filename;
         bool isFile = false;
+        std::size_t fieldCount = 0;
         for (auto header = part.substr(0, headerEnd + 2); !header.empty();) {
           const auto end = header.find("\r\n");
           const auto line = header.substr(0, end);
           header.remove_prefix(end + 2);
           if (line.empty()) continue;
+          if (++fieldCount > limits::kHttpHeaderFields) throw formDataError("FormData header count exceeds limit");
           const std::size_t colon = line.find(':');
           if (colon == std::string_view::npos) throw formDataError("FormData parse error is missing header colon separator");
           const std::string_view key = line.substr(0, colon);
@@ -525,8 +534,6 @@ namespace uos::rt {
           }
         }
         if (name.empty()) continue;
-        auto body = part.substr(headerEnd + 4);
-        if (body.size() >= 2 && body.substr(body.size() - 2) == "\r\n") body.remove_suffix(2);
         if (isFile) {
           std::string_view type = typeForExtension(filenameExtension(filename));
           if (type.empty()) type = sniffedType(body);
@@ -812,12 +819,15 @@ namespace uos::rt {
   }
 
   InboundFormDecoder::InboundFormDecoder(std::string_view contentType) {
+    if (contentType.size() > limits::kHttpHeaderBlockBytes) throw formDataError("FormData content type exceeds limit");
     if (containsIgnoringAsciiCase(contentType, "application/x-www-form-urlencoded")) return;
     if (containsIgnoringAsciiCase(contentType, "multipart/form-data")) boundary_ = multipartBoundary(contentType);
     if (!boundary_) throw formDataError("Can't decode form data from body because of incorrect MIME type/boundary");
   }
 
   FormParts InboundFormDecoder::decode(std::span<const std::uint8_t> body) const {
+    const auto limit = boundary_ ? limits::kImageEditMultipartBytes : limits::kUrlQueryBytes;
+    if (body.size() > limit) throw formDataError("FormData body exceeds limit");
     const auto bytes = body.empty() ? std::string_view() : std::string_view(reinterpret_cast<const char*>(body.data()), body.size());
     if (boundary_) return parseMultipart(bytes, *boundary_);
     const URLSearchParams params{decodeUtf8(bytes)};

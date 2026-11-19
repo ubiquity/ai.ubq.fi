@@ -4,6 +4,7 @@
 #include "tls_internal.hpp"
 
 #include "uos/rt/env.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/string.hpp"
 
 #include <arpa/inet.h>
@@ -11,17 +12,22 @@
 #include <openssl/pem.h>
 #include <openssl/x509v3.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <fstream>
-#include <iterator>
+#include <memory>
 #include <stdexcept>
 
 namespace uos::rt::detail::tls {
   namespace {
     std::optional<std::string> readFile(const std::string& path) {
-      std::ifstream file(path, std::ios::binary);
+      std::ifstream file(path, std::ios::binary | std::ios::ate);
       if (!file) return std::nullopt;
-      return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+      const auto size = static_cast<std::streamoff>(file.tellg());
+      if (size < 0 || size > static_cast<std::streamoff>(limits::kTrustStoreBytes)) return std::nullopt;
+      std::string pem(static_cast<std::size_t>(size), '\0');
+      if (!file.seekg(0) || !file.read(pem.data(), size)) return std::nullopt;
+      return pem;
     }
 
     std::string asn1Text(const ASN1_STRING* value) {
@@ -92,14 +98,21 @@ namespace uos::rt::detail::tls {
   }
 
   void addPemCertificates(X509_STORE* store, const std::string& pem) {
-    BIO* bio = BIO_new_mem_buf(pem.data(), static_cast<int>(pem.size()));
+    if (pem.size() > limits::kTrustStoreBytes) return;
+    const std::unique_ptr<BIO, decltype(&BIO_free)> bio(BIO_new_mem_buf(pem.data(), static_cast<int>(pem.size())), BIO_free);
     if (!bio) return;
-    while (X509* certificate = PEM_read_bio_X509(bio, nullptr, nullptr, nullptr)) {
+    for (;;) {
+      unsigned char* bytes = nullptr;
+      long size = 0;
+      if (PEM_bytes_read_bio(&bytes, &size, nullptr, PEM_STRING_X509, bio.get(), nullptr, nullptr) != 1) break;
+      const unsigned char* cursor = bytes;
+      X509* certificate = size > 0 && size <= static_cast<long>(limits::kCertificateBytes) ? d2i_X509(nullptr, &cursor, size) : nullptr;
+      OPENSSL_free(bytes);
+      if (!certificate) break;
       X509_STORE_add_cert(store, certificate);
       X509_free(certificate);
     }
     ERR_clear_error();
-    BIO_free(bio);
   }
 
   SSL_CTX* newContext() {
@@ -107,6 +120,10 @@ namespace uos::rt::detail::tls {
     if (!context) throw std::runtime_error("SSL_CTX_new failed");
     SSL_CTX_set_min_proto_version(context, TLS1_2_VERSION);
     SSL_CTX_set_options(context, SSL_OP_IGNORE_UNEXPECTED_EOF);
+    // OpenSSL checks the Certificate message length before it decodes any DER.
+    // Its pre-parse control is aggregate, so use the per-certificate cap here.
+    constexpr long certListBytes = static_cast<long>(std::min(limits::kCertificateBytes, limits::kCertificateChainBytes));
+    SSL_CTX_set_max_cert_list(context, std::min(SSL_CTX_get_max_cert_list(context), certListBytes));
     // The chain is verified during the handshake and judged afterwards, as
     // Node does (verifyError() then checkServerIdentity).
     SSL_CTX_set_verify(context, SSL_VERIFY_NONE, nullptr);

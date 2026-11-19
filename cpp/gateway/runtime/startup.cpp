@@ -6,6 +6,8 @@
 #include "uos/deepseek/index.hpp"
 #include "uos/kv.hpp"
 #include "uos/live/upstream.hpp"
+#include "uos/provider/gemini.hpp"
+#include "uos/rt/env.hpp"
 #include "uos/rt/fetch.hpp"
 #include "uos/rt/json.hpp"
 #include "uos/rt/process.hpp"
@@ -193,8 +195,18 @@ namespace uos::runtime::startup {
       const json::object closure = object(root / "runtime-closure.json");
       if (string(closure, "schema") != "uos-native-runtime-closure-v1" || string(closure, "platform") != "linux" || string(closure, "machine") != "AArch64")
         refuse("runtime closure platform is unsupported");
+      const json::value* hostData = rt::get(closure, "hostData");
+      if (!hostData || !hostData->is_array() || hostData->as_array().empty()) refuse("runtime host-data closure is missing");
       const json::value* libraries = rt::get(closure, "libraries");
       if (!libraries || !libraries->is_array() || libraries->as_array().empty()) refuse("runtime host-library closure is missing");
+      for (const json::value& value : hostData->as_array()) {
+        if (!value.is_string() || value.as_string().empty()) refuse("invalid runtime host-data closure record");
+        const fs::path source(std::string(value.as_string()));
+        if (!source.is_absolute() || source.lexically_normal() != source) refuse("runtime host data path is invalid");
+        if (!source.string().starts_with("/etc/") && !source.string().starts_with("/dev/") && !source.string().starts_with("/proc/"))
+          refuse("runtime host data is outside the qualified system directories");
+        if (!fs::exists(source)) refuse("runtime host data is unavailable");
+      }
       for (const json::value& value : libraries->as_array()) {
         if (!value.is_object()) refuse("invalid host-library closure record");
         const fs::path path = canonical(string(value.as_object(), "path"));
@@ -321,13 +333,8 @@ namespace uos::runtime::startup {
 
     void enforce(const fs::path& package, const fs::path& state, const permissions_linux::LinuxPermissionsArtifact& artifact, int port,
                  const std::optional<std::string>& origin) {
-      permissions_linux::LinuxPermissions permissions;
-      permissions.read = {package.string(), state.string()};
-      permissions.write = {(state / ".data").string()};
-      permissions.immutable = std::vector<std::string>{package.string()};
-      for (const std::string_view name : {"/usr/lib", "/etc/ssl", "/etc/resolv.conf", "/etc/hosts", "/etc/nsswitch.conf", "/etc/localtime", "/dev/null", "/dev/urandom", "/dev/random", "/proc/self"}) {
-        if (fs::exists(name)) permissions.read.push_back(fs::canonical(name).string());
-      }
+      auto profiles = permissions_linux::gatewayLinuxPermissions(package.string(), state.string());
+      auto& permissions = profiles.gateway;
       if (const char* optIn = std::getenv("UOS_GATEWAY_ALLOW_REDUCED_CONFINEMENT"); optIn && std::string_view(optIn) == "1") {
         permissions_linux::LinuxPermissionsTcpPorts ports{static_cast<std::uint16_t>(port)};
         if (origin) ports.connectPorts.push_back(static_cast<std::uint16_t>(std::stoi(rt::URL(*origin).port())));
@@ -337,6 +344,14 @@ namespace uos::runtime::startup {
       const auto receipt = permissions_linux::applyLinuxPermissions(permissions, artifact);
       if (!receipt.processThreadSync || (!receipt.filesystemThreadSync && !permissions.allowReducedConfinement))
         refuse("kernel confinement did not produce both enforcement receipts");
+      if (profiles.antigravity) {
+        provider::gemini::setGeminiChildConfinement([base = std::move(*profiles.antigravity)](const std::string& workspace) {
+          auto child = base;
+          child.read.push_back(workspace);
+          child.write.push_back(workspace);
+          permissions_linux::restrictLinuxChildThread(child);
+        });
+      }
       const std::string active = rt::join(receipt.activeProtections);
       const std::string missing = rt::join(receipt.missingProtections);
       std::fprintf(stderr, "Linux confinement Landlock ABI=%g active=%s missing=%s\n", receipt.landlockAbi, active.c_str(), missing.empty() ? "none" : missing.c_str());

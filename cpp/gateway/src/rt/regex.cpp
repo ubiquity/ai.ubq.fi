@@ -30,7 +30,7 @@ namespace uos::rt {
     // UTF-16 code units plus a checkpoint every 64 units for mapping indices back to bytes.
     class Subject {
     public:
-      explicit Subject(std::string_view bytes) : bytes_(bytes), ascii_(isAscii(bytes)) {
+      Subject(std::string_view bytes, const Program& program) : bytes_(bytes), ascii_(checkAscii(bytes, program)) {
         if (ascii_) {
           length_ = bytes.size();
           return;
@@ -96,6 +96,19 @@ namespace uos::rt {
       }
 
     private:
+      static bool checkAscii(std::string_view bytes, const Program& program) {
+        if (bytes.size() > program.subjectBytes) throw RangeError("regular expression subject is too large");
+        if (program.sseFraming && bytes.size() > limits::kSseLineBytes) {
+          for (auto remaining = bytes; !remaining.empty();) {
+            const auto end = remaining.find_first_of("\r\n");
+            if (std::min(end, remaining.size()) > limits::kSseLineBytes) throw RangeError("SSE line exceeds limit");
+            if (end == std::string_view::npos) break;
+            remaining.remove_prefix(end + 1);
+          }
+        }
+        return isAscii(bytes);
+      }
+
       struct Checkpoint {
         std::size_t index;
         std::size_t byte;
@@ -156,15 +169,15 @@ namespace uos::rt {
     }
 
     std::optional<RegexMatch> execWith(const Program& program, std::string_view input, std::size_t& lastIndex) {
-      Subject subject(input);
-      Matcher matcher(program);
+      Subject subject(input, program);
+      Matcher matcher(program, input.size());
       if (!builtinExec(program, matcher, subject, lastIndex)) return std::nullopt;
       return buildMatch(program, matcher.captures(), subject, input);
     }
 
     bool testWith(const Program& program, std::string_view input, std::size_t& lastIndex) {
-      Subject subject(input);
-      Matcher matcher(program);
+      Subject subject(input, program);
+      Matcher matcher(program, input.size());
       return builtinExec(program, matcher, subject, lastIndex);
     }
 
@@ -232,10 +245,35 @@ namespace uos::rt {
       }
     }
 
+    // These literal substitutions translate the base64 alphabet without asking
+    // the VM to match or retain captures across an encoded storage envelope.
+    std::optional<std::string> replaceBase64Alphabet(const Program& program, std::string_view input, std::string_view replacement) {
+      if (program.flags != "g" || input.size() <= limits::kRegexSubjectBytes) return std::nullopt;
+      char from;
+      if (program.source == "-" && replacement == "+") from = '-';
+      else if (program.source == "_" && replacement == "/") from = '_';
+      else if (program.source == R"(\+)" && replacement == "-") from = '+';
+      else if (program.source == R"(\/)" && replacement == "_") from = '/';
+      else return std::nullopt;
+
+      if (input.size() > limits::kBase64InputBytes || !isAscii(input)) throw RangeError("regular expression subject is too large");
+      const auto deadline = regex_detail::Limits::Clock::now() + limits::kRegexLargeSubjectDeadline;
+      std::string out(input);
+      std::ranges::replace(out, from, replacement.front());
+      if (regex_detail::Limits::Clock::now() >= deadline) throw RangeError("regular expression execution limit exceeded");
+      return out;
+    }
+
     // RegExp.prototype[@@replace]: all matches are found first, then callbacks run in order.
     std::string replaceWith(const Program& program, std::string_view input, std::size_t& lastIndex, std::string_view replacement, const RegexReplacer* replacer) {
-      Subject subject(input);
-      Matcher matcher(program);
+      if (!replacer) {
+        if (auto translated = replaceBase64Alphabet(program, input, replacement)) {
+          lastIndex = 0;
+          return std::move(*translated);
+        }
+      }
+      Subject subject(input, program);
+      Matcher matcher(program, input.size());
       std::size_t width = 2 * (static_cast<std::size_t>(program.captureCount) + 1);
       std::vector<std::size_t> found;
       if (program.global) {
@@ -268,8 +306,8 @@ namespace uos::rt {
 
     std::optional<std::vector<std::string>> matchGlobalWith(const Program& program, std::string_view input, std::size_t& lastIndex) {
       if (!program.global) throw std::logic_error("rt::matchGlobal: the regex has no g flag; use rt::match");
-      Subject subject(input);
-      Matcher matcher(program);
+      Subject subject(input, program);
+      Matcher matcher(program, input.size());
       std::vector<std::string> out;
       lastIndex = 0;
       while (builtinExec(program, matcher, subject, lastIndex)) {
@@ -284,8 +322,8 @@ namespace uos::rt {
     template <class Piece, class OnCaptures> std::vector<Piece> splitWith(const Program& program, std::string_view input, std::uint32_t limit, OnCaptures&& onCaptures) {
       std::vector<Piece> out;
       if (limit == 0) return out;
-      Subject subject(input);
-      Matcher matcher(program);
+      Subject subject(input, program);
+      Matcher matcher(program, input.size());
       std::size_t size = subject.length();
       if (size == 0) {
         if (!subject.search(matcher, 0, true)) out.push_back(Piece(std::string(input)));
@@ -373,8 +411,8 @@ namespace uos::rt {
   std::vector<RegexMatch> matchAll(std::string_view input, const Regex& re) {
     const Program& program = re.program();
     if (!program.global) throw TypeError("String.prototype.matchAll argument must not be a non-global regular expression");
-    Subject subject(input);
-    Matcher matcher(program);
+    Subject subject(input, program);
+    Matcher matcher(program, input.size());
     std::vector<RegexMatch> out;
     std::size_t lastIndex = re.lastIndex;
     while (builtinExec(program, matcher, subject, lastIndex)) {
@@ -420,8 +458,8 @@ namespace uos::rt {
 
   std::int64_t search(std::string_view input, const Regex& re) {
     const Program& program = re.program();
-    Subject subject(input);
-    Matcher matcher(program);
+    Subject subject(input, program);
+    Matcher matcher(program, input.size());
     std::size_t lastIndex = 0;
     if (!builtinExec(program, matcher, subject, lastIndex)) return -1;
     return static_cast<std::int64_t>(matcher.captureStart(0));

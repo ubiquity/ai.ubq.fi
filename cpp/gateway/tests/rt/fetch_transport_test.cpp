@@ -12,6 +12,7 @@
 #include "uos/rt/clock.hpp"
 #include "uos/rt/fetch.hpp"
 #include "uos/rt/http.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/rt/test_async.hpp"
 #include "uos/rt/text_codec.hpp"
@@ -2020,6 +2021,42 @@ ASYNC_TEST("response bodies are decompressed as Bun decompresses them, headers k
   auto kept = fetchEncoded(peer, encoded("gzip", kGzip), "GET");
   const Outcome keptOutcome = co_await std::move(kept);
   EXPECT_EQ(describe(keptOutcome.headers), "content-encoding: gzip\ncontent-length: " + std::to_string(kGzip.size()) + "\n");
+  peer->stop();
+}
+
+ASYNC_TEST("Fetch enforces an SSE line budget across socket reads") {
+  auto peer = Peer::start();
+  TransportScope scope;
+  for (const std::size_t extra : {0u, 1u}) {
+    std::string data = "data: ";
+    data.resize(rt::limits::kSseLineBytes + extra, 'a');
+    data += "\r\n\r\ndata: done\n\n";
+    peer->respond = answer("HTTP/1.1 200 OK\r\nContent-Type: Text/Event-Stream; charset=utf-8\r\nContent-Length: " +
+                           std::to_string(data.size()) + "\r\n\r\n" + data);
+    auto reading = fetchOutcome(peer->url("/events"));
+    const Outcome outcome = co_await std::move(reading);
+    if (extra == 0) {
+      ASSERT(outcome.body);
+      EXPECT(*outcome.body == data);
+    } else EXPECT_EQ(outcome.code, "ResponseSseLineTooLarge");
+    scope.transport->closeIdleConnections();
+  }
+  peer->stop();
+}
+
+ASYNC_TEST("Fetch admits the last informational head and rejects one beyond it") {
+  auto peer = Peer::start();
+  TransportScope scope;
+  for (const std::size_t extra : {0u, 1u}) {
+    std::string response;
+    for (std::size_t i = 0; i < rt::limits::kHttpInformationalResponses + extra; ++i) response += "HTTP/1.1 103 Early Hints\r\n\r\n";
+    peer->respond = answer(response + kOk);
+    auto reading = fetchOutcome(peer->url("/hints"));
+    const Outcome outcome = co_await std::move(reading);
+    if (extra == 0) EXPECT_EQ(outcome.body, std::optional<std::string>("ok"));
+    else EXPECT_EQ(outcome.code, "TooManyInformationalResponses");
+    scope.transport->closeIdleConnections();
+  }
   peer->stop();
 }
 

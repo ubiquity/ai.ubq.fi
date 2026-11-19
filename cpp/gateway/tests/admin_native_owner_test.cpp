@@ -1,5 +1,6 @@
 // Port of all four original tests/admin-native-owner.test.ts registrations, in source order.
 // Links: tests/admin_native_owner_test.cpp src/types.cpp tests/helpers/counting_kv.cpp src/codex/auth.cpp src/agent_messages.cpp src/provider/health.cpp src/utils.cpp src/catalog/types.cpp src/codex/native_auth.cpp src/config.cpp src/models/catalog.cpp src/input_normalization.cpp src/models/codex_models.cpp
+// src/provider/gemini.cpp src/admin/gemini_quota.cpp
 // src/release.cpp src/handler/index.cpp src/provider/cerebras.cpp src/admin/claude_code.cpp src/static.cpp src/health.cpp src/deepseek/waterfall.cpp src/admin/codex.cpp src/models/openrouter_models.cpp src/admin/codex_reset.cpp src/runtime_config.cpp src/live/handler.cpp src/admin/kernel.cpp
 // src/handler/http.cpp src/provider/capacity_parse.cpp src/provider/presentation.cpp src/auth/passkeys.cpp src/request.cpp src/http.cpp src/admin/api_keys.cpp src/quota_projection.cpp src/api_key_policy.cpp src/catalog/store.cpp src/provider/claude_code_accounts.cpp src/paid_fallback/ledger_state.cpp
 // src/authority/native_paid_contracts.cpp src/codex/reset_settings.cpp src/codex/native_auth_transport.cpp src/provider/selection.cpp src/models/metadata.cpp src/paid_fallback/ledger_backfill.cpp src/codex/manual_reset.cpp src/metered_quota.cpp src/codex/banked_reset.cpp src/provider/claude_code_quota.cpp

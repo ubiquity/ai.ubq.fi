@@ -2,6 +2,9 @@
 
 The harness runs the primary release executable from the verified package, using its ordinary runtime manifest, native durable store, application handlers, admin authentication and delivery receipts. Its Bun comparison imports the real source application and uses `#http`, pinned `ws`, and a genuine prebuilt native-KV artifact. No replacement HTTP gateway, memory store or authentication bypass is used.
 
+This standalone harness uses the historical launcher and the default `oracle.sh` invocation to fetch its source.
+The 186-case suite uses the local launcher and the production revision. [Paired conformance](../../conformance/README.md)
+
 Run the independent OS-boundary check with `python3 -I cpp/gateway/tools/smoke.py --preflight --output /tmp/claude-1002/prod/smoke_perf/<new-preflight-directory> --timeout 10`. `--fixture-self-test` exercises only the new scripted HTTP/SSE/WebSocket client/upstream and cannot qualify the gateway.
 
 After the build/runtime owners publish the exact primary package and receipts, run the full acceptance from the worktree root:

@@ -6,9 +6,9 @@ Runtime references, mandatory reading before porting: `docs/rt/values.md`, `text
 `async.md`, `web.md`, `regex.md`, `kv.md`, `platform.md`, `record.md`, `websocket.md`, `sqlite.md` and `gzip.md` (when your modules use WebSocket, SQLite or gzip), and `docs/PORT-NOTES.md`
 (current conventions and historical port notes). Use the `uos::rt` interfaces for shared runtime operations. This document governs new generic-library substitutions. [Replacement plan](docs/OSS-REPLACEMENT-PLAN.md)
 
-`PORT-MANIFEST.json` (regenerate with `python3 cpp/gateway/tools/manifest.py` from
-the repository root) lists every module, its imports, its direct tests, and its
-C++ paths.
+`PORT-MANIFEST.json` lists each module, its imports, its direct tests and its
+C++ paths. `tools/cmake-sources.py` checks the historical modules against
+`PORTED.txt`, includes the native adapters and validates the complete source list.
 
 ## Host safety (this machine serves production)
 

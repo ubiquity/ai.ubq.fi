@@ -13,6 +13,7 @@
 #include "uos/rt/env.hpp"
 #include "uos/rt/fetch.hpp"
 #include "uos/rt/json.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/regex.hpp"
 #include "uos/rt/stream.hpp"
 #include "uos/rt/string.hpp"
@@ -160,6 +161,35 @@ ASYNC_TEST("HTTP admin handler failures are marked no-store") {
   }
   auto stopping1_ = shutdown(server);
   co_await std::move(stopping1_);
+}
+
+ASYNC_TEST("HTTP ingress delivers the exact body limit and sends 413 above it") {
+  const ScopedLoopbackFetch loopback;
+  int dispatched = 0;
+  const HttpServer server = serveHttp(loopbackOptions(), [&dispatched](rt::Request request, ServeHandlerInfo) -> rt::Task<rt::Response> {
+    ++dispatched;
+    auto reading = request.bytes();
+    const auto bytes = co_await std::move(reading);
+    co_return rt::Response(rt::BodyInit(std::to_string(bytes.size())));
+  });
+  const auto address = co_await server.ready.wait();
+  const auto url = origin(address) + "/body";
+  for (const std::size_t extra : {0u, 1u}) {
+    rt::RequestInit post;
+    post.method = "POST";
+    post.body = rt::BodyInit(rt::Bytes(rt::limits::kHttpBodyBytes + extra, 'a'));
+    auto sending = fetchWith(url, std::move(post));
+    const auto response = co_await std::move(sending);
+    EXPECT_EQ(response.status(), extra == 0 ? 200 : 413);
+    if (extra == 0) {
+      auto reading = response.text();
+      const auto text = co_await std::move(reading);
+      EXPECT_EQ(text, std::to_string(rt::limits::kHttpBodyBytes));
+    }
+  }
+  EXPECT_EQ(dispatched, 1);
+  auto stopping = shutdown(server);
+  co_await std::move(stopping);
 }
 
 ASYNC_TEST("HTTP shutdown closes an idle keep-alive socket instead of waiting for systemd") {

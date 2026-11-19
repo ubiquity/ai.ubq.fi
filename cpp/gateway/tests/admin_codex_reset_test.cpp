@@ -1,4 +1,5 @@
 // Links: tests/admin_codex_reset_test.cpp
+// src/provider/gemini.cpp src/admin/gemini_quota.cpp
 // src/admin/api_key_audit.cpp src/admin/api_key_mutations.cpp src/admin/api_keys.cpp src/admin/capacity_observation_sync.cpp src/admin/chart_source_proxy.cpp src/admin/claude_code.cpp src/admin/codex.cpp src/admin/codex_reset.cpp src/admin/defaults.cpp src/admin/error_log.cpp
 // src/admin/kernel.cpp src/admin/sentinel_incident.cpp src/agent_messages.cpp src/analytics.cpp src/api_key_policy.cpp src/api_keys.cpp src/auth/index.cpp src/auth/local_admin.cpp src/auth/local_development_key.cpp src/auth/passkeys.cpp
 // src/auth/passport.cpp src/auth/passport_sessions.cpp src/auth/relay.cpp src/authority/native_api_key.cpp src/authority/native_api_key_audit.cpp src/authority/native_api_key_policy.cpp src/authority/native_codex.cpp src/authority/native_codex_429.cpp src/authority/native_codex_capacity.cpp src/authority/native_codex_contracts.cpp
@@ -91,6 +92,7 @@ namespace {
 #include "uos/admin/codex_reset.hpp"
 #include "uos/codex/routing_state.hpp"
 #include "uos/rt/json.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/test_async.hpp"
 namespace rt = uos::rt;
 namespace json = uos::json;
@@ -104,7 +106,7 @@ namespace {
 }
 ASYNC_TEST("admin consume accepts only stable account identity") {
   harness::CredentialScope scope;
-  const std::vector<json::value> values{json::object{}, json::object{{"account_id_hash", "bad"}}, json::object{{"account_id_hash", std::string(64, 'a')}, {"access_token", "forbidden"}}, json::object{{"account_id_hash", std::string(64, 'a')}, {"slot", 1}}};
+  const std::vector<json::value> values{json::object{}, json::object{{"account_id_hash", "bad"}}, json::object{{"account_id_hash", std::string(64, 'a')}, {"access_token", "forbidden"}}, json::object{{"account_id_hash", std::string(64, 'a')}, {"slot", 1}}, json::object{{"account_id_hash", std::string(rt::limits::kRegexSubjectBytes + 1, 'a')}}};
   for (const auto& value : values) { auto handling = handleAdminCodexResetConsume(request(value)); const auto response = co_await std::move(handling); EXPECT_EQ(response.status(), 400); }
 }
 ASYNC_TEST("admin consume reports verified matching account only after promotion") {

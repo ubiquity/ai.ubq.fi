@@ -9,6 +9,7 @@
 #include "uos/rt/fs.hpp"
 #include "uos/rt/json.hpp"
 #include "uos/rt/kv_sqlite.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/process.hpp"
 #include "uos/rt/regex.hpp"
 #include "uos/rt/sqlite.hpp"
@@ -408,6 +409,35 @@ ASYNC_TEST("the open requeues abandoned queue messages and delivers exhausted on
   EXPECT_EQ(scalarText(database, "SELECT group_concat(id) FROM queue_running"), std::string("alive"));
   EXPECT_EQ(scalarText(database, "SELECT v_encoding || ' ' || version FROM kv WHERE k = x'026465616400'"), std::string("1 1"));
   database.close();
+}
+
+ASYNC_TEST("SQLite queue recovery accepts stored JSON at the byte limit and refuses the next byte") {
+  double clock = 1'700'000'000'000;
+  for (const std::size_t extra : {0u, 1u}) {
+    const Directory directory;
+    {
+      SqliteKv kv(directory.file(), steps([&clock] { return clock; }));
+      kv.close();
+    }
+    {
+      const sqlite::Database database(directory.file());
+      const auto insert = database.query("INSERT INTO queue_running (deadline, id, data, backoff_schedule, keys_if_undelivered) VALUES (?, ?, ?, ?, ?)");
+      std::string schedule = "[]";
+      schedule.resize(limits::kJsonDocumentBytes + extra, ' ');
+      const auto job = kvJscSerialize(KvValue("job"));
+      insert.run(std::int64_t{1'699'999'999'000}, "fixture", job, schedule, "[[2,100,101,97,100,0]]");
+      database.close();
+    }
+    SqliteKv kv(directory.file(), steps([&clock] { return clock; }));
+    auto reading = kv.get(KvKey{"dead"});
+    if (extra == 0) {
+      const auto row = co_await std::move(reading);
+      EXPECT_EQ(row.value, KvValue("job"));
+    } else {
+      EXPECT_REJECTS_MESSAGE(std::move(reading), JsError, "Database is closed.");
+    }
+    kv.close();
+  }
 }
 
 ASYNC_TEST("the SDK store's list keeps its cursor at the last entry once the scan ends") {

@@ -21,8 +21,11 @@
 #include "uos/rt/regex.hpp"
 
 #include "uos/rt/error.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/prelude.hpp"
 #include "uos/rt/test.hpp"
+#include "src/rt/regex_internal.hpp"
+#include "third_party/quickjs-libregexp/libregexp.h"
 
 #include <atomic>
 #include <cstdio>
@@ -639,7 +642,7 @@ TEST("construction: SyntaxError text, flags, limits") {
   for (int i = 0; i < 254; ++i) captures += "()";
   EXPECT_EQ(rt::Regex(captures).captureCount(), 254u);
   EXPECT_THROWS_MESSAGE(rt::Regex(captures + "()"), rt::SyntaxError, "too many captures");
-  while (captures.size() < 65536) captures += "()";
+  while (captures.size() < rt::limits::kRegexPatternBytes) captures += "()";
   EXPECT_THROWS_MESSAGE(rt::Regex(captures), rt::SyntaxError, "too many captures");
   EXPECT_THROWS_MESSAGE(rt::Regex(captures + "()"), rt::RangeError, "regular expression pattern is too large");
   const std::string nestedCaptures = std::string(500, '(') + std::string(500, ')');
@@ -658,8 +661,8 @@ TEST("construction: SyntaxError text, flags, limits") {
   for (int i = 0; i < 40; ++i) nested += "(?:";
   EXPECT(rt::Regex(nested + "x" + std::string(40, ')')).test("x"));
   nested.clear();
-  for (int i = 0; i < 2000; ++i) nested += "(?:";
-  EXPECT_THROWS_MESSAGE(rt::Regex(nested + "x" + std::string(2000, ')')), rt::RangeError, "stack overflow");
+  for (int i = 0; i < 1000; ++i) nested += "(?:";
+  EXPECT_THROWS_MESSAGE(rt::Regex(nested + "x" + std::string(1000, ')')), rt::RangeError, "stack overflow");
 #endif
 }
 
@@ -832,14 +835,14 @@ TEST("re-entrancy: a callback may use the regex it is called from") {
   EXPECT_EQ(agree.load(), 400);
 }
 
-TEST("backtracking memory: deep searches give up where JavaScriptCore does") {
+TEST("long backtracking searches retain accepted inputs and reject oversized subjects") {
   // Bun: /^(?:a|b)*$/.test("a".repeat(1e6)) is true, with 2e6 it is false (backtracking memory).
   static const rt::Regex alternation("^(?:a|b)*$", "");
   EXPECT(alternation.test(std::string(1000000, 'a')));
 #if 0  // Original Bun behavior on an exhausted search.
   EXPECT(!alternation.test(std::string(2000000, 'a')));
 #else
-  EXPECT_THROWS_MESSAGE(alternation.test(std::string(2000000, 'a')), rt::RangeError, "regular expression memory limit exceeded");
+  EXPECT_THROWS_MESSAGE(alternation.test(std::string(2000000, 'a')), rt::RangeError, "regular expression subject is too large");
 #endif
 #if 0  // Original Bun behavior for a long character-class repeat.
   // Single-character repeats keep no per-character state and have no such limit.
@@ -847,14 +850,54 @@ TEST("backtracking memory: deep searches give up where JavaScriptCore does") {
 #else
   const rt::Regex characterClass("^[ab]*$");
   EXPECT(characterClass.test(std::string(1000000, 'a')));
-  EXPECT_THROWS_MESSAGE(characterClass.test(std::string(4000000, 'a')), rt::RangeError, "regular expression memory limit exceeded");
+  EXPECT_THROWS_MESSAGE(characterClass.test(std::string(4000000, 'a')), rt::RangeError, "regular expression subject is too large");
 #endif
+}
+
+TEST("regex pattern and subject byte limits admit their exact boundaries") {
+  std::string pattern(rt::limits::kRegexPatternBytes, 'a');
+  EXPECT(rt::Regex(pattern).test(pattern));
+  pattern.push_back('a');
+  EXPECT_THROWS_MESSAGE(rt::Regex(pattern), rt::RangeError, "regular expression pattern is too large");
+
+  const rt::Regex anchored("^a");
+  std::string subject(rt::limits::kRegexSubjectBytes, 'a');
+  EXPECT(anchored.test(subject));
+  subject.push_back('a');
+  EXPECT_THROWS_MESSAGE(anchored.test(subject), rt::RangeError, "regular expression subject is too large");
 }
 
 TEST("execution budget rejects an unfinished match") {
   const rt::Regex pattern("^(?:a|aa)*b$");
   EXPECT_THROWS_MESSAGE(pattern.test(std::string(52, 'a')), rt::RangeError, "regular expression execution limit exceeded");
   EXPECT(pattern.test("aab"));
+}
+
+TEST("regexp engine hooks enforce the shared deadline and retain the allocation ceiling") {
+  using Limits = rt::regex_detail::Limits;
+  const auto before = Limits::Clock::now();
+  Limits budget;
+  const auto after = Limits::Clock::now();
+  EXPECT(budget.deadline >= before + rt::limits::kRegexDeadline);
+  EXPECT(budget.deadline <= after + rt::limits::kRegexDeadline);
+  const auto compileStart = Limits::Clock::now();
+  const Limits compilation(rt::limits::kRegexCompileDeadline);
+  const auto compileEnd = Limits::Clock::now();
+  EXPECT(compilation.deadline >= compileStart + rt::limits::kRegexCompileDeadline);
+  EXPECT(compilation.deadline <= compileEnd + rt::limits::kRegexCompileDeadline);
+  const rt::Regex credentialKey(R"re(\b(?=\w*(?:key|token|secret|password))(?=(\w*))\1(?:[.-]\w*){0,16}(["']?)\s*(?=[:=]))re", "gi");
+  EXPECT_EQ(credentialKey.program().matchDeadline.count(), (rt::limits::kRegexDeadline * 5).count());
+  EXPECT_EQ(rt::Regex("key", "gi").program().matchDeadline.count(), rt::limits::kRegexDeadline.count());
+  budget.deadline = Limits::Clock::time_point::max();
+  EXPECT_EQ(lre_check_timeout(&budget), 0);
+  budget.deadline = Limits::Clock::now();
+  EXPECT_EQ(lre_check_timeout(&budget), 1);
+
+  constexpr std::size_t maxAllocation = 72 * 1024 * 1024;
+  const std::unique_ptr<void, decltype(&std::free)> memory(lre_realloc(&budget, nullptr, maxAllocation), std::free);
+  EXPECT(memory);
+  const std::unique_ptr<void, decltype(&std::free)> over(lre_realloc(&budget, nullptr, maxAllocation + 1), std::free);
+  EXPECT(!over);
 }
 
 TEST("Unicode sets, named captures, and UTF-16 indices") {
@@ -893,4 +936,37 @@ TEST("image data URL captures survive large Base64 payloads") {
   EXPECT(std::string_view(*match->captures[2]) == std::string_view(subject).substr(prefix.size()));
   subject.back() = '!';
   EXPECT(!pattern.test(subject));
+}
+
+TEST("the fixed image data URL pattern retains the encoded image allowance") {
+  const rt::Regex image(R"(^data:([^;,]+);base64,([a-z0-9+/]*={0,2})$)", "iu");
+  std::string subject = "DATA:IMAGE/PNG;BASE64,";
+  subject.resize(rt::limits::kImageRegexSubjectBytes, 'A');
+  EXPECT(image.test(subject));
+  subject.push_back('A');
+  EXPECT_THROWS_MESSAGE(image.test(subject), rt::RangeError, "regular expression subject is too large");
+}
+
+TEST("the fixed stored base64 pattern retains its encoded byte allowance and padding rules") {
+  const rt::Regex standard(R"(^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$)");
+  std::string subject(rt::limits::kBase64InputBytes, 'A');
+  subject.back() = '=';
+  EXPECT(standard.test(subject));
+  subject.back() = '-';
+  EXPECT(!standard.test(subject));
+  subject.push_back('A');
+  EXPECT_THROWS_MESSAGE(standard.test(subject), rt::RangeError, "regular expression subject is too large");
+}
+
+TEST("the base64 alphabet replacements admit encoded input at the byte limit") {
+  rt::Regex dash("-", "g");
+  std::string input(rt::limits::kBase64InputBytes, 'A');
+  input.back() = '-';
+  dash.lastIndex = 5;
+  const auto translated = rt::replace(input, dash, "+");
+  EXPECT_EQ(translated.size(), input.size());
+  EXPECT_EQ(translated.back(), '+');
+  EXPECT_EQ(dash.lastIndex, 0u);
+  input.push_back('A');
+  EXPECT_THROWS_MESSAGE(rt::replace(input, dash, "+"), rt::RangeError, "regular expression subject is too large");
 }
