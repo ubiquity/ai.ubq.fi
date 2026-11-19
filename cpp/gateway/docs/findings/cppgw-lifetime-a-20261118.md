@@ -63,7 +63,6 @@ sites and ranked proposed fixes reconcile, or report exactly what remains.
 - [x] `src/rt/websocket_internal.hpp`
 - [x] `src/rt/websocket_socket.cpp`
 
-
 ## Tool receipts
 
 The restored runner is Ubuntu 24.04.5 LTS on Linux ARM64. Clang and clang-tidy
@@ -419,14 +418,14 @@ Reviewed plaintext and TLS byte storage, synchronous callback reentrancy, Asio i
 
 Reviewed **30/30 files** and **180 site groups**. A site group can have multiple line anchors and hazard classes under the same verdict.
 
-| Hazard class | DEFECT | SAFE | UNCLEAR |
-| --- | ---: | ---: | ---: |
-| a. Capturing coroutine closure | 5 | 20 | 0 |
-| b. Borrowed coroutine parameter or receiver | 15 | 113 | 3 |
-| c. Callback ownership or cycle | 22 | 111 | 6 |
-| d. Container invalidation | 5 | 76 | 0 |
-| e. GCC 12 await-expression rule | 5 | 13 | 1 |
-| **Unique site groups** | 29 | 144 | 7 |
+| Hazard class                                | DEFECT | SAFE | UNCLEAR |
+| ------------------------------------------- | -----: | ---: | ------: |
+| a. Capturing coroutine closure              |      5 |   20 |       0 |
+| b. Borrowed coroutine parameter or receiver |     15 |  113 |       3 |
+| c. Callback ownership or cycle              |     22 |  111 |       6 |
+| d. Container invalidation                   |      5 |   76 |       0 |
+| e. GCC 12 await-expression rule             |      5 |   13 |       1 |
+| **Unique site groups**                      |     29 |  144 |       7 |
 
 ### 1. A-WEBSOCKET-WRITE-BUFFER (native write-buffer lifetime on WebSocket request paths) — Closing a WebSocket releases the native write buffer before completion
 
