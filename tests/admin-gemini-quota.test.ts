@@ -117,6 +117,30 @@ test("the documented hook runs silently outside the checkout and saves only chan
   });
 });
 
+for (const seconds of [0, EVENT.quota.weekly.reset_in_seconds]) {
+  test(`the hook coalesces identical ${seconds}-second countdowns until the freshness interval expires`, async () => {
+    await withStatusLine(async (directory, send) => {
+      const event = { ...EVENT, quota: { weekly: { ...EVENT.quota.weekly, reset_in_seconds: seconds } } };
+      const previous = { version: 1, observed_at_ms: Date.now() - 3_000, ...projectAntigravityStatusLine(event) };
+      const destination = join(directory, GEMINI_QUOTA_FILE);
+      await writeFile(destination, JSON.stringify(previous), { mode: 0o600 });
+      const initialInode = (await lstat(destination)).ino;
+
+      await Promise.all([send(event), send(event)]);
+      assert.deepEqual(await readGeminiQuotaSnapshot(directory), previous);
+      assert.equal((await lstat(destination)).ino, initialInode);
+
+      const expired = { ...previous, observed_at_ms: Date.now() - 31_000 };
+      await writeFile(destination, JSON.stringify(expired));
+      await send(event);
+      const refreshed = await readGeminiQuotaSnapshot(directory);
+      assert.equal(refreshed.status, "observed");
+      assert.ok(refreshed.observed_at_ms > expired.observed_at_ms);
+      assert.deepEqual(refreshed.quota, event.quota);
+    });
+  });
+}
+
 test("the hook uses the current signed-in quota during authentication and clears it when email disappears", async () => {
   await withStatusLine(async (directory, send) => {
     await send(EVENT);
@@ -184,7 +208,7 @@ test("the hook saves reset changes and transitions in fraction, amount, and disa
     const previousAt = Date.now() - 3_000;
     const previous = { version: 1, observed_at_ms: previousAt, ...projectAntigravityStatusLine(EVENT) };
     await writeFile(join(directory, GEMINI_QUOTA_FILE), JSON.stringify(previous), { mode: 0o600 });
-    await send(EVENT);
+    await send({ ...EVENT, quota: { weekly: { ...EVENT.quota.weekly, reset_in_seconds: EVENT.quota.weekly.reset_in_seconds + 60 } } });
     const shifted = await readGeminiQuotaSnapshot(directory);
     assert.equal(shifted.status, "observed");
     assert.ok(shifted.observed_at_ms > previousAt);
