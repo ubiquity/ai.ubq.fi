@@ -1,6 +1,5 @@
 #pragma once
-// Built-in native Linux confinement. The bootstrap also verifies the separate,
-// packaged Landlock/seccomp addon from packaging/confinement/permissions-native.c.
+// Built-in Linux ARM64 Landlock and seccomp confinement.
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -12,11 +11,6 @@
 #endif
 
 namespace uos::runtime::permissions_linux {
-  struct LinuxPermissionsArtifact {
-    std::string path = {};
-    std::string sha256 = {};
-  };
-
   struct LinuxPermissionsSupport {
     std::string architecture = {};
     std::string kernel = {};
@@ -62,18 +56,17 @@ namespace uos::runtime::permissions_linux {
   void restrictLinuxChildThread(const LinuxPermissions& permissions);
 
   /** Query only: this does not restrict the caller or change host configuration. */
-  LinuxPermissionsSupport getLinuxPermissionsSupport(const std::optional<LinuxPermissionsArtifact>& artifact = std::nullopt);
+  LinuxPermissionsSupport getLinuxPermissionsSupport();
 
   /**
    * Irreversible, Linux ARM64 application-child boundary. Invoke before product imports or
    * unrelated file opens; Landlock cannot revoke descriptors opened before enforcement or
    * hide file metadata. ABI 8 is required by default. The opt-in admits ABI 3–7 only from
    * single-threaded bootstrap, so every subsequent thread inherits the ruleset.
-   * The native artifact must already be built, hashed and packaged in the immutable release.
    * No compiler, dependency installation, FFI fallback, host configuration, or service change
    * runs here. Enforcement failure after an irreversible transition terminates this child.
    */
-  LinuxPermissionsReceipt applyLinuxPermissions(const LinuxPermissions& permissions, const std::optional<LinuxPermissionsArtifact>& artifact = std::nullopt);
+  LinuxPermissionsReceipt applyLinuxPermissions(const LinuxPermissions& permissions);
 
   namespace detail {
     struct LandlockRuleset {
@@ -95,6 +88,6 @@ namespace uos::runtime::permissions_linux {
 #endif
 
     // Lower the real kernel's ABI for a test child. There is no launch-time ABI override.
-    LinuxPermissionsReceipt applyLinuxPermissionsWithAbiCap(const LinuxPermissions& permissions, const LinuxPermissionsArtifact& artifact, int abiCap);
+    LinuxPermissionsReceipt applyLinuxPermissionsWithAbiCap(const LinuxPermissions& permissions, int abiCap);
   }
 }

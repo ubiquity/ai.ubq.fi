@@ -7,6 +7,7 @@
 - [ ] Build and run the selected State A request tests.
 - [x] Inventory tracked language sources, toolchain commands and runtime dependencies.
 - [x] Remove the historical comparison and formatter.
+- [x] Call the linked Linux confinement implementation directly.
 - [ ] Remove unnecessary package runtime artifacts and offline tooling.
 - [ ] Update CI and current operating documents.
 - [ ] Add the ARM64 cutover checklist and runtime environment table.
@@ -35,3 +36,5 @@ Local verification uses qualified native dependencies and the repository's loopb
 - The existing opt-in Gemini provider executes the owner-installed `agy` binary, and confines child execution to that file and the system ARM64 loader. The gateway, workflow and package do not install that executable or a language runtime for it.
 
 Removed the paired harness and pins, comparison modes from the smoke and benchmark drivers, and the root formatter dependencies. The native HTTP smoke and JSON, regex and request-path measurements remain. The hook uses Git whitespace checks. Parsed all affected Python with `ast.parse` and ran `git diff --check`.
+
+The confinement change keeps the same Landlock and seccomp implementations and policy. It removes the lookup of a separate, never-loaded helper from the confinement API. Three helper-file-only cases were retired. The kernel, strict and reduced boundary, and Gemini child checks remain. Clang 21 strict syntax checks and the registration gate passed.

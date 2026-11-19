@@ -331,7 +331,7 @@ namespace uos::runtime::startup {
       if (::fsync(directory) != 0) refuse("fixture state directory durability failed");
     }
 
-    void enforce(const fs::path& package, const fs::path& state, const permissions_linux::LinuxPermissionsArtifact& artifact, int port,
+    void enforce(const fs::path& package, const fs::path& state, int port,
                  const std::optional<std::string>& origin) {
       auto profiles = permissions_linux::gatewayLinuxPermissions(package.string(), state.string());
       auto& permissions = profiles.gateway;
@@ -341,7 +341,7 @@ namespace uos::runtime::startup {
         else ports.connectPorts = {53, 443}; // DNS TCP fallback and the gateway's HTTPS/WSS upstreams.
         permissions.allowReducedConfinement = std::move(ports);
       }
-      const auto receipt = permissions_linux::applyLinuxPermissions(permissions, artifact);
+      const auto receipt = permissions_linux::applyLinuxPermissions(permissions);
       if (!receipt.processThreadSync || (!receipt.filesystemThreadSync && !permissions.allowReducedConfinement))
         refuse("kernel confinement did not produce both enforcement receipts");
       if (profiles.antigravity) {
@@ -449,7 +449,6 @@ namespace uos::runtime::startup {
     const fs::path permissionsPath = package / "native/permissions/linux-arm64.node";
     requireArm64Elf(permissionsPath);
     requireHash(permissionsInfo, "sha256", permissionsPath);
-    const permissions_linux::LinuxPermissionsArtifact artifact{permissionsPath.string(), string(permissionsInfo, "sha256")};
     const std::string hostname = string(launch, "hostname");
     const auto portValue = rt::getNumber(launch, "port");
     if (hostname != "127.0.0.1" || !portValue || !std::isfinite(*portValue) || *portValue < 0 || *portValue > 65535 || std::floor(*portValue) != *portValue)
@@ -470,7 +469,7 @@ namespace uos::runtime::startup {
     }
     // Load the existing operator-selected CA bundles while startup can read them.
     rt::detail::tls::defaultContext();
-    enforce(package, state, artifact, port, origin);
+    enforce(package, state, port, origin);
     if (newFixture) createFixtureBinding(data, binding);
     paths::setResourceRoot(package.string());
     if (::chdir(state.c_str()) != 0) refuse("private state working directory is unavailable");

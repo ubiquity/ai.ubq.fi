@@ -31,7 +31,6 @@ namespace {
     std::string home = root + "/home";
     std::string agy = home + "/.local/bin/agy";
     std::string cliState = home + "/.gemini/antigravity-cli";
-    LinuxPermissionsArtifact artifact;
 
     Fixture() {
       for (const auto& dir : {package, workspace, home + "/.local/bin", cliState}) rt::fs::mkdirSync(dir, {.recursive = true, .mode = 0700});
@@ -41,9 +40,6 @@ namespace {
       }
       // The integration checks only the metadata of the CLI-owned file.
       rt::fs::writeFileSync(cliState + "/antigravity-oauth-token", "", {.flag = "wx", .mode = 0600});
-      artifact.path = root + "/linux-arm64.node";
-      rt::fs::writeFileSync(artifact.path, "permission artifact fixture");
-      artifact.sha256 = rt::crypto::createHash("sha256").update(rt::fs::readFileSync(artifact.path)).digest("hex");
     }
     ~Fixture() { rt::fs::rmSync(root, {.recursive = true, .force = true}); }
   };
@@ -104,7 +100,7 @@ TEST("executable grants require an explicit child-process opt-in") {
   permissions.execute = {fixture.agy};
   bool rejected = false;
   try {
-    static_cast<void>(applyLinuxPermissions(permissions, fixture.artifact));
+    static_cast<void>(applyLinuxPermissions(permissions));
   } catch (const rt::TypeError&) {
     rejected = true;
   }
@@ -127,7 +123,7 @@ TEST("Antigravity denies direct execution of a different ELF and limits loader v
   ASSERT(child >= 0);
   if (child == 0) {
     try {
-      const auto receipt = applyLinuxPermissions(profiles.gateway, fixture.artifact);
+      const auto receipt = applyLinuxPermissions(profiles.gateway);
       require(receipt.processThreadSync && receipt.filesystemThreadSync, "Missing opt-in confinement receipt");
 
       pid_t unexpected = -1;
