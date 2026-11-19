@@ -102,7 +102,8 @@ namespace uos::runtime::http_upgrade {
       std::optional<websocket::WebSocketModule> module;
       if (!state->stopping) {
         const rt::Promise<websocket::WebSocketModule> loading = websocket::loadWebSocketModule();
-        module = co_await loading.wait();
+        auto loaded = co_await loading.wait();
+        module.emplace(std::move(loaded));
         if (controller.signal().aborted() || socket->destroyed()) co_return;
       }
       // Even the cached module resumes on a microtask. Check before the synchronous handoff.

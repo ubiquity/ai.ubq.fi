@@ -166,9 +166,8 @@ bash "$scratch/run.sh" 2 python3 -B "$scratch/focused.py" "$selection" --config 
 bash "$scratch/run.sh" 2 python3 -B "$scratch/focused.py" "$selection" --config release
 ```
 
-The focused release selection passed 4 binaries and 88/88 cases in 357.486 s.
-The matching ASan selection was still compiling when the await changes were
-committed.
+The focused selections passed 4 binaries and 88/88 cases in 357.486 s on
+release and 616.335 s under ASan/UBSan/LSan.
 
 ## Unclear and adjacent findings
 
@@ -216,5 +215,11 @@ logs, incremental case totals, and a receipt with Git and input hashes. The
 partially warm first build is expected to take tens of minutes on four cores.
 Subsequent shards reuse production objects. A failing gate preserves its log for
 diagnosis and leaves the branch unpublished. Final receipts are pending.
+
+The D06 follow-up (`fix(cpp): name the loaded WebSocket module before storing it`)
+names the value returned by the module await before moving it into the optional.
+The lifetime fixture passed 8/8 cases in 11.112 s under ASan and 7.327 s on
+release. The earlier full release build was interrupted to bind final receipts
+to the corrected tree.
 
 [Area B audit](cppgw-lifetime-b-20261118.md)
