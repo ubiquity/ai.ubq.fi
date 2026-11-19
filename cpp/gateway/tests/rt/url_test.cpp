@@ -1,3 +1,4 @@
+#include "uos/rt/limits.hpp"
 #include "uos/rt/url.hpp"
 #include "uos/rt/test.hpp"
 #include <cstdio>
@@ -12,6 +13,39 @@ using namespace std::string_view_literals;
 using uos::rt::InvalidURLError;
 using uos::rt::URL;
 using uos::rt::URLSearchParams;
+
+TEST("Ada URL and authority parsing admit the exact byte ceilings") {
+  namespace limits = uos::rt::limits;
+  std::string url = "https://example.test/";
+  url.resize(limits::kUrlBytes, 'a');
+  EXPECT(URL::canParse(url));
+  url.push_back('a');
+  EXPECT(!URL::canParse(url));
+  EXPECT_THROWS(URL(url), InvalidURLError);
+
+  constexpr std::string_view host = "@example.test/path";
+  url = "https://" + std::string(limits::kUrlAuthorityBytes - host.find('/'), 'a') + std::string(host);
+  EXPECT(URL::canParse(url));
+  url.insert(8, 1, 'a');
+  EXPECT(!URL::canParse(url));
+}
+
+TEST("Ada query parsing bounds bytes and the number of entries") {
+  namespace limits = uos::rt::limits;
+  std::string query = "q=";
+  query.resize(limits::kUrlQueryBytes, 'a');
+  EXPECT_EQ(URLSearchParams(query).size(), 1u);
+  query.push_back('a');
+  EXPECT_THROWS(URLSearchParams(query), uos::rt::TypeError);
+
+  query = "q=a";
+  for (std::size_t i = 1; i < limits::kUrlQueryPairs; ++i) query += "&q=a";
+  URLSearchParams parsed(query);
+  EXPECT_EQ(parsed.size(), limits::kUrlQueryPairs);
+  EXPECT_THROWS(parsed.append("q", "a"), uos::rt::TypeError);
+  EXPECT_THROWS(URLSearchParams(query + "&q=a"), uos::rt::TypeError);
+  EXPECT(!URL::canParse("https://example.test/?" + query + "&q=a"));
+}
 
 namespace {
   struct UrlVector {

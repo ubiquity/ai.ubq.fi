@@ -31,6 +31,12 @@ namespace uos::rt::limits {
   // Stored replay envelopes can exceed the ordinary HTTP body limit.
   inline constexpr std::size_t kStoredGzipBytes = 64 * 1024 * 1024;
 
+  // Image edits accept remote references of up to 20 Mi UTF-16 code units.
+  inline constexpr std::size_t kUrlBytes = 60 * 1024 * 1024;
+  inline constexpr std::size_t kUrlAuthorityBytes = kHttpHeaderBlockBytes;
+  inline constexpr std::size_t kUrlQueryBytes = kHttpBodyBytes;
+  inline constexpr std::size_t kUrlQueryPairs = 4096;
+
   // Covers image data and the smaller base64 envelopes used by stored captures.
   inline constexpr std::size_t kBase64DecodedBytes = kImageEditInputBytes;
   inline constexpr std::size_t kBase64InputBytes = ((kBase64DecodedBytes + 2) / 3) * 4;
