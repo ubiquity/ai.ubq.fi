@@ -168,7 +168,42 @@ containing a copy of the root `package.json` and `bun.lock`, I ran
 `bun --no-env-file install --frozen-lockfile --ignore-scripts` and
 `bun --no-env-file --no-install run format:check -- "$repo/cpp/gateway/docs/findings/cppgw-drift-port-20261119.md"`.
 
-ASan and Release execution are in progress. The receipts will be recorded here after completion.
+## Native test results
+
+Release shard 3/4 passed all 113 binaries and 1,486 cases. The release shard and focused filters covered
+127 distinct binaries and 1,633 cases after deduplication. The sanitizer filters passed 21 binaries
+and 228 cases, each with its namespace proof and zero ASan, UBSan or LSan diagnostics. All 369 production
+translation units compiled in both profiles. The cold release object phase took 2,798.739 seconds and
+linking and execution took 35.350 seconds. The cold sanitizer object phase took 2,658.520 seconds.
+The builds ran with two jobs per profile alongside the portable package build for part of the run.
+
+The release shard and first sanitizer run recorded commit `e509992d2f2c377e897fe4dd3d870d34107ae612`
+and tree `16f1432c8ad821cc97eed2829121874dc0166c9b`. The subsequent filters recorded the conformance
+report commit `b47b4f90347a3aefa5d581bc5f09086f78eca024` and tree `8c7b6defb5c987d2cb6035c401267058d3e27d1f`.
+All receipts recorded the same CI input SHA-256 before and after execution.
+
+```text
+e37a74363813bf47ba6d427dfe6541ae75c576e3553d65531614e8e07548224c
+```
+
+`python3 -B "$scratch/summarize-ci.py" "$scratch/ci-receipts"` verified the input digests, candidate
+identities and case counts. The receipt files use the gate names below.
+
+| Gate                           | Passing binaries | Passing cases | Wall seconds | Receipt SHA-256                                                    |
+| ------------------------------ | ---------------: | ------------: | -----------: | ------------------------------------------------------------------ |
+| `release-shard-3`              |              113 |         1,486 |    2,834.638 | `e61a91b79fbb108f189ba78eafeabfffdb868b073ea1c43c890cd7531d0c1eca` |
+| `release-catalog`              |               11 |           125 |       48.324 | `53f36184621474875f87b7e668664802c61fbe4198e14aaaea51b4e561bf6a28` |
+| `release-model_metadata`       |                1 |            17 |        8.992 | `ddb7295f0b122b837ad16323302a33f0808c5304017651ca049494c3891c72ff` |
+| `release-passport`             |                3 |            22 |       14.350 | `5596d2b55c71c34bc4d78cec534dd0eaa218d26d139262d30f663c151349478d` |
+| `release-recent_model_context` |                2 |             6 |        3.764 | `c8257d18149843e2b3a9bf5203a1bf228dabd3f7e2bc0f469cb67b8f187e66f1` |
+| `asan-recent_model_context`    |                2 |             6 |    2,659.750 | `e423ec7b3c718b49c519efe07344162ab3b3811fd735294f142d24159b7b138d` |
+| `asan-catalog`                 |               11 |           125 |      103.967 | `dd2fd54b7f1c6348605f36af16cd1b0f398bf8c4bf8150d799efeb0cede5cb72` |
+| `asan-model_metadata`          |                1 |            17 |       12.512 | `9fab98a1fbfa5e21645e3b75d636159de695b8b8dcb62bb4b97017be160cdedb` |
+| `asan-models_metadata`         |                1 |             4 |        8.453 | `1a03a8df734d70deddb02e27e598c69c5c8a6054fc3515fc4d6e43d12835b0bd` |
+| `asan-passport`                |                3 |            22 |       34.243 | `db5d8e1869b2481807b8b4ba102b60ef338e4be6960f366ec826191849f9994b` |
+| `asan-deepseek_waterfall`      |                1 |            13 |       14.866 | `3a9cf70a9d44c08b31db7ffef4695baf4dd5bd3f0a3faa96820eeacb95f704c9` |
+| `asan-transport_normalization` |                1 |            36 |       15.726 | `c2c4af18bf4aba7844fcf510d87055700a556d9ba84aa0e5acef1265659f87e0` |
+| `asan-input_normalization`     |                1 |             5 |       11.393 | `81d427d313fbfbc0daf0547b3fae94050545ec1cba20362af67f0e2dca642fe4` |
 
 ## Paired conformance
 
@@ -241,3 +276,15 @@ before dispatch. [Earlier validation findings](cppgw-conformance-e2e-20261118.md
 `e509992d2f2c377e897fe4dd3d870d34107ae612`. I ran it via `"$scratch/isolated-command" committed-review`
 with the test network boundary and a 40-second timeout. The review exited 124 after connection retries
 and produced no findings. Its log is `$scratch/review.log`.
+
+## Summary
+
+Ported DeepSeek compaction and the Passport callback repair through production commit `9353aa20`.
+The DeepSeek waterfall advertises an 800,000-token window and a 720,000-token compaction limit across catalog refreshes.
+Passport returns 401 for rejected exchanges and 502 for upstream server failures, clearing temporary login cookies in both cases.
+The Antigravity changes belong to their separate port.
+
+ARM64 release shard 3/4 passed all 113 binaries and 1,486 cases. All focused release and sanitizer checks passed.
+The paired run against production passed 184 of 186 cases with the original smoke fixture restored in scratch.
+The other two were the known shared validation failures. The oracle pin stays historical because `development`
+lacks that fixture. The isolated model review timed out.
