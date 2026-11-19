@@ -346,8 +346,11 @@ scope. The portable build now passes its archived source commit into CMake,
 which validates it and binds it to the release constant at compile time.
 The Debian verifier checks the sealed build's exact Git SHA and
 `vps-<full-sha>` in the health JSON and headers, including after reopening.
-The standard CI test driver still builds the development constant. Final
-package, paired, replay and test receipts will be refreshed for this change.
+The standard CI test driver still builds the development constant. The
+negative configure check used
+`cmake -S cpp/gateway -B "$out/build" -G Ninja -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 -DUOS_GATEWAY_RELEASE_COMMIT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaz`
+with a clean environment and `UOS_GATEWAY_BUILD_EVIDENCE=invalid-release-check`.
+CMake refused the invalid SHA before building.
 
 The first stamped build at `3946c4a3227fd8966130010b810de25c689a1498`, tree
 `c053a41ed19f107e88c1977e4906313c9c3e2f13`, passed the four Debian proofs
@@ -367,4 +370,97 @@ matches the pair only when both are correct. Missing or incorrect values
 still fail. Raw identity fields stay in the receipt. The two application
 validation assertions are unchanged. `python3 -B cpp/gateway/conformance/compare_test.py`
 passed 11 controls in a credential-free network namespace, including the new
-wrong-SHA and missing-field checks. The final paired run is pending.
+wrong-SHA and missing-field checks.
+
+## Final package and paired replay
+
+The commands in [Portable package and Debian proof](#portable-package-and-debian-proof)
+and [Paired production conformance](#paired-production-conformance) ran from
+the detached checkout of `e4f58d71d79527eac4b7c2db31328f7f8a3961e8`, tree
+`12db08c5299338441d86a15058ea14962d3f0955`, in
+`/tmp/cppgw-final-20261119/final-paired.hvmNWOvR` as `q`. The cached package
+build took 31.69 s and `stat -c '%s' "$archive"` reported 84,259,478 bytes.
+`sha256sum -c SHA256SUMS` verified archive
+`2d901026330d52cf0eb3ab1e3c359bd8e5e9601921a2f34560195a7204d9d2a5` with
+executable SHA-256 `3b3794d0d57ed173c3ea55397ad761e17bbdd43df7095d138772cb20c77754d7`.
+Ubuntu sealing recorded manifest
+`77209d2d36e34b3404af81aab3a788b6467c9f1829c387dba103c68c8f760e58` and
+native KV provenance `b27aae214e855f7ebb3f1825b5a57d1f72fc2c6be0fca525ebc25b0b02f1f2e3`.
+`tar -xOzf "$archive" ./VERSION | jq '{compiler,static,debianPackages}'` identified
+Debian Clang 21.1.5, the static pins in the release guide and the exact
+Bookworm build packages.
+
+The Debian verifier exited 0 in 48.00 s. All four runs matched the exact
+health SHA and deployment ID in headers and body, including after reopen.
+Each completed and reopened with 1,161 mock Chat settlements and zero OOMs.
+The same `jq` command above against the final package proof JSON read these
+measurements for two CPUs without swap.
+
+| Runtime   | Memory cap (MiB) | Median mock chat requests/s | cgroup peak (bytes) | Gateway peak with eight in flight (bytes) |
+| --------- | ---------------: | --------------------------: | ------------------: | ----------------------------------------: |
+| Debian 12 |              512 |                      210.98 |          41,377,792 |                                36,143,104 |
+| Debian 12 |              256 |                      213.33 |          37,568,512 |                                36,122,624 |
+| Debian 13 |              512 |                      226.77 |          40,583,168 |                                37,380,096 |
+| Debian 13 |              256 |                      209.17 |          37,875,712 |                                37,400,576 |
+
+The paired run on the same package took 9.425 s in the isolated namespace
+and 12.43 s including preparation. It exited 1 with 184 of 186 cases matching,
+zero functional wire differences, zero cosmetic differences and the two
+shared expectation failures. Both invalid request cases returned 200 with
+exactly one `deepseek.success` call per runtime, against the unchanged
+assertions of 400 and zero dispatch. The final receipt
+`$q/conformance/run.IUJkqncl/output/results.json` has SHA-256
+`d8cad73eec98d9aafbd8e0b272de6f9553a4d6639d0308eae9d1d109d1e475da`.
+
+The side-by-side replay command ran with the final package and the current
+paired fixture launcher in the real isolated namespace. All four public
+reads matched, both anonymous provider-health reads returned 401 and the mock
+saw zero dispatches. The native health body and headers matched the full
+build SHA and the explicit `vps-` deployment ID. The command exited 0.
+`sha256sum "$q/replay-final/replay.json"` reported
+`f558d8ebbbd78ed675cdc1832024548a61ed3fb61467d0a89f7dc701f0120048`.
+The earlier standalone smoke preflight and Arch host gates remain open.
+[Cutover checklist](../CUTOVER.md)
+
+## Final C++ suites and static checks
+
+With the same suite command above, all eight shards under
+`/tmp/cppgw-final-20261119/identity-final.THqVkvsc` exited 0. The Release
+shards and first three sanitizer shards used the stamped gateway source
+commit `3946c4a3`. Sanitizer shard 4 recorded the paired suite commit
+`e4f58d71`. `git diff --name-only 3946c4a3..e4f58d71` listed only paired
+suite files and Markdown. Every receipt recorded identical before and after
+C++ input digest `077cfbf876b4d087fac505ca0e1c06ace5a63dd23b78592cbab98410f61d6a8a`.
+The build steps reused qualified objects. Each mode passed 453 binaries and
+5,264 cases, with no failures or timeouts.
+
+| Shard | Binaries | Cases | Release test wall time (s) | Sanitizer test wall time (s) |
+| ----: | -------: | ----: | -------------------------: | ---------------------------: |
+|     1 |      114 | 1,394 |                     25.468 |                       51.775 |
+|     2 |      113 | 1,237 |                     17.411 |                       52.690 |
+|     3 |      113 | 1,331 |                     28.004 |                      134.311 |
+|     4 |      113 | 1,302 |                     38.547 |                      127.557 |
+
+Read the totals and wall times with
+`jq '{statuses,cases,test_wall_seconds,git_commit,git_tree,source_sha256,inputs_unchanged}' "$q/$config/$shard/receipt.json"`
+using the suite output root above as `q`. The registration command reported
+453 successful resolutions by `rg -c '^ok ' "$out/links.log"`.
+Both actionlint results reproduced. Stock 1.7.12 lists the hosted ARM
+runner label as unknown, and the runner-label configuration passes.
+The tracked-file count is 2,088 and the production C/C++ count is 182,159
+physical lines across the same 756 files, using the commands above.
+The changed Markdown paths from
+`git diff --name-only 13502438 -- 'cpp/gateway/*.md' 'cpp/gateway/**/*.md'`
+passed `bun --no-env-file --no-install run format:check -- <absolute paths>`
+from the prepared scratch formatter. `git diff --check 13502438..HEAD` passed.
+
+The committed-diff review was requested again from the detached qualified
+commit `e4f58d71d79527eac4b7c2db31328f7f8a3961e8` against the fetched
+base `13502438fb2f1a986e61af3456d84611a12eed9e`, using the command above with
+`--enable use_legacy_landlock`. Its original conclusion was
+"Review could not be performed: the execution sandbox fails on every command
+with a bubblewrap isolation panic, so the diff and repository files were
+never inspected. No verdict on the code change itself is implied."
+The incomplete response yielded no review findings.
+
+The complete post-fix fuzz replay is in progress.

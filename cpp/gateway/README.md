@@ -9,8 +9,8 @@ Deliberate differences are recorded in the runtime deviation log. [Deviation log
 
 ## Where it stands
 
-- **Linux ARM64.** The final inventory registers **453 native test binaries**. The release and sanitizer counts,
-  Debian package proofs, and paired comparison for this branch are recorded with their exact inputs and commands.
+- **Linux ARM64.** Release and sanitizer runs each passed **453/453 binaries and 5,264/5,264 cases**.
+  The Debian package proofs and paired production comparison use the sealed Linux ARM64 package.
   [Final qualification](docs/findings/cppgw-final-20261119.md)
 - **Linux x64.** The pre-integration comparison built 441 binaries and passed **438/441 binaries and 5,007/5,031 cases**.
   The three failures are detailed below. [Runner verification](docs/findings/cppgw-docs-readme-20261118.md)
@@ -73,7 +73,9 @@ and an empty home for every test. It tries unprivileged namespaces, then passwor
 ```sh
 bash cpp/gateway/tools/ci-build.sh --list | wc -l
 build_dir=$(mktemp -d /tmp/uos-gateway-build.XXXXXX)
-env -i PATH="$PATH" LC_ALL=C LD_LIBRARY_PATH=/usr/local/lib CXX=clang++ UOS_CI_JOBS=4 \
+mkdir "$build_dir/home" "$build_dir/tmp"
+env -i PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 HOME="$build_dir/home" TMPDIR="$build_dir/tmp" \
+  CC=clang-21 CXX=clang++-21 UOS_CI_JOBS=4 UOS_CI_SQLITE_PREFIX=/usr/local \
   UOS_CI_BUILD_DIR="$build_dir" bash cpp/gateway/tools/ci-build.sh --config release >"$build_dir/driver.log" 2>&1
 ```
 
@@ -86,11 +88,14 @@ contracts and accounted for 23 failed cases on this host. One case in `native_ad
 also failed. Its Linux x64 vectors still expect older Bun error wording for malformed JSON. The parser
 rejected the inputs. [Failure details](docs/findings/cppgw-docs-readme-20261118.md)
 
-For a focused local HTTP check, reuse the build directory. This fixture started the gateway handler and a scripted
-upstream on loopback and passed all **5 cases** on this runner. [HTTP fixture](tests/oss_gateway_http_test.cpp)
+For a focused local HTTP check, reuse the build directory. This fixture starts the gateway handler and a scripted
+upstream on loopback. [HTTP fixture](tests/oss_gateway_http_test.cpp)
 
 ```sh
-env -i PATH="$PATH" LC_ALL=C LD_LIBRARY_PATH=/usr/local/lib CXX=clang++ UOS_CI_JOBS=4 \
+fixture_env=$(mktemp -d /tmp/uos-gateway-fixture.XXXXXX)
+mkdir "$fixture_env/home" "$fixture_env/tmp"
+env -i PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 HOME="$fixture_env/home" TMPDIR="$fixture_env/tmp" \
+  CC=clang-21 CXX=clang++-21 UOS_CI_JOBS=4 UOS_CI_SQLITE_PREFIX=/usr/local \
   UOS_CI_BUILD_DIR="$build_dir" bash cpp/gateway/tools/ci-build.sh --config release oss_gateway_http_test \
   >"$build_dir/loopback-driver.log" 2>&1
 ```
@@ -161,6 +166,7 @@ backend handles the actual database operations. [Architecture](docs/ARCHITECTURE
   model and image request fields stay within their established validation paths. [Request limits](docs/SECURITY-LIMITS.md)
 - When the native HTTP writer rejects outbound SSE headers, it cancels the producer and settles the interrupted
   delivery. The client still receives the fallback HTTP 500. [Architecture](docs/ARCHITECTURE.md#from-client-socket-to-provider-and-back)
+- The portable package reports its exact source SHA in health JSON and response headers. [Release guide](docs/RELEASES.md)
 - The optional Antigravity adapter offers text-only Gemini Chat Completions and Responses when an operator
   enables it and installs and signs in to the supported CLI. [Gemini setup](docs/RUNTIME.md#enable-the-gemini-subscription)
 

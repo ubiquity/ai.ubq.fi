@@ -77,7 +77,7 @@ CXX=clang++ UOS_CI_SELFTEST_CONFIG=asan python3 -B cpp/gateway/cmake/ci/test_dri
 
 These seven controls cover successful parallel environment isolation, failure counts, missing summaries, a timeout with descendants, link failure, sharding, and exclusion of unpublished dot-prefixed staging sources. They are separate from the gateway suite.
 
-## Runner measurements
+## Historical x86_64 runner measurements
 
 Measured on 2026-11-17: Ubuntu 26.04.1, x86_64, 4 CPUs, approximately 15 GiB RAM; GCC 15.2.0 (debug), GCC 14.3.0 (release), Clang 21.1.8, Boost 1.90, OpenSSL 3.5.5, SQLite 3.54.0 (prepared from source; distribution version was 3.46.1), ICU 78.2, zlib 1.3.1, Brotli 1.2.0, Zstd 1.5.7 and mold 2.40.4. Bun 1.4.0 is the unchanged behavior oracle.
 
@@ -107,7 +107,10 @@ The C++ gateway workflow runs on pushes to `claude/cpp-gateway-port`, `pool-merg
 
 Each suite shard has a 240-minute job limit and four workers. It builds the production objects and vendors, then links and runs its share of the sorted test inventory. The `ci-<config>-shard-<i>` artifact contains the job summary and any `receipt.json`, `results.tsv`, and driver, compiler, namespace, link and run logs. The summary counts successful links, passed and failed targets, and reported cases. It lists unsuccessful targets, including build failures and timeouts.
 
-Both configurations split the stage 2a inventory into 111, 111, 111 and 110 tests. All four Release shards and a focused sanitizer selection passed on Linux ARM64. An earlier ASan shard built and ran 111 binaries on four x86_64 cores. The two build segments and the test run accounted for about 62 minutes, with 107 passes and four fixture failures before suite repair. [Stage 2a results](findings/cppgw-integrate-s2a-20261118.md) · [Earlier sanitizer receipt](findings/cppgw-ci-sanitizers-20261118.md#asan-shard-1-receipt)
+Final Linux ARM64 qualification passed 453 binaries and 5,264 cases per configuration across four shards.
+The binary counts are 114, 113, 113 and 113. [Final qualification](findings/cppgw-final-20261119.md)
+
+The earlier stage 2a inventory split into 111, 111, 111 and 110 tests. All four Release shards and a focused sanitizer selection passed on Linux ARM64. An earlier ASan shard built and ran 111 binaries on four x86_64 cores. The two build segments and the test run accounted for about 62 minutes, with 107 passes and four fixture failures before suite repair. [Stage 2a results](findings/cppgw-integrate-s2a-20261118.md) · [Earlier sanitizer receipt](findings/cppgw-ci-sanitizers-20261118.md#asan-shard-1-receipt)
 
 The robustness matrix uses all entries in `fuzz/targets.json`. The discovery job publishes the selected targets. Each harness job has a 120-minute limit and runs libFuzzer with four workers in a private Linux network namespace, using a fresh home and temporary directory and a credential-free environment. The `fuzz-<target>` artifact contains its build and campaign logs, summary, and any finding inputs. Slow `regex` inputs and the empty crash artifact from the known ARM64 libFuzzer fork-parent exit leak stay in the evidence and are counted separately. Genuine findings and incomplete campaigns fail the job.
 

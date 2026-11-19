@@ -139,7 +139,7 @@ environment supplies an empty home, fresh temp space and loopback-only networkin
 log and a receipt with the exact inputs and counts. [Link resolver](../tools/links.py) ·
 [Registry](../tests/LINKS.txt) · [Portable driver](CI.md) · [Test conventions](TESTING.md)
 
-The final inventory includes 453 native test binaries. Linux ARM64 qualification uses four Release shards and
-four AddressSanitizer, UndefinedBehaviorSanitizer and LeakSanitizer shards. The packaged comparison runs both
+Release and AddressSanitizer, UndefinedBehaviorSanitizer and LeakSanitizer runs each passed
+453 binaries and 5,264 cases across four shards on Linux ARM64. The packaged comparison runs both
 gateways through the same loopback mocks and verifies durable readback. The paired suite retains two shared
 validation failures. [Final qualification](findings/cppgw-final-20261119.md) · [Conformance](CONFORMANCE.md)
