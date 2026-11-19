@@ -10,7 +10,7 @@ Own the Node file URL regions in `src/rt/url.cpp:1337–1384,1792–1828` and `i
 
 ```bash
 for test in tests/rt/url_test.cpp tests/static_assets_test.cpp tests/static_differential_test.cpp \
-  tests/sqlite_readonly_test.cpp; do
+  tests/sqlite_readonly_test.cpp tests/kv_conversion_legacy_codec_differential_test.cpp; do
   bash cpp/gateway/tools/ci-build.sh --config release "$test" || exit 1
 done
 ```
