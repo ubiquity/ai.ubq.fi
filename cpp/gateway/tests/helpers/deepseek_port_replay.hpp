@@ -18,6 +18,8 @@
 #include "uos/rt/string.hpp"
 #include "uos/rt/text_codec.hpp"
 #include "uos/rt/test_async.hpp"
+#include <zlib.h>
+#include <limits>
 #include <map>
 
 namespace uos::tests::helpers::deepseek_port_replay {
@@ -186,9 +188,32 @@ namespace uos::tests::helpers::deepseek_port_replay {
       }
     }
   }
+
+  // The checked-in compaction trace bundle has its own explicit, larger budget.
+  // Decode this trusted fixture as one gzip member into a fixed-size buffer.
+  inline rt::Bytes inflateLargeFixture(rt::Bytes compressed, std::size_t maxFixtureBytes) {
+    if (compressed.size() > rt::limits::kStoredGzipBytes || maxFixtureBytes >= std::numeric_limits<uInt>::max())
+      throw rt::JsError("Invalid compressed fixture size");
+    rt::Bytes bytes(maxFixtureBytes + 1);
+    z_stream stream{};
+    stream.next_in = compressed.data();
+    stream.avail_in = static_cast<uInt>(compressed.size());
+    stream.next_out = bytes.data();
+    stream.avail_out = static_cast<uInt>(bytes.size());
+    if (inflateInit2(&stream, 16 + MAX_WBITS) != Z_OK) throw rt::JsError("Cannot initialize gzip fixture decoder");
+    const auto finish = rt::scopeExit([&] { inflateEnd(&stream); });
+    if (inflate(&stream, Z_FINISH) != Z_STREAM_END || stream.avail_in != 0 || stream.total_out > maxFixtureBytes)
+      throw rt::JsError("Invalid gzip fixture or fixture exceeds its byte limit");
+    bytes.resize(stream.total_out);
+    return bytes;
+  }
+
   inline bool registerReplay(std::string_view compressed, std::size_t maxFixtureBytes = rt::limits::kJsonDocumentBytes) {
-    const auto bytes = rt::gzip::gunzipSync(rt::fromBase64(compressed));
-    auto vectors = rt::jsonParseWithLimit(rt::decodeUtf8(bytes), maxFixtureBytes);
+    auto encoded = rt::fromBase64(compressed);
+    const bool large = maxFixtureBytes > rt::limits::kStoredGzipBytes;
+    const auto bytes = large ? inflateLargeFixture(std::move(encoded), maxFixtureBytes) : rt::gzip::gunzipSync(encoded);
+    auto vectors = large ? rt::jsonParseWithLimit({reinterpret_cast<const char*>(bytes.data()), bytes.size()}, maxFixtureBytes)
+                         : rt::jsonParseWithLimit(rt::decodeUtf8(bytes), maxFixtureBytes);
     for (auto& row : vectors.as_array()) {
       auto name = rt::toString(rt::get(row, "name"));
       rt::test::registry().push_back({name + " [owned API parity]", [row = std::move(row)] {

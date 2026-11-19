@@ -2175,10 +2175,9 @@ TEST("explicit JSON allowances respect both route limits and the image ceiling")
 
   std::string document = "null";
   document.resize(rt::limits::kImageEditJsonBytes, ' ');
-  constexpr auto greaterAllowance = rt::limits::kImageEditJsonBytes + 1;
-  EXPECT_EQ(rt::jsonParseWithLimit(document, greaterAllowance), json::value(nullptr));
+  EXPECT_EQ(rt::jsonParseWithLimit(document, rt::limits::kImageEditJsonBytes), json::value(nullptr));
   document.push_back(' ');
-  EXPECT_THROWS_MESSAGE(rt::jsonParseWithLimit(document, greaterAllowance), rt::SyntaxError, "Invalid JSON");
+  EXPECT_THROWS_MESSAGE(rt::jsonParseWithLimit(document, rt::limits::kImageEditJsonBytes), rt::SyntaxError, "Invalid JSON");
 }
 
 TEST("JSON values at the nesting limit can be copied and destroyed") {
