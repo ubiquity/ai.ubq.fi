@@ -2,6 +2,9 @@
 
 The gateway keeps the application and protocol behavior described in [PORTING.md](../PORTING.md). This record covers deliberate generic runtime differences and the evidence that bounds them.
 
+The full Release and sanitizer runs on the combined Linux ARM64 tree passed **451 binaries and 5,186 cases**
+per profile. [Combined verification](findings/cppgw-combine-1-20261119.md)
+
 ## JSON
 
 The Linux ARM64 simdjson 5.2.0 and Boost.JSON 1.92 checkpoint passed 8/8 focused binaries and 71/71 cases, with 643 parser vectors retained. The package manifest is `c196ee22541cd11fcf67589a47ba7dc686c446e92bae0043b84e85da48a1cf4a`. [Behavior handback](/tmp/claude-1002/prod/assignment3/runtime/b1-20261117T230423Z/deviations.md) [Focused results](/tmp/claude-1002/prod/assignment3/runtime/b1-20261117T230423Z/focused-results.json)

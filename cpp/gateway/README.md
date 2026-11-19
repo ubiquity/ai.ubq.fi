@@ -9,14 +9,15 @@ Differences in diagnostic wording are expected. [TypeScript source](https://gith
 
 ## Where it stands
 
-- **Linux ARM64.** All four Release shards passed **450 binaries and 5,113 cases**. The focused ASan, UBSan and
-  LSan run passed **161 binaries and 1,989 cases**. The portable package seals and runs on Debian 12 and 13. It
-  agreed with Bun on all 186 paired conformance cases, including two validation failures shared by both gateways.
-  [Final integration](docs/findings/cppgw-integrate-f2-20261118.md)
+- **Linux ARM64.** On the combined follow-up tree, the full Release and ASan, UBSan and LSan runs each passed
+  **451 binaries and 5,186 cases**. The earlier F2 portable package sealed and ran on Debian 12 and 13. It agreed
+  with Bun on all 186 paired conformance cases, including two validation failures shared by both gateways.
+  [Combined verification](docs/findings/cppgw-combine-1-20261119.md) · [F2 package and comparison](docs/findings/cppgw-integrate-f2-20261118.md)
 - **Linux x64.** The pre-integration comparison built 441 binaries and passed **438/441 binaries and 5,007/5,031 cases**.
   The three failures are detailed below. [Runner verification](docs/findings/cppgw-docs-readme-20261118.md)
-- **Apple Silicon.** The recorded macOS 26.7.2 development run passed **441/441 binaries and 5,029/5,029 cases**
-  at `c6cd29f9`. The packaged gateway answers `--version` only. Serving requires Linux confinement.
+- **Apple Silicon.** The macOS 26.7.2 qualification of the standard-library follow-up passed **450/450 binaries
+  and 5,119/5,119 cases**. The extracted package returned its source commit from `--version`. Serving requires
+  Linux confinement.
   [macOS results](docs/MACOS.md) · [Packages](docs/RELEASES.md)
 - **Raspberry Pi.** This is a 64-bit ARM target. Its OS, loader, kernel confinement and memory headroom
   still need checking on the device. [Platform requirements](docs/BUILD.md)
@@ -65,7 +66,7 @@ the pinned library into `/usr/local`. The final command printed `3.54.0`.
 )
 ```
 
-List the tests, then build and run Release. The first command prints `450`. The driver builds common objects once
+List the tests, then build and run Release. The first command prints `451`. The driver builds common objects once
 and links each standalone test. It uses real Linux namespaces with loopback-only networking, a fresh temp filesystem
 and an empty home for every test. It tries unprivileged namespaces, then passwordless `sudo` for namespace setup.
 [Driver and isolation](docs/CI.md)
