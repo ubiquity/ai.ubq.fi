@@ -107,7 +107,7 @@ jq -e '.status == "available" and (.release.git_sha | type == "string") and
   (.release.deployment_id | type == "string")' "$receipt_dir/native-health.json"
 ```
 
-Expect `200` and `status: "available"`. Match `release.git_sha` and `release.deployment_id` against `x-uos-git-sha` and `x-uos-deployment-id` and the expected release. The checked-in native release constant is `unknown`. If the package reports `unknown`, use the exact executable and package hashes for the local observation receipt and mark the production identity check failed. Production acceptance requires the full SHA and `vps-<full-git-sha>` in both headers and body. The packaged launcher opens and checks the private KV before listening. Health confirms liveness and identity, while authenticated behavior and durable restart need the mock smoke. [Native health handler](../src/health.cpp) · [Release constant](../src/release.cpp)
+Expect `200` and `status: "available"`. Match `release.git_sha` and `x-uos-git-sha` to `gitCommit` in the approved package's `VERSION`. Match `release.deployment_id` and `x-uos-deployment-id` to `vps-<full-git-sha>`. The packaged launcher opens and checks the private KV before listening. Health confirms liveness and identity, while authenticated behavior and durable restart need the mock smoke. [Native health handler](../src/health.cpp) · [Release constant](../src/release.cpp)
 
 ### Health, readiness and metrics
 

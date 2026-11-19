@@ -100,11 +100,9 @@ modes. The packaged macOS gateway answers `--version` only because serving requi
 ## Storage
 
 The service opens `.data/kv-bun.sqlite3` beneath the private state root. The opener checks the `bun-jsc-v1` marker
-in `uos_kv_metadata` before handing the file to the linked `rt::SqliteKv` backend. The packaged `@deno/kv` artifact
-is verified for provenance. The linked backend makes the actual SQLite calls. It uses a connection and worker per
-handle, SQLite transactions and write-ahead logging on writable stores. [Storage opener](../src/storage/kv.cpp) ·
-[Codec constants](../include/uos/storage/kv.hpp) · [Native artifact verification](../src/storage/native_addon.cpp) ·
-[SQLite backend](../src/rt/kv_sqlite.cpp)
+in `uos_kv_metadata` before handing the file to the linked `rt::SqliteKv` backend. The backend uses a connection
+and worker per handle, SQLite transactions and write-ahead logging on writable stores. [Storage opener](../src/storage/kv.cpp) ·
+[Codec constants](../include/uos/storage/kv.hpp) · [SQLite backend](../src/rt/kv_sqlite.cpp)
 
 The database uses Deno KV's SQLite schema and ordered tuple keys. It preserves versionstamps, atomic checks and
 writes, absolute expiration times and queue records. Row encodings distinguish raw bytes, unsigned 64-bit values and

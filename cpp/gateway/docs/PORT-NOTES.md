@@ -311,8 +311,6 @@ Keep application-specific field order, coercion, status, error code and log shap
 - Callbacks returning `Promise<undefined>` use `rt::Task<std::monostate>` in templates.
 - Tests that create files use `rt::os::tmpdir()`; run them with `TMPDIR=<scratch dir>` and say
   so in the `// Links:` header.
-- Hermetic tests of code that spawns `deno`: a fake `deno` shell script (see
-  `tests/kv_conversion_convert_differential_test.cpp`).
 - `tests/codex_model_availability_test.cpp` has a reusable `StubKv`; later availability,
   routing and dispatch cases extend that file.
 - rt::sqlite -> `native_schema::bun_sqlite`: use `bun_sqlite::adapt(rt::sqlite::Database)`
@@ -546,9 +544,8 @@ co_await p.wait();`. A bare `rt::Fetch` call returns a lazy Task whose body woul
 - `storage::kv::openKv` / `kv::getKv` open the durable SQLite store; the guard forwards
   `enqueue`. The queue capability is `rt::KvEnqueue` (kv.hpp); `ledger_state::KvEnqueue` is an
   alias. `rt::MemoryKv` does not implement it.
-- Tests that need a real `openKv`: `tests/helpers/linked_native_kv.hpp` (`prepareOnce()`), with
-  the database under `TMPDIR`, never named `kv*.sqlite3`. NEVER run a test or tool from a
-  directory that has a real `.data/kv-bun.sqlite3` (opening writes).
+- Tests that need a real `openKv` pass a disposable path under `TMPDIR`, as in
+  `tests/storage_bun_kv_test.cpp`. Use the isolated test driver with an empty working directory.
 - `storage::kv::deserialize()` works (JavaScriptCore v14 reader); values KvValue cannot hold
   throw TypeError.
 - Regenerate `tests/kv_durable_suite_test.cpp` when store cases in `tests/rt/kv_test.cpp` change.
@@ -566,8 +563,8 @@ co_await p.wait();`. A bare `rt::Fetch` call returns a lazy Task whose body woul
   bun fake KV with Deno key order (see `tests/claude_code_differential_test.cpp`).
 - Where stored rows must be written back byte-compatibly, keep the raw stored value alongside
   the typed view (see `StoredBucket` in claude_capacity_history.cpp).
-- `tests/claude_usage_meters_test.cpp`: one case still deferred (needs `openKv(path)`, now
-  available via `tests/helpers/linked_native_kv.hpp`, and capacity.ts `claudeCapacitySource`).
+- `tests/claude_usage_meters_test.cpp` exercises the durable path by closing and reopening its
+  disposable store through `openKv(path)`.
 
 ## Cluster sub-chunk b6 (codex reset-settings, banked-reset, -claim, -submission, -pool)
 
