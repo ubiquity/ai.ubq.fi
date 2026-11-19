@@ -11,6 +11,7 @@
 #include "uos/provider/cerebras.hpp"
 #include "uos/provider/lithos.hpp"
 #include "uos/provider/openrouter.hpp"
+#include "uos/recent_model_context.hpp"
 #include "uos/request_policy.hpp"
 #include "uos/runtime_config.hpp"
 #include "uos/rt/kv_js.hpp"
@@ -213,12 +214,33 @@ json::object buildDeepSeekWaterfallCodexRecord() {
   namespace w = deepseek::waterfall;
   json::array levels;
   for (auto effort : w::DEEPSEEK_WATERFALL_REASONING_LEVELS) levels.push_back(json::object{{"effort", std::string(effort)}, {"description", codexReasoningEffortDescription(std::string(effort))}});
-  json::object row{{"slug", std::string(w::DEEPSEEK_WATERFALL_MODEL_ID)}, {"display_name", std::string(w::DEEPSEEK_WATERFALL_DISPLAY_NAME)}, {"description", std::string(w::DEEPSEEK_WATERFALL_DESCRIPTION)}, {"owned_by", "ubiquity"}, {"supported_endpoint_types", json::array{"openai-response"}}, {"supported_reasoning_levels", levels}, {"default_reasoning_level", std::string(w::DEEPSEEK_WATERFALL_DEFAULT_REASONING_LEVEL)}, {"context_window", w::DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS}, {"max_context_window", w::DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS}, {"auto_compact_token_limit", w::DEEPSEEK_WATERFALL_AUTO_COMPACT_TOKEN_LIMIT}, {"effective_context_window_percent", w::DEEPSEEK_WATERFALL_EFFECTIVE_CONTEXT_WINDOW_PERCENT}};
+  const auto window = w::DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS;
+  json::object row{
+    {"slug", w::DEEPSEEK_WATERFALL_MODEL_ID},
+    {"display_name", w::DEEPSEEK_WATERFALL_DISPLAY_NAME},
+    {"description", w::DEEPSEEK_WATERFALL_DESCRIPTION},
+    {"owned_by", "ubiquity"},
+    {"supported_endpoint_types", json::array{"openai-response"}},
+    {"supported_reasoning_levels", std::move(levels)},
+    {"default_reasoning_level", w::DEEPSEEK_WATERFALL_DEFAULT_REASONING_LEVEL},
+    {"context_window", window},
+    {"max_context_window", window},
+    {"auto_compact_token_limit", recent_model_context::deriveAutoCompactTokenLimit(window)},
+    {"effective_context_window_percent", w::DEEPSEEK_WATERFALL_EFFECTIVE_CONTEXT_WINDOW_PERCENT},
+  };
   shellDefaults(row, 0); return row;
 }
 json::array withDeepSeekWaterfallModel(const json::array& models) {
-  for (const auto& row : models) if (rt::getString(row, "slug").value_or(rt::getString(row, "id").value_or("")) == deepseek::waterfall::DEEPSEEK_WATERFALL_MODEL_ID) return models;
-  auto result = models; result.push_back(buildDeepSeekWaterfallCodexRecord()); return result;
+  const json::value record = buildDeepSeekWaterfallCodexRecord();
+  auto result = models;
+  bool present = false;
+  for (auto& row : result) {
+    if (rt::getString(row, "slug").value_or(rt::getString(row, "id").value_or("")) != deepseek::waterfall::DEEPSEEK_WATERFALL_MODEL_ID) continue;
+    row = record;
+    present = true;
+  }
+  if (!present) result.push_back(record);
+  return result;
 }
 json::array lithosCodexModels() {
   json::array result;

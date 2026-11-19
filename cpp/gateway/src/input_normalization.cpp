@@ -49,6 +49,7 @@
 #include "uos/provider/cerebras.hpp"
 #include "uos/provider/lithos.hpp"
 #include "uos/provider/openrouter.hpp"
+#include "uos/recent_model_context.hpp"
 #include "uos/request_policy.hpp"
 #include "uos/rt/json.hpp"
 #include "uos/rt/number.hpp"
@@ -260,7 +261,24 @@ namespace uos::input_normalization {
     }
     json::array configuredDeepSeekWaterfallModelCapabilities() {
       if (!anyWaterfallConfigured()) return {};
-      return {json::object{{"id", wf::DEEPSEEK_WATERFALL_MODEL_ID}, {"object", "uos.model_capabilities"}, {"owned_by", "ubiquity"}, {"display_name", wf::DEEPSEEK_WATERFALL_DISPLAY_NAME}, {"upstream_provider", "ubiquity"}, {"supported_endpoints", json::array{"/v1/responses"}}, {"supported_reasoning_levels", strings(wf::DEEPSEEK_WATERFALL_REASONING_LEVELS)}, {"default_reasoning_effort", wf::DEEPSEEK_WATERFALL_DEFAULT_REASONING_LEVEL}, {"reasoning_effort_wire_map", json::object{}}, {"context_window_tokens", rt::makeNumber(wf::DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS)}, {"max_context_window_tokens", rt::makeNumber(wf::DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS)}, {"auto_compact_token_limit_tokens", rt::makeNumber(wf::DEEPSEEK_WATERFALL_AUTO_COMPACT_TOKEN_LIMIT)}, {"effective_context_window_percent", rt::makeNumber(wf::DEEPSEEK_WATERFALL_EFFECTIVE_CONTEXT_WINDOW_PERCENT)}, {"context_source", "openrouter"}, {"reasoning_source", "provider_discovery"}}};
+      const auto window = wf::DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS;
+      return {json::object{
+        {"id", wf::DEEPSEEK_WATERFALL_MODEL_ID},
+        {"object", "uos.model_capabilities"},
+        {"owned_by", "ubiquity"},
+        {"display_name", wf::DEEPSEEK_WATERFALL_DISPLAY_NAME},
+        {"upstream_provider", "ubiquity"},
+        {"supported_endpoints", json::array{"/v1/responses"}},
+        {"supported_reasoning_levels", strings(wf::DEEPSEEK_WATERFALL_REASONING_LEVELS)},
+        {"default_reasoning_effort", wf::DEEPSEEK_WATERFALL_DEFAULT_REASONING_LEVEL},
+        {"reasoning_effort_wire_map", json::object{}},
+        {"context_window_tokens", rt::makeNumber(window)},
+        {"max_context_window_tokens", rt::makeNumber(window)},
+        {"auto_compact_token_limit_tokens", rt::makeNumber(recent_model_context::deriveAutoCompactTokenLimit(window))},
+        {"effective_context_window_percent", rt::makeNumber(wf::DEEPSEEK_WATERFALL_EFFECTIVE_CONTEXT_WINDOW_PERCENT)},
+        {"context_source", "openrouter"},
+        {"reasoning_source", "provider_discovery"},
+      }};
     }
     json::array replaceConfigured(const json::array& models, const json::array& configured) {
       if (configured.empty()) return models;

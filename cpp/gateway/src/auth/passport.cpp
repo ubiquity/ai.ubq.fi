@@ -365,6 +365,11 @@ namespace uos::auth::passport {
         const std::string url_ = std::string(ISSUER) + "/api/auth/sso/exchange";
         auto call = rt::fetch(rt::RequestInfo(url_), std::move(init));
         const rt::Response response = co_await std::move(call);
+        if (response.status() >= 400 && response.status() < 500) {
+          auto cancelling = cancelBody(response);
+          co_await std::move(cancelling);
+          throw PassportError();
+        }
         auto reading = boundedJson(response, 65'536);
         const json::value body = co_await std::move(reading);
         const std::optional<std::string_view> accessToken = rt::getString(rt::get(body, "accessToken"));

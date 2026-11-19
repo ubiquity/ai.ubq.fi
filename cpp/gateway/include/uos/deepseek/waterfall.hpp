@@ -17,9 +17,10 @@ namespace uos::deepseek::waterfall {
   inline constexpr std::string_view DEEPSEEK_WATERFALL_LEGACY_MODEL_ID = "ubiquity/deepseek-v4.1-flash";
   inline constexpr std::string_view DEEPSEEK_WATERFALL_DISPLAY_NAME = "Ubiquity DeepSeek Flash";
   inline constexpr std::string_view DEEPSEEK_WATERFALL_DESCRIPTION = "Latest DeepSeek Flash waterfall: official DeepSeek, OpenRouter, LithosAI, Surplus, and OpenLux. Each hop uses the provider's latest alias and falls back only on infrastructure or serving failures.";
-  inline constexpr double DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS = 1'048'576;
+  // The gateway's 800,000-token window triggers compaction at 720,000 tokens,
+  // below the observed aggregate admission rejection near 792,000.
+  inline constexpr double DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS = 800'000;
   inline constexpr double DEEPSEEK_WATERFALL_EFFECTIVE_CONTEXT_WINDOW_PERCENT = 95;
-  inline constexpr double DEEPSEEK_WATERFALL_AUTO_COMPACT_TOKEN_LIMIT = 891'289;
   inline constexpr double DEEPSEEK_WATERFALL_CREATED = 1'791'244'800;
   inline constexpr std::array<std::string_view, 3> DEEPSEEK_WATERFALL_REASONING_LEVELS{"low", "high", "max"};
   inline constexpr std::string_view DEEPSEEK_WATERFALL_DEFAULT_REASONING_LEVEL = "high";

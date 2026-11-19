@@ -139,6 +139,8 @@ namespace {
     metadata::ModelMetadataHint hint; hint.context_window_tokens = w::DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS; hint.max_context_window_tokens = w::DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS; hint.effective_context_window_percent = w::DEEPSEEK_WATERFALL_EFFECTIVE_CONTEXT_WINDOW_PERCENT;
     json::array levels; for (auto effort : w::DEEPSEEK_WATERFALL_REASONING_LEVELS) levels.emplace_back(std::string(effort)); hint.supported_reasoning_levels = levels; hint.default_reasoning_effort = json::value(std::string(w::DEEPSEEK_WATERFALL_DEFAULT_REASONING_LEVEL));
     metadata::ModelMetadataSources sources; sources.provider = hint;
+    // The rolling OpenRouter alias advertises the provider's window. This route uses the gateway's admission-safe cap.
+    sources.openRouter = nullptr;
     addPublicModelCatalogEntry(models, std::string(w::DEEPSEEK_WATERFALL_MODEL_ID), {"ubiquity", "ubiquity", {"/v1/responses"}}, w::DEEPSEEK_WATERFALL_CREATED, sources);
     for (auto provider : w::DEEPSEEK_WATERFALL_ORDER) if (w::deepSeekWaterfallProviderConfigured(provider)) addPublicModelCatalogEntry(models, std::string(w::DEEPSEEK_WATERFALL_MODEL_ID), {std::string(provider), "ubiquity", {"/v1/responses"}});
   }
