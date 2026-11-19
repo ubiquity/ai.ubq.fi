@@ -682,6 +682,7 @@ ASYNC_TEST("an aborted call signal rejects the exact pending call") {
 }
 
 TEST("an abandoned supervisor call releases the control socket") {
+  const rt::AbortController caller;
   std::weak_ptr<ScriptedSocket> socket;
   std::weak_ptr<rt::detail::AbortSignalState> signalState;
   {
@@ -695,8 +696,7 @@ TEST("an abandoned supervisor call releases the control socket") {
     auto opening = openSupervisorConnection("/var/lib/uos-supervisor/abandoned.sock");
     const auto connection = rt::blockOn(loop, std::move(opening));
     socket = ScriptedSocket::latest();
-    const rt::AbortController controller;
-    const auto signal = controller.signal();
+    const auto signal = rt::AbortSignal::any({caller.signal()});
     signalState = signal.state();
     const rt::Promise<SupervisorCallResult> pending(connection.call("thread/read", threadParams(), signal));
     EXPECT(pending.pending());

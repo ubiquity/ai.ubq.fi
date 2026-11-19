@@ -713,13 +713,13 @@ TEST("abandoning a Codex retry wait releases the abort signal") {
 }
 
 TEST("abandoning a shared Codex refresh wait releases the abort signal") {
+  const rt::AbortController caller;
   std::weak_ptr<rt::detail::AbortSignalState> signalState;
   {
     rt::FakeClock clock;
     rt::Loop loop(clock);
     const rt::LoopScope scope(loop);
-    const rt::AbortController controller;
-    const auto signal = controller.signal();
+    const auto signal = rt::AbortSignal::any({caller.signal()});
     signalState = signal.state();
     const rt::Promise<CodexAuthState> refreshing;
     auto waiting = auth_refresh::awaitWithoutCancellingSharedWork(refreshing, signal);

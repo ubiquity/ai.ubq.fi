@@ -85,6 +85,10 @@ namespace uos::codex::supervisor_transport {
       double serial = 0;
       bool closed = false;
 
+      ~ConnectionState() {
+        for (const auto& call : pending.values()) call.cleanup();
+      }
+
       void settle(double id, rt::Reason error, SupervisorCallResult value = std::nullopt) {
         PendingCall* found = pending.get(id);
         if (!found) return;

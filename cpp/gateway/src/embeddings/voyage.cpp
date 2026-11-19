@@ -195,11 +195,18 @@ namespace uos::embeddings::voyage {
   }
   rt::Promise<bool> sleepUnlessAborted(double ms, rt::AbortSignal signal) {
     if (signal.aborted()) return rt::Promise<bool>::resolve(false);
-    struct State { rt::Timeout timeout; rt::EventListener onAbort; };
-    auto state = std::make_shared<State>();
-    return rt::newPromise<bool>([ms, signal, state](const rt::Resolve<bool>& resolve, const rt::Reject&) {
-      state->timeout = rt::setTimeout([signal, state, resolve] {
-        signal.removeEventListener("abort", state->onAbort);
+    struct State {
+      rt::AbortSignal signal;
+      rt::Timeout timeout;
+      rt::EventListener onAbort;
+
+      explicit State(rt::AbortSignal signal_) : signal(std::move(signal_)) {}
+      ~State() { signal.removeEventListener("abort", onAbort); }
+    };
+    auto state = std::make_shared<State>(std::move(signal));
+    return rt::newPromise<bool>([ms, state](const rt::Resolve<bool>& resolve, const rt::Reject&) {
+      state->timeout = rt::setTimeout([state, resolve] {
+        state->signal.removeEventListener("abort", state->onAbort);
         resolve(true);
       }, ms);
       const std::weak_ptr<State> weak = state;
@@ -209,8 +216,8 @@ namespace uos::embeddings::voyage {
           resolve(false);
         }
       });
-      signal.addEventListener("abort", state->onAbort, {.once = true});
-      if (signal.aborted()) state->onAbort();
+      state->signal.addEventListener("abort", state->onAbort, {.once = true});
+      if (state->signal.aborted()) state->onAbort();
     });
   }
   double estimateTokens(const std::string& text) { return text.empty() ? 0 : rt::Math::ceil(static_cast<double>(rt::utf8ByteLength(text)) / 4); }

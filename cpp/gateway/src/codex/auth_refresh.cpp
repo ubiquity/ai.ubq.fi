@@ -534,6 +534,7 @@ namespace uos::codex::auth_refresh {
     }
     const rt::AbortSignal abortSignal = *signal;
     const auto listenerSlot = std::make_shared<rt::EventListener>();
+    const auto cleanup = rt::scopeExit([&] { abortSignal.removeEventListener("abort", *listenerSlot); });
     const std::weak_ptr<rt::EventListener> listenerHandle = listenerSlot;
     const std::weak_ptr<rt::detail::AbortSignalState> weakSignal = abortSignal.state();
     rt::Promise<T> abortion = rt::newPromise<T>([&](auto, rt::Reject reject) {

@@ -182,13 +182,13 @@ ASYNC_TEST("embeddings sleep helpers honor aborts and deadlines") {
   co_return;
 }
 TEST("abandoning an embeddings retry timer releases the abort signal") {
+  const rt::AbortController caller;
   std::weak_ptr<rt::detail::AbortSignalState> signalState;
   {
     rt::FakeClock clock;
     rt::Loop loop(clock);
     const rt::LoopScope scope(loop);
-    const rt::AbortController controller;
-    const auto signal = controller.signal();
+    const auto signal = rt::AbortSignal::any({caller.signal()});
     signalState = signal.state();
     const auto waiting = v::sleepUnlessAborted(10000, signal);
     EXPECT(waiting.pending());
