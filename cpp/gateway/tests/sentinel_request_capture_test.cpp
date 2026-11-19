@@ -1,4 +1,5 @@
 // Links: tests/sentinel_request_capture_test.cpp
+// src/provider/gemini.cpp src/admin/gemini_quota.cpp
 //        src/utils.cpp src/models/catalog.cpp src/sentinel/replay_model.cpp src/provider/surplus.cpp src/deepseek/waterfall.cpp src/models/metadata.cpp src/deepseek/index.cpp src/handler/terminal_log.cpp src/provider/surplus_claude_chat_request.cpp src/catalog/index.cpp src/catalog/store.cpp src/input_normalization.cpp
 //        src/provider/claude_code_credentials.cpp src/provider/selection.cpp src/handler/http.cpp src/provider/metered.cpp src/request_policy.cpp src/provider/claude_code_models.cpp src/provider/claude_code_accounts.cpp src/catalog/types.cpp src/debug_routing.cpp src/handler/index.cpp src/admin/defaults.cpp src/sentinel/replay_observation.cpp
 //        src/auth/passport.cpp src/catalog/models.cpp src/admin/codex.cpp src/auth/passkeys.cpp src/admin/api_key_mutations.cpp src/kernel/quota_reservations.cpp src/models/openrouter_models.cpp src/authority/native_kernel.cpp src/admin/error_log.cpp src/auth/index.cpp src/runtime_config.cpp src/api_key_policy.cpp src/kv.cpp

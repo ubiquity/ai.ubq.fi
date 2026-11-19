@@ -314,7 +314,9 @@ namespace uos::handler::terminal_route {
           input.sentinelReplayOmission = sentinelReplayOmission;
           auto pending = terminal_log::withTerminalRequestLog(withCors(http::withRequestId(decorated, requestId)), input);
           auto result = co_await pending.wait();
-          co_return result;
+          // Terminal logging decorates the response and can drop the WeakMap-backed
+          // telemetry attachment. Reattach the original provider state for every route.
+          co_return openai_telemetry::aggregateResponseTelemetry(std::vector<rt::Response>{response}, std::move(result));
         } catch (...) { failure = std::current_exception(); }
         sentinel::replay_observation::zeroSentinelReplayInput(sentinelReplayInput);
         sentinel::replay_observation::disposeSentinelUpstreamRecorder(sentinelReplayInput);

@@ -2,6 +2,7 @@
 // Full original producer ingress is ported; the separately named ops reader boundary remains.
 // The ops VPS journal-reader assertions are outside the runtime module manifest.
 // Links: tests/handler_terminal_admission_stage_test.cpp
+// src/provider/gemini.cpp src/admin/gemini_quota.cpp
 // src/handler/terminal_route.cpp src/handler/http.cpp src/http.cpp src/chat/envelope.cpp src/sentinel/replay_observation.cpp src/openai_telemetry.cpp src/embeddings/jobs.cpp src/decisions/handlers.cpp
 // src/provider/selection.cpp src/codex/auth.cpp src/request_policy.cpp src/chat/stream_translation.cpp src/provider/openrouter.cpp src/openai.cpp src/responses_stream.cpp src/embeddings/voyage.cpp
 // src/request.cpp src/handler/admission.cpp src/responses_failover_stream.cpp src/handler/terminal_log.cpp src/kv.cpp src/runtime_config.cpp src/api_key_policy.cpp src/types.cpp

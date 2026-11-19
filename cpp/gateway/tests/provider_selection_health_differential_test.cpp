@@ -280,7 +280,7 @@ TEST("selection: enforcement, eligibility and catalog filtering") {
     const std::optional<selection::ProviderSelection> value = selectionOf(row.at("selection"));
     const std::string label = rt::jsonStringify(row.at("selection"));
     EXPECT_EQ(selection::providerSelectionIsActive(value), row.at("active").as_bool());
-    const std::vector<std::string> providers = {"codex", "claude_code", "surplus", "openlux", "deepseek", "cerebras", "lithos", "openrouter", "ubiquity", "unknown"};
+    const std::vector<std::string> providers = {"codex", "claude_code", "gemini", "surplus", "openlux", "deepseek", "cerebras", "lithos", "openrouter", "ubiquity", "unknown"};
     json::array enabled;
     for (const std::string& provider : providers) enabled.emplace_back(selection::isProviderEnabled(provider, value));
     EXPECT_JSON(enabled, row.at("enabled"), label);

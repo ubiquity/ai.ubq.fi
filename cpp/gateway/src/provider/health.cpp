@@ -331,6 +331,11 @@ namespace uos::provider::health {
     return recordProviderHealth("lithos", "default", event, status, now, providerRequestId, std::nullopt);
   }
 
+  rt::Promise<void> recordGeminiProviderHealth(ProviderHealthEvent event, std::optional<double> status, std::function<double()> now,
+                                               std::optional<std::string> providerRequestId) {
+    return recordProviderHealth("gemini", "default", event, status, now, providerRequestId, std::nullopt);
+  }
+
   rt::Promise<void> recordClaudeCodeProviderHealth(ProviderHealthEvent event, std::optional<double> status, std::function<double()> now,
                                                    std::optional<std::string> providerRequestId,
                                                    std::optional<claude_code_accounts::ClaudeCodeAccountBinding> binding) {
@@ -358,6 +363,8 @@ namespace uos::provider::health {
 
   rt::Task<ProviderHealthView> getLithosProviderHealth() { return readProviderHealth("lithos", "default", {}); }
   rt::Task<ProviderHealthView> getLithosProviderHealth(std::function<double()> now) { return readProviderHealth("lithos", "default", std::move(now)); }
+  rt::Task<ProviderHealthView> getGeminiProviderHealth() { return readProviderHealth("gemini", "default", {}); }
+  rt::Task<ProviderHealthView> getGeminiProviderHealth(std::function<double()> now) { return readProviderHealth("gemini", "default", std::move(now)); }
 
   rt::Task<ProviderHealthView> getClaudeCodeProviderHealth() { return getClaudeCodeProviderHealth({}, std::nullopt); }
   rt::Task<ProviderHealthView> getClaudeCodeProviderHealth(std::function<double()> now) { return getClaudeCodeProviderHealth(std::move(now), std::nullopt); }

@@ -205,9 +205,9 @@ passkey assertion verification failed", { message, ... })`), so the replacement 
   (`path: "linux-arm64.node"`, `architecture: "arm64"`, sha256 of the artifact) it calls
   `process.dlopen(module, path)` on the addon built from `src/runtime/permissions-native.c`
   (exports `support()` -> `{ landlockAbi, seccomp }`, `readonlyMount(path)`,
-  `enforce(grants)`: Landlock ruleset + seccomp process filter with thread sync). The
-  C++ port should compile that C code into the binary and call it directly (no dlopen);
-  keep the manifest hash check only if the artifact stays a separate file.
+  `enforce(grants)`: Landlock ruleset + seccomp process filter with thread sync).
+  The native gateway verifies the packaged addon and enforces its own C++ Landlock
+  and seccomp profiles, including reduced-ABI and opt-in child-process policies.
 - `src/storage/native-addon.ts`: verifies provenance/input hashes, then
   `createRequire(import.meta.url)(path)` loads `native-kv.node` (@deno/kv 0.14.0 NAPI v4
   backend at commit 9fe65cc138ff56ca5bfe7a1bf8c53e832246f9d5; exports `open`, `close`,

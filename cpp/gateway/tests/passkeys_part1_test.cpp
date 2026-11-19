@@ -1,5 +1,6 @@
 // Port of all 40 original tests/passkeys-part1.test.ts registrations, in source order.
 // Links: tests/passkeys_part1_test.cpp tests/helpers/loopback_http.cpp tests/helpers/passkeys_harness.cpp src/auth/passkeys.cpp src/agent_messages.cpp src/auth/index.cpp src/auth/passport.cpp src/utils.cpp src/auth/local_admin.cpp src/config.cpp src/models/catalog.cpp src/release.cpp
+// src/provider/gemini.cpp src/admin/gemini_quota.cpp
 // src/deepseek/waterfall.cpp src/input_normalization.cpp src/request.cpp src/api_key_policy.cpp src/auth/local_development_key.cpp src/models/metadata.cpp src/models/codex_models.cpp src/http.cpp src/auth/passport_sessions.cpp src/models/codex_models_whitelist.cpp src/provider/cerebras.cpp src/api_keys.cpp
 // src/authority/native_api_key.cpp src/provider/surplus.cpp src/analytics.cpp src/types.cpp src/kernel/attestation.cpp src/provider/lithos.cpp src/request_policy.cpp src/provider/anthropic_chat_responses.cpp src/provider/surplus_claude_request.cpp src/provider/metered.cpp
 // src/authority/native_api_key_policy.cpp src/kernel/quota_reservations.cpp src/provider/selection.cpp src/authority/native_paid_policy.cpp src/provider/openrouter.cpp src/authority/native_kernel.cpp src/runtime/http.cpp src/kernel/quota_v2.cpp src/models/codex_models_fetch.cpp

@@ -13,4 +13,10 @@
 
 ## Status
 
-The Gemini merge, security audit and executable qualification runs are pending. Tests will use the supported namespace drivers with a fresh home and temporary directory, a credential-free environment, and local fixtures.
+The security audit and executable qualification runs are pending. Tests will use the supported namespace drivers with a fresh home and temporary directory, a credential-free environment, and local fixtures.
+
+## Gemini merge
+
+`git merge --no-ff --no-commit origin/codex/antigravity-gemini-subscription-20261118` merged the pinned Gemini head. Resolved the DeepSeek conflict with the first parent's header and kept the retired manifest generator and four legacy files deleted. `git ls-files` found zero forbidden root paths, and `comm -3` on the sorted TypeScript and Rust path lists before and after the merge gave no difference. Compared the Gemini changes against the common ancestor under `tools/native-kv`, `ops`, and `**/permissions-native.c`. There were no changes to transplant. The operator prerequisites carried into `docs/RUNTIME.md`.
+
+`python3 -B cpp/gateway/tools/cmake-sources.py "$scratch/sources.cmake"` validated 325 historical keys plus two native Gemini modules, 44 runtime files and 371 total sources. `python3 -B cpp/gateway/tools/links.py --check`, `bash cpp/gateway/tools/ci-build.sh --list` and `git diff --cached --check` passed with 452 test registrations.

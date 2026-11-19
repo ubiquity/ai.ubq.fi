@@ -20,8 +20,8 @@ namespace uos::authority::native_api_key {
    * normalizer reads this list, so a provider added here is accepted by the
    * ledger instead of turning its dispatched row into an unreadable one.
    */
-  inline constexpr std::array<std::string_view, 10> API_KEY_USAGE_PROVIDERS = {
-    "cerebras", "chatgpt_codex", "claude_code", "deepseek", "lithos", "openrouter", "removed_provider", "metered", "surplus", "voyage",
+  inline constexpr std::array<std::string_view, 11> API_KEY_USAGE_PROVIDERS = {
+    "cerebras", "chatgpt_codex", "claude_code", "deepseek", "gemini", "lithos", "openrouter", "removed_provider", "metered", "surplus", "voyage",
   };
 
   // The value currentApiKeyUsageWindow returns: `{ start: number; reset: number }`.

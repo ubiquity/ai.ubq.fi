@@ -47,6 +47,7 @@
 #include "uos/models/metadata.hpp"
 #include "uos/models/openrouter_models.hpp"
 #include "uos/provider/cerebras.hpp"
+#include "uos/provider/gemini.hpp"
 #include "uos/provider/lithos.hpp"
 #include "uos/provider/openrouter.hpp"
 #include "uos/recent_model_context.hpp"
@@ -486,6 +487,27 @@ namespace uos::input_normalization {
     auto result = models;
     for (const auto& candidate : configured) if (std::none_of(models.begin(), models.end(), [&](const auto& model) { const auto* id = rt::get(model, "id"); return id && rt::strictEquals(*id, *rt::get(candidate, "id")); })) result.push_back(candidate);
     return result;
+  }
+  json::array withConfiguredGeminiModels(const json::array& models, bool enabled) {
+    const auto configured = enabled && provider::gemini::geminiCliConfigured() ? configuredModels(provider::gemini::GEMINI_MODEL_IDS, "google") : json::array{};
+    return replaceConfigured(models, configured);
+  }
+  json::array withConfiguredGeminiCapabilities(const json::array& data, bool enabled) {
+    if (!enabled || !provider::gemini::geminiCliConfigured()) return data;
+    json::array rows;
+    for (const auto id : provider::gemini::GEMINI_MODEL_IDS) {
+      const std::string effort = rt::endsWith(id, "-high") ? "high" : rt::endsWith(id, "-medium") ? "medium" : "low";
+      const std::string display = std::string("Gemini 3.8 Flash (") + (effort == "high" ? "High" : effort == "medium" ? "Medium" : "Low") + ")";
+      json::object row{{"id", id}, {"object", "uos.model_capabilities"}, {"owned_by", "google"}, {"display_name", display},
+        {"upstream_provider", "gemini"}, {"supported_endpoints", json::array{"/v1/responses", "/v1/chat/completions"}},
+        {"supported_reasoning_levels", json::array{effort}}, {"default_reasoning_effort", effort}, {"reasoning_effort_wire_map", json::object{}},
+        {"context_window_tokens", rt::makeNumber(provider::gemini::GEMINI_CONTEXT_WINDOW_TOKENS)},
+        {"max_context_window_tokens", rt::makeNumber(provider::gemini::GEMINI_CONTEXT_WINDOW_TOKENS)},
+        {"auto_compact_token_limit_tokens", rt::makeNumber(provider::gemini::GEMINI_CONTEXT_WINDOW_TOKENS * 0.8)},
+        {"context_source", "provider_documented"}, {"reasoning_source", "model_id"}};
+      rows.push_back(std::move(row));
+    }
+    return replaceConfigured(data, rows);
   }
   json::array withConfiguredDeepSeekModels(const json::array& models, bool enabled) { return replaceConfigured(models, enabled && ds::readDeepSeekApiKey() ? configuredModels(ds::DEEPSEEK_OFFICIAL_MODEL_IDS, "deepseek") : json::array{}); }
   json::array withConfiguredDeepSeekCapabilities(const json::array& data, bool enabled) { return replaceConfigured(data, enabled ? configuredDeepSeekModelCapabilities() : json::array{}); }

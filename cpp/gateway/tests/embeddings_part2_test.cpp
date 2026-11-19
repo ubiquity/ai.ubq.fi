@@ -1,5 +1,6 @@
 // Port of tests/embeddings-part2.test.ts: 13 callable cases, including the real handler/http scope helper.
 // Links: tests/embeddings_part2_test.cpp
+// src/provider/gemini.cpp src/admin/gemini_quota.cpp
 // src/handler/index.cpp src/admin/api_key_mutations.cpp tests/helpers/embeddings_harness.cpp src/authority/native_api_key_policy.cpp src/admin/codex.cpp src/utils.cpp src/kv.cpp src/admin/error_log.cpp
 // src/auth/passkeys.cpp src/cache/scope_experiment_model.cpp src/models/catalog.cpp src/authority/native_paid_policy.cpp src/provider/selection.cpp src/models/codex_models_fetch.cpp src/analytics.cpp src/admin/kernel.cpp
 // src/codex/auth.cpp src/api_key_policy.cpp src/admin/api_keys.cpp src/cache/scope_experiment_targets.cpp src/quota_projection.cpp src/models/metadata.cpp src/paid_fallback/ledger_backfill.cpp src/http.cpp

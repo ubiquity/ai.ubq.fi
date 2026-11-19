@@ -1,4 +1,5 @@
 // Links: tests/provider_selection_test.cpp
+// src/provider/gemini.cpp src/admin/gemini_quota.cpp
 // src/admin/api_key_audit.cpp src/admin/api_key_mutations.cpp src/admin/api_keys.cpp src/admin/capacity_observation_sync.cpp src/admin/chart_source_proxy.cpp src/admin/claude_code.cpp src/admin/codex.cpp src/admin/codex_reset.cpp src/admin/defaults.cpp src/admin/error_log.cpp
 // src/admin/kernel.cpp src/admin/sentinel_incident.cpp src/agent_messages.cpp src/analytics.cpp src/api_key_policy.cpp src/api_keys.cpp src/auth/index.cpp src/auth/local_admin.cpp src/auth/local_development_key.cpp src/auth/passkeys.cpp
 // src/auth/passport.cpp src/auth/passport_sessions.cpp src/auth/relay.cpp src/authority/native_api_key.cpp src/authority/native_api_key_audit.cpp src/authority/native_api_key_policy.cpp src/authority/native_codex.cpp src/authority/native_codex_429.cpp src/authority/native_codex_capacity.cpp src/authority/native_codex_contracts.cpp
@@ -394,6 +395,7 @@ ASYNC_TEST("admin provider picker reports the roster, catalog counts, and the sa
   json::array rows{
     json::object{{"id", "codex"}, {"model_count", 1}, {"status", "available"}, {"configured", true}, {"subscriptions", json::array{}}},
     json::object{{"id", "claude_code"}, {"model_count", 0}, {"status", "unavailable"}, {"configured", false}},
+    json::object{{"id", "gemini"}, {"model_count", 0}, {"status", "unavailable"}, {"configured", false}},
     json::object{{"id", "surplus"}, {"model_count", 2}, {"status", "available"}, {"configured", true}},
     json::object{{"id", "openlux"}, {"model_count", 0}, {"status", "unavailable"}, {"configured", false}},
     json::object{{"id", "deepseek"}, {"model_count", 1}, {"status", "available"}, {"configured", true}},

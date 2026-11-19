@@ -6,6 +6,7 @@
 #include "uos/provider/lithos_handlers.hpp"
 #include "uos/provider/lithos.hpp"
 #include "uos/provider/cerebras.hpp"
+#include "uos/provider/gemini.hpp"
 #include "uos/provider/cerebras_handlers.hpp"
 #include "uos/provider/openrouter_handlers.hpp"
 #include "uos/provider/openrouter_request_controls.hpp"
@@ -200,6 +201,12 @@ namespace {
     const auto* context = usageContext ? &*usageContext : nullptr;
     rt::Promise<Step<Envelope>> envelopePending(parseChatCompletionsEnvelope(req)); auto envelopeResult = co_await envelopePending.wait(); if (const auto* error = std::get_if<NotOk>(&envelopeResult)) co_return error->response; auto& envelope = std::get<Envelope>(envelopeResult);
     auto modelTask = resolveChatCompletionsModel(envelope.rawRecord, context); rt::Promise<Step<Model>> modelPending(std::move(modelTask)); const auto modelResult = co_await modelPending.wait(); if (const auto* error = std::get_if<NotOk>(&modelResult)) co_return error->response; const auto model = std::get<Model>(modelResult);
+    if (sel::isProviderEnabled("gemini", envelope.selection) && provider::gemini::isGeminiModel(model.model)) {
+      auto task = provider::gemini::handleGeminiChatCompletions(req, envelope.rawRecord, model.modelRaw, context);
+      rt::Promise<rt::Response> pending(std::move(task));
+      auto response = co_await pending.wait();
+      co_return response;
+    }
     const auto cerebras = provider::cerebras::cerebrasUpstreamModelFor(model.model);
     if (sel::isProviderEnabled("cerebras", envelope.selection) && cerebras) { auto task = provider::cerebras_handlers::handleCerebrasChatCompletions(req, envelope.rawRecord, model.modelRaw, context, *cerebras); rt::Promise<rt::Response> pending(std::move(task)); auto response = co_await pending.wait(); co_return response; }
     if (sel::isProviderEnabled("deepseek", envelope.selection) && deepseek::index::deepSeekUpstreamModelFor(model.model)) { auto task = deepseek::handlers::handleDeepSeekChatCompletions(req, std::move(envelope.rawRecord), model.modelRaw, context); rt::Promise<rt::Response> pending(std::move(task)); auto response = co_await pending.wait(); co_return response; }

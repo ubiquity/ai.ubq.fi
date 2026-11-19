@@ -67,6 +67,6 @@
 #include "uos/rt/test.hpp"
 
 TEST("w04c1 cluster headers compile together and their constants initialise") {
-  EXPECT(uos::provider::presentation::PROVIDER_PRESENTATION.size() == 9);
+  EXPECT(uos::provider::presentation::PROVIDER_PRESENTATION.size() == 10);
   EXPECT(uos::provider::capacity_contract::SHA256_HEX.test(std::string(64, 'f')));
 }

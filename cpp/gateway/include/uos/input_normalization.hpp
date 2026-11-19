@@ -29,6 +29,8 @@ namespace uos::input_normalization {
   std::optional<json::object> configuredCerebrasModelCapabilities();
   std::optional<json::object> configuredCerebrasModelCapabilities(const std::string& model);
   json::array withConfiguredCerebrasModel(const json::array& models, bool enabled);
+  json::array withConfiguredGeminiModels(const json::array& models, bool enabled);
+  json::array withConfiguredGeminiCapabilities(const json::array& data, bool enabled);
   json::array withConfiguredDeepSeekModels(const json::array& models, bool enabled);
   json::array withConfiguredDeepSeekCapabilities(const json::array& data, bool enabled);
   json::array withConfiguredLithosModels(const json::array& models, bool enabled);

@@ -40,8 +40,8 @@ namespace uos::provider::selection {
    * `ubiquity/deepseek-flash` route; in an active selection its absence
    * switches that route off like any other unchecked provider.
    */
-  inline constexpr std::array<std::string_view, 9> SELECTABLE_PROVIDER_IDS = {"codex",    "claude_code", "surplus",    "openlux", "deepseek",
-                                                                              "cerebras", "lithos",      "openrouter", "ubiquity"};
+  inline constexpr std::array<std::string_view, 10> SELECTABLE_PROVIDER_IDS = {"codex",  "claude_code", "gemini", "surplus", "openlux", "deepseek",
+                                                                               "cerebras", "lithos",    "openrouter", "ubiquity"};
 
   // `(typeof SELECTABLE_PROVIDER_IDS)[number]`
   using SelectableProviderId = std::string;
