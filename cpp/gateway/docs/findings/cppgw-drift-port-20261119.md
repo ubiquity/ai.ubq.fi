@@ -40,7 +40,9 @@ git log --oneline HEAD..origin/development -- src serve.ts lib static
   seeds the 1,048,576-token OpenRouter alias and checks both the enriched and paid-hop fixtures for 800,000-token
   windows and a 720,000-token compaction limit.
 - `9353aa208a336da2c1516d604e0be16dc8af0ade` `Sentinel repair: issue 1281`.
-  PORT, pending. The Passport callback classifies exchange 4xx responses as authentication failures.
+  PORT. `src/auth/passport.cpp` cancels the exchange body on HTTP 4xx and returns HTTP 401 `invalid_api_key`.
+  `tests/passport_test.cpp` ports the five 4xx and four 5xx inputs through the callback. Each case checks
+  one exchange, exact clearing headers for state and verifier cookies, and the 401 or 502 status and error code.
 
 ## Verification
 
