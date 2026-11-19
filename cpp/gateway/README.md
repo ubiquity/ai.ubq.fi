@@ -1,26 +1,25 @@
 # Native C++ gateway
 
 The native gateway runs compiled C++20. It ports the repository's TypeScript gateway, which runs on Bun, and serves
-the same gateway APIs, including OpenAI Chat Completions and Responses. The port preserves wire formats, status
-codes, stored data, authentication, validation and accounting as application contracts. Generic operations use
+the same gateway APIs, including OpenAI Chat Completions and Responses. The port keeps the wire, authentication,
+validation and accounting contracts and uses the marked Bun/JSC SQLite store within its tested value coverage. Generic operations use
 standard or mature open-source libraries where they meet those contracts, including the required security checks.
-Differences in diagnostic wording are expected. [TypeScript source](https://github.com/ubiquity/ai.ubq.fi/tree/2b23fb6837e2b5c0dc9ffa50771f52d322dd413a/src) ·
+Deliberate differences are recorded in the runtime deviation log. [Deviation log](docs/DEVIATIONS-FROM-BUN.md) · [TypeScript source](https://github.com/ubiquity/ai.ubq.fi/tree/2b23fb6837e2b5c0dc9ffa50771f52d322dd413a/src) ·
 [TypeScript entry point](https://github.com/ubiquity/ai.ubq.fi/blob/2b23fb6837e2b5c0dc9ffa50771f52d322dd413a/serve.ts) · [Architecture](docs/ARCHITECTURE.md)
 
 ## Where it stands
 
-- **Linux ARM64.** On the combined follow-up tree, the full Release and ASan, UBSan and LSan runs each passed
-  **451 binaries and 5,186 cases**. The earlier F2 portable package sealed and ran on Debian 12 and 13. It agreed
-  with Bun on all 186 paired conformance cases, including two validation failures shared by both gateways.
-  [Combined verification](docs/findings/cppgw-combine-1-20261119.md) · [F2 package and comparison](docs/findings/cppgw-integrate-f2-20261118.md)
+- **Linux ARM64.** Release and sanitizer runs each passed **453/453 binaries and 5,264/5,264 cases**.
+  The Debian package proofs and paired production comparison use the sealed Linux ARM64 package.
+  [Final qualification](docs/findings/cppgw-final-20261119.md)
 - **Linux x64.** The pre-integration comparison built 441 binaries and passed **438/441 binaries and 5,007/5,031 cases**.
   The three failures are detailed below. [Runner verification](docs/findings/cppgw-docs-readme-20261118.md)
-- **Apple Silicon.** The macOS 26.7.2 qualification of the standard-library follow-up passed **450/450 binaries
+- **Apple Silicon.** The earlier macOS 26.7.2 qualification of the standard-library follow-up passed **450/450 binaries
   and 5,119/5,119 cases**. The extracted package returned its source commit from `--version`. Serving requires
   Linux confinement.
   [macOS results](docs/MACOS.md) · [Packages](docs/RELEASES.md)
 - **Raspberry Pi.** This is a 64-bit ARM target. Its OS, loader, kernel confinement and memory headroom
-  still need checking on the device. [Platform requirements](docs/BUILD.md)
+  still need checking on the device. [Raspberry Pi requirements](docs/RASPBERRY-PI.md)
 
 ### Speed and memory versus Bun
 
@@ -66,7 +65,7 @@ the pinned library into `/usr/local`. The final command printed `3.54.0`.
 )
 ```
 
-List the tests, then build and run Release. The first command prints `451`. The driver builds common objects once
+List the tests, then build and run Release. The first command prints `453`. The driver builds common objects once
 and links each standalone test. It uses real Linux namespaces with loopback-only networking, a fresh temp filesystem
 and an empty home for every test. It tries unprivileged namespaces, then passwordless `sudo` for namespace setup.
 [Driver and isolation](docs/CI.md)
@@ -74,7 +73,9 @@ and an empty home for every test. It tries unprivileged namespaces, then passwor
 ```sh
 bash cpp/gateway/tools/ci-build.sh --list | wc -l
 build_dir=$(mktemp -d /tmp/uos-gateway-build.XXXXXX)
-env -i PATH="$PATH" LC_ALL=C LD_LIBRARY_PATH=/usr/local/lib CXX=clang++ UOS_CI_JOBS=4 \
+mkdir "$build_dir/home" "$build_dir/tmp"
+env -i PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 HOME="$build_dir/home" TMPDIR="$build_dir/tmp" \
+  CC=clang-21 CXX=clang++-21 UOS_CI_JOBS=4 UOS_CI_SQLITE_PREFIX=/usr/local \
   UOS_CI_BUILD_DIR="$build_dir" bash cpp/gateway/tools/ci-build.sh --config release >"$build_dir/driver.log" 2>&1
 ```
 
@@ -87,11 +88,14 @@ contracts and accounted for 23 failed cases on this host. One case in `native_ad
 also failed. Its Linux x64 vectors still expect older Bun error wording for malformed JSON. The parser
 rejected the inputs. [Failure details](docs/findings/cppgw-docs-readme-20261118.md)
 
-For a focused local HTTP check, reuse the build directory. This fixture started the gateway handler and a scripted
-upstream on loopback and passed all **5 cases** on this runner. [HTTP fixture](tests/oss_gateway_http_test.cpp)
+For a focused local HTTP check, reuse the build directory. This fixture starts the gateway handler and a scripted
+upstream on loopback. [HTTP fixture](tests/oss_gateway_http_test.cpp)
 
 ```sh
-env -i PATH="$PATH" LC_ALL=C LD_LIBRARY_PATH=/usr/local/lib CXX=clang++ UOS_CI_JOBS=4 \
+fixture_env=$(mktemp -d /tmp/uos-gateway-fixture.XXXXXX)
+mkdir "$fixture_env/home" "$fixture_env/tmp"
+env -i PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C.UTF-8 HOME="$fixture_env/home" TMPDIR="$fixture_env/tmp" \
+  CC=clang-21 CXX=clang++-21 UOS_CI_JOBS=4 UOS_CI_SQLITE_PREFIX=/usr/local \
   UOS_CI_BUILD_DIR="$build_dir" bash cpp/gateway/tools/ci-build.sh --config release oss_gateway_http_test \
   >"$build_dir/loopback-driver.log" 2>&1
 ```
@@ -121,50 +125,59 @@ to `127.0.0.1` and refuses service ports `7999` and `8000`. [Launch probe](docs/
 The launch manifest selects package, state and listener. The process reads the existing gateway environment for
 authentication, provider settings and identity, including `UOS_AI_TOKEN`, `CODEX_AUTH_JSON_B64` and `DENO_TIMELINE`.
 `DENO_TIMELINE=production` disables the legacy localhost authentication bypass. The binary reads the process
-environment. Set `EnvironmentFile=` to the operator-owned `.env` in the service unit. Its use needs cutover
-review. [Configuration source](src/config.cpp) · [Auth policy](src/auth/index.cpp) · [Environment inventory](docs/RUNTIME.md) ·
+environment. Point `EnvironmentFile=` at the explicitly selected operator-owned file in the reviewed service
+unit. The launch path performs no automatic `.env` discovery. [Configuration source](src/config.cpp) · [Auth policy](src/auth/index.cpp) · [Environment inventory](docs/RUNTIME.md#environment) ·
 [Draft unit](ops/uos-gateway-native.service)
 
 ### Security in five points
 
 1. Startup verifies the sealed package, host libraries and native artifacts before opening KV or binding the listener. [Startup](runtime/startup.cpp)
 2. Linux ARM64 startup requires Landlock ABI 8+ by default. On ABI 3–7, `UOS_GATEWAY_ALLOW_REDUCED_CONFINEMENT=1` explicitly selects the controls that the kernel supports. Seccomp thread synchronization remains required. [Confinement](docs/RUNTIME.md#linux-confinement)
-3. By default the service reads the package, private state and required OS files, writes under private `.data` and denies subprocesses. The Antigravity setting explicitly enables the CLI and its tighter child filesystem profile. [Confinement](docs/RUNTIME.md#linux-confinement)
+3. By default the service reads the package, private state and required OS files, writes under private `.data` and denies subprocesses. The Antigravity opt-in enables gateway-wide process creation and exec syscalls and adds a tighter filesystem profile for the CLI child. [Confinement](docs/RUNTIME.md#linux-confinement)
 4. The loopback service applies the gateway's authentication, validation and admission rules at its routes. [Request routing](src/handler/index.cpp)
-5. HTTP heads cap at 16,408 bytes and 198 fields. Default JSON parsing caps at 16 MiB and 128 levels, with route-specific limits including allowances for image edits. [HTTP parser](src/runtime/http.cpp) · [Limits](include/uos/rt/limits.hpp)
+5. HTTP heads cap at 16,408 bytes and 198 fields. Default JSON parsing caps at 16 MiB and 128 levels. The security inventory covers the transport and image-edit allowances. [Security limits](docs/SECURITY-LIMITS.md)
 
 ## Libraries in use
 
 The table lists the release build pins and the shared libraries supplied by the target OS. [Release packages](docs/RELEASES.md) · [Vendor registry](cmake/vendors.json)
 
-| Library              | Release version    | Responsibility                                                                                                                                                                                                                                      |
-| -------------------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| simdjson             | 5.2.0, vendored    | Bounded On-Demand JSON parsing into owned Boost.JSON values. [Parser](src/rt/json_simdjson.hpp)                                                                                                                                                     |
-| simdutf              | 9.4.0, vendored    | Base64, UTF validation and text conversion. [Provenance](third_party/simdutf/PROVENANCE.md)                                                                                                                                                         |
-| llhttp               | 9.4.4, vendored    | HTTP server request parsing and outbound Fetch and WebSocket response parsing. [Provenance](third_party/llhttp/PROVENANCE.md)                                                                                                                       |
-| Ada                  | 4.0.0, vendored    | URL parsing, IDNA and URL search parameters. [URL adapter](src/rt/url.cpp)                                                                                                                                                                          |
-| QCBOR                | 1.6.1, vendored    | CBOR encoding and strict decoding for passkeys. [Passkeys](src/auth/passkeys.cpp)                                                                                                                                                                   |
-| QuickJS-ng libregexp | 0.18.0, vendored   | Bounded ECMAScript matching and Unicode sets. [Regex adapter](docs/rt/regex.md)                                                                                                                                                                     |
-| Boost                | 1.92.0             | Asio for I/O and coroutines, Beast for WebSocket handshake and frame primitives, JSON and Container for values, and Multiprecision for BigInt. [Async](include/uos/rt/async.hpp) · [WebSocket](docs/rt/websocket.md) · [Numbers](src/rt/number.cpp) |
-| ICU                  | 78.3               | Unicode casing and collation. [Text implementation](src/rt/string.cpp)                                                                                                                                                                              |
-| OpenSSL              | 3, OS library      | TLS, crypto and passkey ASN.1, X.509 and CRL decoding. [TLS](src/rt/tls.cpp) · [Passkeys](src/auth/passkeys.cpp)                                                                                                                                    |
-| SQLite               | 3.54.0             | Database engine for the KV backend. [KV backend](src/rt/kv_sqlite.cpp)                                                                                                                                                                              |
-| zlib, Brotli, Zstd   | OS libraries       | Gzip streams and HTTP content decoding. [Gzip](src/rt/gzip.cpp) · [Fetch decoding](src/rt/fetch_transport_codec.cpp)                                                                                                                                |
-| C++20 and POSIX      | Standard libraries | Dates, filesystem paths, numeric conversion, collections and process environment. [Completed replacements](docs/OSS-REPLACEMENT-PLAN.md#ranked-component-inventory)                                                                                 |
+| Library              | Release version                  | Responsibility                                                                                                                                                                                                                                      |
+| -------------------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| simdjson             | 5.2.0, vendored                  | Bounded On-Demand JSON parsing into owned Boost.JSON values. [Parser](src/rt/json_simdjson.hpp)                                                                                                                                                     |
+| simdutf              | 9.4.0, vendored                  | Base64, UTF validation and text conversion. [Provenance](third_party/simdutf/PROVENANCE.md)                                                                                                                                                         |
+| llhttp               | 9.4.4, vendored                  | HTTP server request parsing and outbound Fetch and WebSocket response parsing. [Provenance](third_party/llhttp/PROVENANCE.md)                                                                                                                       |
+| Ada                  | 4.0.0, vendored                  | URL parsing, IDNA and URL search parameters. [URL adapter](src/rt/url.cpp)                                                                                                                                                                          |
+| QCBOR                | 1.6.1, vendored                  | CBOR encoding and strict decoding for passkeys. [Passkeys](src/auth/passkeys.cpp)                                                                                                                                                                   |
+| QuickJS-ng libregexp | 0.18.0, vendored                 | Bounded ECMAScript matching and Unicode sets. [Regex adapter](docs/rt/regex.md)                                                                                                                                                                     |
+| Boost                | 1.92.0, static on portable Linux | Asio for I/O and coroutines, Beast for WebSocket handshake and frame primitives, JSON and Container for values, and Multiprecision for BigInt. [Async](include/uos/rt/async.hpp) · [WebSocket](docs/rt/websocket.md) · [Numbers](src/rt/number.cpp) |
+| ICU                  | 78.3, static on portable Linux   | Unicode casing and collation. [Text implementation](src/rt/string.cpp)                                                                                                                                                                              |
+| OpenSSL              | 3, OS library                    | TLS, crypto and passkey ASN.1, X.509 and CRL decoding. [TLS](src/rt/tls.cpp) · [Passkeys](src/auth/passkeys.cpp)                                                                                                                                    |
+| SQLite               | 3.54.0, static on portable Linux | Database engine for the KV backend. [KV backend](src/rt/kv_sqlite.cpp)                                                                                                                                                                              |
+| zlib, Brotli, Zstd   | OS libraries                     | Gzip streams and HTTP content decoding. [Gzip](src/rt/gzip.cpp) · [Fetch decoding](src/rt/fetch_transport_codec.cpp)                                                                                                                                |
+| C++20 and POSIX      | Standard libraries               | Dates, filesystem paths, numeric conversion, collections and process environment. [Completed replacements](docs/OSS-REPLACEMENT-PLAN.md#ranked-component-inventory)                                                                                 |
 
 The package also carries and verifies the pinned `@deno/kv` 0.14.0 artifact for provenance. The linked C++ SQLite
 backend handles the actual database operations. [Architecture](docs/ARCHITECTURE.md) ·
 [Artifact pin](packaging/native-kv/inputs.json)
 
+## User-visible behavior
+
+- Oversized model strings in Chat and Responses receive a structured error before dispatch. Oversized admin
+  model and image request fields stay within their established validation paths. [Request limits](docs/SECURITY-LIMITS.md)
+- When the native HTTP writer rejects outbound SSE headers, it cancels the producer and settles the interrupted
+  delivery. The client still receives the fallback HTTP 500. [Architecture](docs/ARCHITECTURE.md#from-client-socket-to-provider-and-back)
+- The portable package reports its exact source SHA in health JSON and response headers. [Release guide](docs/RELEASES.md)
+- The optional Antigravity adapter offers text-only Gemini Chat Completions and Responses when an operator
+  enables it and installs and signs in to the supported CLI. [Gemini setup](docs/RUNTIME.md#enable-the-gemini-subscription)
+
 ## Open items
 
-- `chat-invalid-role` and `responses-invalid-tool-type` should return HTTP 400 without dispatch. The packaged
-  gateway and Bun both returned HTTP 200 and dispatched in conformance. [Final integration](docs/findings/cppgw-integrate-f2-20261118.md)
-- The coroutine lifetime audit and rollout of the tighter input limits are in progress.
-  [Coroutine audit](docs/findings/local-coroutine-lifetime-audit.md) · [Input limits](docs/RUNTIME.md#input-limits)
+- In the two shared conformance failures, both gateways dispatch and receive HTTP 200. The suite expects HTTP
+  400 and no dispatch for an unknown Chat role and an unknown Responses tool type. [Paired conformance](docs/CONFORMANCE.md)
 - The storage reader preserves sparse entries, references and cycles in the typed graph. Projection to dense JSON
-  can materialize holes. Cutover still needs complete decoding on a stopped copy, verified reverse conversion of
-  the latest writes, and durability evidence. [Storage cutover](docs/OPEN-STAGES.md) ·
+  can materialize holes. Cutover still needs stopped-copy decoding, durability evidence and a Bun reopen of the
+  latest native-written rehearsal state. A legacy Deno rollback also requires verified reverse conversion.
+  [Storage cutover](docs/CUTOVER.md) ·
   [Durable KV](docs/rt/kv-durable.md)
 - The native Fetch client uses HTTP/1.1 and has no proxy support. The loopback server has no TLS termination of
   its own. Some buffered-body transfer framing and gzip bytes differ from Bun. The recorded request-path tests
@@ -172,7 +185,7 @@ backend handles the actual database operations. [Architecture](docs/ARCHITECTURE
   [Open stages](docs/OPEN-STAGES.md)
 - Production activation needs separate approval, including credential, release and applicable Sentinel-reader
   acceptance. The remaining runtime library work is tracked in the replacement plan. [Replacement plan](docs/OSS-REPLACEMENT-PLAN.md) ·
-  [Cutover requirements](docs/RUNTIME.md)
+  [Cutover checklist](docs/CUTOVER.md)
 
 ## Document map
 
@@ -181,6 +194,7 @@ backend handles the actual database operations. [Architecture](docs/ARCHITECTURE
 - [Build](docs/BUILD.md) covers release toolchains, native package targets and build measurements.
 - [Runtime](docs/RUNTIME.md) specifies the package, launch manifest, limits, environment and cutover gates.
 - [Releases](docs/RELEASES.md) explains how to verify and install the ARM64 archives.
+- [Cutover and rollback](docs/CUTOVER.md) covers the owner's Arch Linux ARM service switch and data rehearsal.
 - [Conformance](docs/CONFORMANCE.md) runs the packaged gateway and Bun against the same loopback mocks.
 - [Operations draft](ops/README.md) describes the uninstalled launcher and service unit.
 - [Package smoke](tests/production_smoke/README.md) runs local authenticated checks on a sealed package.
@@ -214,7 +228,7 @@ backend handles the actual database operations. [Architecture](docs/ARCHITECTURE
 ### Findings and benchmark instructions
 
 - [Guide verification](docs/findings/cppgw-docs-readme-20261118.md) records the commands, x64 results and documentation discrepancies.
-- [Final integration](docs/findings/cppgw-integrate-f2-20261118.md) has the merged ARM64 Release, sanitizer, robustness and package evidence.
+- [Final qualification](docs/findings/cppgw-final-20261119.md) records this branch's test, package and comparison evidence.
 - [CI workflow](docs/findings/cppgw-ci-workflow-20261118.md) gives earlier shard diagnostics and artifact handling.
 - [Portable x64 build](docs/findings/cppgw-ci-build-x86-20261117.md) traces the original driver qualification.
 - [Native macOS](docs/findings/cppgw-macos-native-20261117.md) has the exact development run and dependency decisions.

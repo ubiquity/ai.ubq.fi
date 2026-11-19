@@ -24,6 +24,7 @@
 #include "uos/utils.hpp"
 #include "uos/http.hpp"
 #include "uos/rt/json.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/string.hpp"
 namespace uos::chat::envelope {
 namespace {
@@ -50,8 +51,10 @@ namespace {
     rt::Promise<json::value> bodyPromise(request::readJsonBody(req)); auto body = co_await bodyPromise.wait();
     if (!rt::truthy(body) || !utils::isRecord(body)) co_return NotOk{invalid("Invalid JSON body")};
     auto raw = body.is_object() ? std::move(body.as_object()) : recordOf(body);
+    const auto model = rt::trim(rt::getString(raw, "model").value_or(""));
+    if (model.size() > rt::limits::kRegexSubjectBytes) co_return NotOk{invalid("model is too long", "model")};
     rt::Promise<std::optional<sel::ProviderSelection>> selected(sel::loadProviderSelectionCached()); const auto selection = co_await selected.wait();
-    const auto requested = deepseek::index::deepSeekUpstreamModelFor(rt::trim(utils::getString(rt::get(raw, "model")).value_or("")));
+    const auto requested = deepseek::index::deepSeekUpstreamModelFor(model);
     const bool enabled = sel::isProviderEnabled("deepseek", selection);
     if (requested && !enabled && rt::hasOwn(raw, "thinking")) co_return NotOk{invalid("The DeepSeek `thinking` extension requires the DeepSeek provider to be enabled; remove `thinking` or enable provider `deepseek`.", "thinking")};
     std::optional<rt::OrderedSet<std::string>> extensions;

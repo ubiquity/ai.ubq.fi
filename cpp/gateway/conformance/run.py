@@ -157,7 +157,7 @@ def run(args):
     smoke = benchmark["SMOKE"]
     sys.path.insert(2, str(smoke))
     from cases import synthetic_auth
-    from compare import compare, expectations, markdown, redact
+    from compare import compare, expectations, markdown, redact, release_checks
     from fixtures import ADMIN_TOKEN, API_TOKEN, PROVIDER_TOKEN
     from network import write_json
     from providers import Upstream
@@ -175,8 +175,10 @@ def run(args):
     secrets = (*credentials.values(), PROVIDER_TOKEN, VOYAGE_CACHE_TOKEN, codex_auth,
                *[auth["tokens"][name] for name in ("access_token", "refresh_token")])
     gateways = {name: Gateway(args, benchmark, name, identities, credentials, provider_env) for name in ("bun", "native")}
+    release_shas = {"bun": "unknown", "native": args.suite_revision}
     receipt = {"schema": 1, "source_revision": args.source_revision, "source_tree": args.source_tree, "suite_revision": args.suite_revision,
                "suite_tree": args.suite_tree, "binaries_sha256": identities, "network": network,
+               "release_git_sha": release_shas,
                "benchmark_revision": args.benchmark_revision,
                "benchmark_sha256": {path.name: benchmark["digest"](path) for path in sorted(args.bench.iterdir()) if path.is_file()},
                "smoke_sha256": {path.name: benchmark["digest"](path) for path in sorted(smoke.iterdir()) if path.is_file()},
@@ -197,15 +199,17 @@ def run(args):
                     observations[case["id"]] = {name: gateway.run(case, mock) for name, gateway in gateways.items()}
             for case in selected:
                 pair = observations.pop(case["id"])
-                expected, captures = {}, {}
+                expected, captures, release_fields = {}, {}, {}
                 for name, (spec, result) in pair.items():
                     if case.get("log"):
                         read_terminals(gateways[name], result)
-                    expected[name] = expectations(spec, result)
+                    release_fields[name] = release_checks(spec, result, release_shas[name])
+                    expected[name] = expectations(spec, result, release_fields[name])
                     if result.get("capture_error"):
                         expected[name].append({"path": "/capture", "expected": "valid identity", "actual": result["capture_error"]})
                     captures[name] = result
-                changes = compare(case, captures["bun"], captures["native"], {name: gateway.ids for name, gateway in gateways.items()})
+                changes = compare(case, captures["bun"], captures["native"], {name: gateway.ids for name, gateway in gateways.items()},
+                                  release_fields=release_fields)
                 receipt["cases"].append(redact({"id": case["id"], "observations": captures, "expectation_failures": expected,
                                                "differences": changes}, secrets))
             write_json(args.out / "results.partial.json", receipt)

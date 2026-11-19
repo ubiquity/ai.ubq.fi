@@ -3,7 +3,7 @@
 import unittest
 from io import BytesIO
 
-from compare import compare, expectations, normalize, redact
+from compare import compare, expectations, normalize, redact, release_checks
 from wire import read_sse
 
 
@@ -60,6 +60,38 @@ class CompareTest(unittest.TestCase):
         result = observation(dispatches=[{"route": "deepseek.success"}])
         self.assertEqual(self.differences(result, result), [])
         self.assertEqual([item["path"] for item in expectations(spec, result)], ["/status", "/routes"])
+
+    def test_release_identity_requires_exact_headers_and_body_on_each_side(self):
+        spec = {"path": "/health?cors_origin=https://ai.ubq.fi", "expect": {"status": 200}, "request_id": False}
+        commit = "a" * 40
+        bun = observation(body={"release": {"git_sha": "unknown", "deployment_id": "unknown"}})
+        native = observation(body={"release": {"git_sha": commit, "deployment_id": "vps-" + commit}})
+        for result in (bun, native):
+            release = result["body"]["release"]
+            result["headers"].update({"x-uos-git-sha": [release["git_sha"]], "x-uos-deployment-id": [release["deployment_id"]]})
+        checks = {"bun": release_checks(spec, bun, "unknown"), "native": release_checks(spec, native, commit)}
+        ids = {"bun": {}, "native": {}}
+        self.assertEqual(expectations(spec, bun, checks["bun"]), [])
+        self.assertEqual(expectations(spec, native, checks["native"]), [])
+        self.assertEqual(compare(spec, bun, native, ids, release_fields=checks), [])
+
+        native["headers"]["x-uos-git-sha"] = ["unknown"]
+        del native["body"]["release"]["deployment_id"]
+        self.assertEqual({item["path"] for item in expectations(spec, native, checks["native"])},
+                         {"/headers/x-uos-git-sha", "/body/release/deployment_id"})
+        self.assertEqual([item["path"] for item in compare(spec, bun, native, ids, release_fields=checks)],
+                         ["/body/release/deployment_id"])
+
+    def test_audit_release_identity_does_not_normalize_other_routes(self):
+        commit = "b" * 40
+        bun = observation(body={"data": [{"release": "unknown"}]})
+        native = observation(body={"data": [{"release": commit}]})
+        ids = {"bun": {}, "native": {}}
+        for path, expected in (("/admin/api-keys/changes?limit=10", []), ("/other", ["/body/data/0/release"])):
+            with self.subTest(path=path):
+                spec = {"path": path}
+                checks = {"bun": release_checks(spec, bun, "unknown"), "native": release_checks(spec, native, commit)}
+                self.assertEqual([item["path"] for item in compare(spec, bun, native, ids, release_fields=checks)], expected)
 
     def test_credential_redaction(self):
         self.assertEqual(redact({"echo": ["prefix private-fixture suffix"]}, ("private-fixture",)),

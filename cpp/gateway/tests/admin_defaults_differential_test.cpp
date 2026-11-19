@@ -45,9 +45,11 @@
 #include "tests/helpers/admin_auth_harness.hpp"
 #include "uos/rt/base64.hpp"
 #include "uos/rt/gzip.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/text_codec.hpp"
 #include "uos/rt/env.hpp"
 #include "uos/rt/test_async.hpp"
+#include <array>
 namespace rt = uos::rt;
 namespace json = uos::json;
 namespace a = uos::admin::defaults;
@@ -85,13 +87,20 @@ namespace {
       co_return result;
     }
   };
+  void seedRuntime() {
+    const json::object snapshot{{"source", "fixture"}, {"updated_at_ms", 1000000}, {"models", json::array{
+      json::object{{"slug", "a"}, {"supported_reasoning_levels", json::array{"low", "high"}}, {"default_reasoning_level", "low"}},
+      json::object{{"slug", "b"}, {"supported_reasoning_levels", json::array{"custom", "high"}}, {"default_reasoning_level", "custom"}},
+    }}};
+    h::kvStore.set(h::keyToString(uos::codex::auth::CODEX_MODELS_KV_KEY), rt::KvValue(snapshot));
+    const auto runtime = uos::runtime_config::buildRuntimeConfig(snapshot);
+    h::kvStore.set(h::keyToString(uos::runtime_config::RUNTIME_CONFIG_V2_KEY), rt::KvValue(uos::runtime_config::toJson(runtime)));
+    uos::runtime_config::cacheRuntimeConfig(runtime);
+  }
   rt::Task<void> runCase(std::size_t index) {
     Fixture fixture; rt::globalDateNow() = [] { return 1000000.0; }; const auto& row = vectors()[index]; const auto& scenario = row.at("scenario");
     if (rt::getString(scenario, "name") == "set_window") uos::kv::setKvForTest(std::make_shared<FixtureRevisionKv>(*h::kvStub()));
-    if (rt::getBool(scenario, "seed").value_or(false)) {
-      json::object snapshot{{"source", "fixture"}, {"updated_at_ms",1000000}, {"models", json::array{json::object{{"slug", "a"}, {"supported_reasoning_levels", json::array{"low", "high"}}, {"default_reasoning_level", "low"}}, json::object{{"slug", "b"}, {"supported_reasoning_levels", json::array{"custom", "high"}}, {"default_reasoning_level", "custom"}}}}};
-      h::kvStore.set(h::keyToString(uos::codex::auth::CODEX_MODELS_KV_KEY), rt::KvValue(snapshot)); const auto runtime = uos::runtime_config::buildRuntimeConfig(snapshot); h::kvStore.set(h::keyToString(uos::runtime_config::RUNTIME_CONFIG_V2_KEY), rt::KvValue(uos::runtime_config::toJson(runtime))); uos::runtime_config::cacheRuntimeConfig(runtime);
-    }
+    if (rt::getBool(scenario, "seed").value_or(false)) seedRuntime();
     if (rt::getBool(scenario, "deny").value_or(false)) uos::kv::setKvForTest(nullptr);
     const auto method = std::string(rt::getString(scenario, "method").value_or("GET")); const bool migration = rt::getBool(scenario, "migration").value_or(false); const auto query = std::string(rt::getString(scenario, "query").value_or(""));
     rt::RequestInit init; init.method = method;
@@ -101,6 +110,24 @@ namespace {
     EXPECT_EQ(response.status(), rt::getNumber(row, "status").value()); const auto body = co_await response.json(); EXPECT(rt::deepEqual(body, row.at("body")));
     json::array rows; for (const auto& [key, value] : h::kvStore) rows.push_back(json::array{key, value.toJson()}); EXPECT(rt::deepEqual(rows, row.at("rows")));
   }
+}
+ASYNC_TEST("admin defaults reject an oversized model like an unknown model") {
+  Fixture fixture;
+  seedRuntime();
+  const auto runtimeKey = h::keyToString(uos::runtime_config::RUNTIME_CONFIG_V2_KEY);
+  const auto before = h::kvStore.get(runtimeKey)->toJson();
+  for (std::size_t size : std::array{rt::limits::kModelIdCodeUnits + 1, rt::limits::kRegexSubjectBytes + 1}) {
+    rt::RequestInit init;
+    init.method = "POST";
+    init.body = rt::jsonStringify(json::object{{"model", std::string(size, 'x')}});
+    const rt::Request req("http://localhost/admin/defaults", init);
+    auto task = a::handleAdminDefaults(req);
+    const auto response = co_await std::move(task);
+    EXPECT_EQ(response.status(), 400);
+    const auto body = co_await response.json();
+    EXPECT(rt::deepEqual(body, vectors()[12].at("body")));
+  }
+  EXPECT(rt::deepEqual(h::kvStore.get(runtimeKey)->toJson(), before));
 }
 ASYNC_TEST("defaults diagnostics survive a failed KV read") {
   Fixture fixture;

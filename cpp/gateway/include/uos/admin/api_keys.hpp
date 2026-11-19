@@ -37,8 +37,6 @@ namespace uos::admin::api_keys {
   std::optional<double> normalizeKernelExpiresAtMsInput(const json::value& value, double nowMs);
   std::string normalizeKernelScope(const json::value* value);
   std::string normalizeKernelScope(const json::value& value);
-  std::optional<std::string> normalizeDefaultModel(const json::value* value);
-  std::optional<std::string> normalizeDefaultModel(const json::value& value);
   std::vector<::uos::defaults::ReasoningEffort> extractModelReasoningLevels(const std::optional<json::object>& model);
   std::optional<double> estimateJsonSize(const json::value& value);
   std::optional<double> estimateJsonSize(const json::value* value);

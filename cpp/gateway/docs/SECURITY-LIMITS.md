@@ -10,6 +10,14 @@ An exact `UOS_GATEWAY_ENABLE_ANTIGRAVITY=1` and a validated CLI installation all
 
 Gemini CLI prompts are capped at 8 MiB. The gateway enforces a 120-second child deadline. It reads stdout and stderr alongside stdin, with a 16 MiB stdout cap from `kJsonDocumentBytes`, a 4 MiB cap per JSON event and a smaller 128 KiB stderr cap. An exceeded output budget or a cancelled request closes all child pipes and terminates and reaps the process. [Gemini transport](../src/provider/gemini.cpp)
 
+## Application request fields
+
+Chat Completions and Responses return HTTP 400 with `param: "model"` when the trimmed model exceeds
+1 MiB of bytes. The admin default-model and Decisions paths cap model names at 200 UTF-16 code units
+before regex matching. The Codex reset account hash uses its existing 64-byte shape. The supervisor
+checks source and thread IDs at 32 and 200 bytes. Image edit media types and numeric strings are
+bounded before ICU or regex use. [Chat](../src/chat/envelope.cpp) · [Responses](../src/responses_request.cpp) · [Residual fixes](findings/cppgw-residuals-1-20261119.md)
+
 ## HTTP, WebSocket and compression
 
 For fixed-length Chat requests, the gateway uses its normal authenticated error response for a declared body above 16 MiB. The transport refuses the payload and closes the connection after the response. [Loopback fixture](../tests/serve_delivery_http_test.cpp)

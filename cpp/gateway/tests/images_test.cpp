@@ -51,6 +51,7 @@
 #include "uos/rt/test_async.hpp"
 #include "uos/sentinel/replay_observation.hpp"
 #include <algorithm>
+#include <array>
 #include <memory>
 using namespace uos;
 namespace im = uos::images;
@@ -294,6 +295,35 @@ ASYNC_TEST("inline image edits dispatch a valid JSON body above the ordinary siz
   AWAIT(response, im::handleImages(request, "edits", nullptr, options));
   EXPECT_EQ(response.status(), 200);
   EXPECT_EQ(calls, 1);
+}
+ASYNC_TEST("oversized multipart image numbers take the normal field validation path") {
+  ImageScope scope;
+  int calls = 0;
+  const auto options = countingDispatch(calls);
+  const std::array keys{"n", "partial_images", "output_compression"};
+  for (const auto key : keys) {
+    auto form = editForm();
+    putPart(form, key, std::string(rt::limits::kRegexSubjectBytes + 1, '9'));
+    const auto request = multipartRequest(form);
+    AWAIT(response, im::handleImages(request, "edits", nullptr, options));
+    EXPECT_EQ(response.status(), 400);
+    AWAIT(body, response.json());
+    EXPECT_EQ(errorParam(body), key);
+  }
+  EXPECT_EQ(calls, 0);
+}
+ASYNC_TEST("an oversized inline image media type fails image reference validation") {
+  ImageScope scope;
+  int calls = 0;
+  const auto options = countingDispatch(calls);
+  const auto reference = "data:" + std::string(rt::limits::kIcuInputBytes + 1, 'x') + ";base64,AAAA";
+  const json::value input = json::object{{"prompt", "edit the source"}, {"images", json::array{json::object{{"image_url", reference}}}}};
+  const auto request = imagesRequest(input, "/v1/images/edits");
+  AWAIT(response, im::handleImages(request, "edits", nullptr, options));
+  EXPECT_EQ(response.status(), 400);
+  AWAIT(body, response.json());
+  EXPECT_EQ(errorParam(body), "images");
+  EXPECT_EQ(calls, 0);
 }
 ASYNC_TEST("fan-out dispatch coordination never refunds after a sibling transport starts") {
   auto gate=rt::withResolvers<void>(); int admissions=0,starts=0,cancellations=0;

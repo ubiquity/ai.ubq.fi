@@ -18,6 +18,14 @@ The launcher validates the seal and the candidate commit and tree in the package
 
 Dependency preparation can use the network. The test namespace has only loopback, proves IPv4 and IPv6 route denial and drops back to the invoking uid. Each gateway process gets an empty home, fresh temp and synthetic credentials for the mock routes. Bun launches with `--no-env-file --no-install`. Set `BUN` to the absolute path of the pinned executable when it is outside `PATH`.
 
+## Expected result
+
+The pinned baseline is 186 cases, with 184 passing cases, zero wire differences and two shared expectation
+failures. In `chat-invalid-role` and `responses-invalid-tool-type`, both gateways dispatch to the DeepSeek
+mock and return HTTP 200. The assertions still require HTTP 400 with zero dispatch, so the known baseline
+exits 1. Verify the specific IDs, both outcomes and the absence of any other differences in the receipt.
+[Final qualification](findings/cppgw-final-20261119.md) · [Suite gate](../conformance/README.md)
+
 ## Cases and evidence
 
 | Surface                        | Exercises                                                                                                                                                                                      |
@@ -35,4 +43,15 @@ Cases are in [cases.json](../conformance/cases.json). A case names a method, pat
 
 Status, public response bodies and relevant headers are compared for every case. SSE comparisons include named events, JSON payloads in order, sequence numbers and the final event. The progressive probes hold the mock's subsequent frames until the client receives the first delta. The runner records malformed SSE metadata as a wire failure and continues the matrix. The comparator preserves error codes, presence, types and consequential ordering. It maps generated IDs consistently, normalizes explicitly named clocks, and allows two seconds of clock drift for retry/reset headers. Error wording, equivalent header formatting and explicitly unordered list permutations are cosmetic. An expectation can fail on both runtimes even when their wire responses match.
 
+The suite independently checks the Git SHA and deployment ID in HTTP headers and in successful health GET bodies. It also checks the SHA on each synthetic API-key audit row. Native expects the full package SHA and `vps-<full-sha>`. Bun expects the pinned source's unstamped `unknown` values. The comparator accepts a difference on those paths only when both values match their respective expectations. The original observations remain in the receipt.
+
 The command prints the new output directory. `results.json` holds the commit and tree, fixture and binary hashes, both observations, dispatch evidence, expectation failures and field-level differences. `table.md` summarizes the cases. Synthetic credential values are redacted in the receipt. Exit `0` means all functional checks passed, `1` means the suite completed and found a functional failure, and `2` means the comparison runner could not complete. Setup errors and the watchdog can also exit nonzero. [Measured baseline and complete table](findings/cppgw-conformance-e2e-20261118.md)
+
+## Historical Bun fixtures
+
+The historical source stays pinned separately. Prepare it in a new detached worktree outside the
+candidate checkout with `bash cpp/gateway/conformance/oracle.sh /absolute/scratch/legacy`, then install
+its frozen dependencies with Bun 1.4.0 and the harness's explicit preparation environment. Preserve
+the original transport receipt, `#http` and `ws@8.18.3`, and run any comparison inside its real
+loopback-only namespace. [Historical pin](../conformance/legacy-oracle-revision.txt) ·
+[Standalone smoke procedure](../tests/production_smoke/README.md)

@@ -1,9 +1,31 @@
 # Runtime deviations from Bun
 
-The gateway keeps the application and protocol behavior described in [PORTING.md](../PORTING.md). This record covers deliberate generic runtime differences and the evidence that bounds them.
+The gateway keeps the application and protocol behavior described in [PORTING.md](../PORTING.md). This record covers deliberate behavior and runtime differences.
+The final branch's registration, instrumented runs and package evidence are tied to their tested source.
+[Final qualification](findings/cppgw-final-20261119.md)
 
-The full Release and sanitizer runs on the combined Linux ARM64 tree passed **451 binaries and 5,186 cases**
-per profile. [Combined verification](findings/cppgw-combine-1-20261119.md)
+## Startup and Gemini
+
+The native systemd unit supplies its process environment through an explicit operator-owned
+`EnvironmentFile=`. Bun's VPS launcher loads the checkout-root environment explicitly. The
+native service verifies its immutable package and starts with subprocess execution denied.
+On Linux ARM64, the operator can opt in to the Antigravity-backed Gemini text adapter. It
+widens the gateway's process syscall and filesystem permissions and applies a narrower
+Landlock policy to the CLI child. [Environment and CLI setup](RUNTIME.md#environment)
+
+The portable archive embeds its source commit at build time. The Linux health response and headers expose that
+commit and the configured deployment identity. In a fresh local launch without deployment markers, the ID is
+`vps-<full-sha>`. The deployed Bun gateway also stamps the release SHA, and the detached Bun conformance source
+retains its unstamped identity. [Release identity verification](CONFORMANCE.md#cases-and-evidence)
+
+## Input bounds
+
+The native gateway applies the published byte, nesting and time limits at its library and
+transport boundaries. For example, Chat Completions and Responses return HTTP 400 before
+dispatch when their trimmed model string exceeds 1 MiB. An explicit admin default model
+over 200 UTF-16 code units returns the unknown-model error before the catalog lookup.
+Image edit JSON and multipart retain their larger documented input allowances.
+[Security limits](SECURITY-LIMITS.md)
 
 ## JSON
 
@@ -320,15 +342,16 @@ only rows whose outcomes changed against the original Bun 1.4.0 vectors.
 | Unicode properties and aliases                  | QuickJS accepts `\p{IDS_Unary_Operator}`. It rejects `\p{gc=Any}`, `\p{gc=ASCII}` and `\p{gc=Assigned}`. The binary forms `\p{Any}`, `\p{ASCII}` and `\p{Assigned}` remain available. | The installed Unicode data and property parsing come from the vendor. The gateway's use of `\p{L}` and `\p{N}` keeps its recorded results.    |
 | Large repetition counts                         | QuickJS saturates counts at its signed 32-bit limit. It accepts `a{99999999999999999999}` and `a{4294967297,4294967296}`, which Bun rejects.                                          | Practical gateway expressions use counts far below that limit. The execution budget also applies to large repetitions.                        |
 | Unicode sets                                    | `[a--b]` with `v` compiles and matches `a`, as in Bun. The former C++ port rejected `v`.                                                                                              | Standalone libregexp adds support for set operations and properties of strings. `u` and `v` are still mutually exclusive.                     |
-| Construction bounds                             | 254 explicit capture groups compile. A 255th gives `SyntaxError: too many captures`. Patterns above 64 KiB and parser stack exhaustion give `RangeError`.                             | The cap follows libregexp's capture representation. The adapter limits parser resource use without relying on JavaScriptCore's nesting rules. |
+| Construction bounds                             | 254 explicit capture groups compile. A 255th gives `SyntaxError: too many captures`. Patterns above 4 KiB and parser stack exhaustion give `RangeError`.                              | The cap follows libregexp's capture representation. The adapter limits parser resource use without relying on JavaScriptCore's nesting rules. |
 | Exhausted execution                             | A deep search of `^(?:a\|b)*$` can reach the allocator cap and throw `RangeError`. Bun can return false on memory exhaustion. `^[ab]*$` can also reach the cap in QuickJS.            | Exhaustion is an explicit error, so an incomplete scan cannot be mistaken for clean text or ordinary rejection of a subject.                  |
 
 The parser stack check allows at most 128 KiB below the entry frame and leaves 32 KiB
 at the native thread stack base. The allocator refuses individual requests above 72 MiB.
-One match operation shares a 2.5-second monotonic deadline at libregexp's interruption
-points and a limit of 4,096 timeout hook calls, each after 10,000 library polls. Iterating
-string operations also check the deadline every 256 searches. Exhausted compilation and
-execution surface as ordinary `rt::RangeError` exceptions.
+Compilation gets 10 ms. Generic matching gets 250 ms, with
+1,800 ms for fixed large-subject operations and 1,250 ms for the fixed supervisor
+credential-key scan. Library interruption and iteration checks enforce the matching
+budget. Exhausted compilation and execution surface as `rt::RangeError`.
+[Regex limits](SECURITY-LIMITS.md#regular-expressions)
 
 The typed-value codecs round-trip the original `/a/v` graph with source `a` and flags `v`.
 Malformed stored regexes still raise `SyntaxError`. An unclosed group reports `expecting ')'`,

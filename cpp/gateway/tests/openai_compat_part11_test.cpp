@@ -53,8 +53,10 @@
 #include "uos/kernel/attestation.hpp"
 #include "uos/utils.hpp"
 #include "uos/rt/crypto.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/rt/test_async.hpp"
+#include <array>
 #include <cstdio>
 namespace rt=uos::rt;namespace json=uos::json;namespace h=uos::tests::helpers::openai_compat_harness;namespace tel=uos::openai_telemetry;
 namespace {
@@ -134,6 +136,20 @@ ASYNC_TEST("openai: streamed Responses force the SSE content type") {
 }
 ASYNC_TEST("openai: invalid route-dependent Responses fields fail before dispatch") {
   h::Fixture fixture;std::setvbuf(stdout,nullptr,_IONBF,0);const std::vector<std::pair<std::string,json::value>> cases{{"max_output_tokens",0},{"max_output_tokens",1.5},{"max_output_tokens","12"},{"parallel_tool_calls",nullptr},{"parallel_tool_calls","true"},{"parallel_tool_calls",1}};for(const auto& [param,value]:cases){auto raw=body(false,true,std::string(h::DEFAULT_TEST_MODEL));raw[param]=value;auto task=exchange(false,raw,fixed(h::sseResponse(h::baseSseChunks())));const auto result=co_await std::move(task);EXPECT_EQ(result.response.status(),400);EXPECT_EQ(rt::getString(*rt::get(result.payload(),"error"),"param"),param);EXPECT(result.calls.empty());}co_await h::settleHarness();
+}
+ASYNC_TEST("openai: oversized model IDs fail before provider matching or dispatch") {
+  h::Fixture fixture;
+  const std::string oversized(rt::limits::kRegexSubjectBytes + 1, 'x');
+  const std::array routes{true, false};
+  for (const auto chat : routes) {
+    auto pending = exchange(chat, body(chat, false, oversized), fixed(h::sseResponse(h::baseSseChunks())));
+    const auto result = co_await std::move(pending);
+    EXPECT_EQ(result.response.status(), 400);
+    const auto payload = result.payload();
+    EXPECT_EQ(rt::getString(payload.at("error"), "param"), "model");
+    EXPECT(result.calls.empty());
+  }
+  co_await h::settleHarness();
 }
 ASYNC_TEST("openai: buffered Responses observe each real or synthetic terminal once") {
   h::Fixture fixture;std::setvbuf(stdout,nullptr,_IONBF,0);std::vector<std::pair<bool,std::optional<double>>> observations;tel::UsageContext context{.keyId=std::nullopt,.kernelRepo=std::nullopt,.kernelOrg=std::nullopt,.onTerminalUsage=[&observations](std::optional<tel::UsageTokens> usage,bool completed){observations.emplace_back(completed,usage?usage->totalTokens:std::nullopt);}};auto task=exchange(false,body(false,false,std::string(h::DEFAULT_TEST_MODEL)),fixed(h::sseResponse(h::baseSseChunks())),context);const auto value=co_await std::move(task);EXPECT_EQ(value.response.status(),200);const std::vector<std::pair<bool,std::optional<double>>> expected{{true,2}};EXPECT_EQ(observations,expected);co_await h::settleHarness();

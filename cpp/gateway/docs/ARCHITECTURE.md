@@ -52,7 +52,8 @@ collections. The adapters retain input bounds, backpressure, UTF-16 offsets, sto
    The transport writes a buffered body or pulls stream chunks at the pace the socket can accept. An interrupted
    connection signals cancellation. The response's socket `finish` resolves the delivery receipt, which reports
    interruption on close or write failure before finish. Reaching the end of the provider stream only ends the
-   producer. [Stream relay](../src/provider/stream_relay.cpp) · [Serve handler](../src/handler/serve_handler.cpp) ·
+   producer. If the writer rejects SSE response headers, it cancels the producer before writing the fallback
+   HTTP 500. [Stream relay](../src/provider/stream_relay.cpp) · [Serve handler](../src/handler/serve_handler.cpp) ·
    [Socket writes and receipt](../src/runtime/http.cpp)
 5. **Settle and drain.** The terminal wrapper follows provider completion and records client delivery separately.
    A completed provider operation can still have a settled quota outcome when the client disconnects. The request
@@ -114,13 +115,14 @@ flags in both codecs, including `v`. Bundled assets and tool inputs use native f
 resource root. [Tuple keys](../src/rt/kv_key.cpp) ·
 [JavaScriptCore reader](../src/rt/kv_jsc_deserialize.cpp) · [Durable KV format and interop](rt/kv-durable.md)
 
-Conversion is a separate offline operation with a stopped, consistent source, a new destination and a verified
-receipt covering raw keys, revisions, absolute expiry and typed values. Rollback after new writes requires reverse
-conversion of the latest stopped state. The JSC reader and the typed interchange preserve sparse array entries,
+Conversion uses a separate offline tool with a stopped, consistent source, a new destination and a verified
+receipt covering raw keys, revisions, absolute expiry and typed values. A rollback to Deno V8 after Bun/JSC writes
+requires reverse conversion of the latest stopped state. A rollback to the pinned Bun gateway requires a verified
+reopen of the latest marked state. The JSC reader and the typed interchange preserve sparse array entries,
 references and cycles. Stored-graph traversal is capped at 2,000 containers. Views that project into JSON can
 materialize holes, and reject cycles and values beyond the JSON depth limit of 128 containers.
 [Converter](../src/kv_conversion/convert.cpp) · [Offline launch requirements](RUNTIME.md) ·
-[Storage cutover blockers](OPEN-STAGES.md)
+[Cutover checklist](CUTOVER.md)
 
 ## Tests
 
@@ -137,10 +139,7 @@ environment supplies an empty home, fresh temp space and loopback-only networkin
 log and a receipt with the exact inputs and counts. [Link resolver](../tools/links.py) ·
 [Registry](../tests/LINKS.txt) · [Portable driver](CI.md) · [Test conventions](TESTING.md)
 
-All four Linux ARM64 Release shards passed 450 binaries and 5,113 cases. ASan, UBSan and LSan passed 161 selected
-binaries and 1,989 cases, including every runtime binary and the HTTP, WebSocket, passkey, storage and confinement
-fixtures. [Final integration](findings/cppgw-integrate-f2-20261118.md)
-
-The paired package conformance runner launches the native and Bun gateways against the same loopback mocks and checks
-wire responses and durable readback across restart. It found agreement on all 186 cases and two failures of the
-independent validation assertions on both runtimes. [Conformance](CONFORMANCE.md)
+Release and AddressSanitizer, UndefinedBehaviorSanitizer and LeakSanitizer runs each passed
+453 binaries and 5,264 cases across four shards on Linux ARM64. The packaged comparison runs both
+gateways through the same loopback mocks and verifies durable readback. The paired suite retains two shared
+validation failures. [Final qualification](findings/cppgw-final-20261119.md) · [Conformance](CONFORMANCE.md)

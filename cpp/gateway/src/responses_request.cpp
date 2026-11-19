@@ -13,6 +13,7 @@
 #include "uos/utils.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/rt/json.hpp"
+#include "uos/rt/limits.hpp"
 namespace uos::responses_request {
 namespace {
   namespace n = input_normalization;
@@ -65,6 +66,8 @@ rt::Task<ResponsesStep<ReadResponsesRequestValue>> readResponsesRequest(rt::Requ
   json::object record;
   if (rawBody.is_object()) record = rawBody.get_object();
   else for (std::size_t i = 0; i < rawBody.get_array().size(); ++i) record[rt::numberToString(static_cast<double>(i))] = rawBody.get_array()[i];
+  if (rt::trim(rt::getString(record, "model").value_or("")).size() > rt::limits::kRegexSubjectBytes)
+    co_return ResponsesStepNotOk{invalid("model is too long", "model")};
   co_return ResponsesStepOk<ReadResponsesRequestValue>{{record, record}};
 }
 std::optional<rt::Response> validateResponsesRequestFields(const json::object& rawRecord, const ::uos::types::ResponsesRequest& rawBody, const rt::OrderedSet<std::string>* providerExtensions) {

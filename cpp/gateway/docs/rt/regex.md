@@ -104,11 +104,12 @@ join into one four-byte sequence, exactly like the JS string.
 - `matchAll` and `replaceAll` raise `rt::TypeError` for a non-global regex. The C++ API raises `std::logic_error` when
   a caller passes a global regex to `rt::match`, passes a non-global regex to `rt::matchGlobal`, or calls `rt::split`
   on a pattern with capture groups. Use `rt::splitWithCaptures` for that result shape.
-- Patterns above 64 KiB and parser stack exhaustion raise `rt::RangeError`. The 255th explicit capture group raises
+- Patterns above 4 KiB and parser stack exhaustion raise `rt::RangeError`. The 255th explicit capture group raises
   `rt::SyntaxError`. The parser stack guard allows at most 128 KiB below its entry frame and leaves 32 KiB above the
   thread stack base. The engine allocator caps individual requests at 72 MiB.
-- Each matching operation has a 2.5-second monotonic deadline and a bound on interruption checks. Execution
-  exhaustion raises `rt::RangeError`. [Observed syntax differences and limits](../DEVIATIONS-FROM-BUN.md#regular-expressions-with-quickjs-ng-libregexp-0180)
+- Compilation gets 10 ms. Generic matching gets 250 ms and a 1 MiB subject budget. The fixed large-subject
+  patterns and the supervisor credential-key scan have their own documented deadlines. An exhausted budget
+  raises `rt::RangeError`. [Enforced limits](../SECURITY-LIMITS.md#regular-expressions) · [Syntax differences](../DEVIATIONS-FROM-BUN.md#regular-expressions-with-quickjs-ng-libregexp-0180)
 
 ## Performance
 

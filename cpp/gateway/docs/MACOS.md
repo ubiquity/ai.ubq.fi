@@ -3,9 +3,10 @@
 The Darwin driver builds Ada 4.0.0, llhttp 9.4.4, QCBOR 1.6.1, QuickJS-ng libregexp 0.18.0, simdjson 5.2.0
 and simdutf 9.4.0 from the verified vendor registry. It uses Homebrew ICU 78.3 for Unicode and IDNA.
 
-The integrated follow-ups compiled **373/373 production sources**, linked **3/3 arm64 executables** and passed
+The earlier integrated follow-up qualification compiled **373/373 production sources**, linked **3/3 arm64 executables** and passed
 **450/450 binaries and 5,119/5,119 cases** on the `-O0 -g0` profile. The macOS release workflow's packager
-built the archive and the extracted gateway returned the qualified source commit from `--version`.
+built the archive and the extracted gateway returned the qualified source commit from `--version`. The counts below
+belong to the recorded Mac commit. The final branch was qualified on Linux ARM64. [Final qualification](findings/cppgw-final-20261119.md)
 
 [Integrated follow-up findings](findings/cppgw-macos-requal-fu1-20261118.md) ·
 [Integrated F1 findings](findings/cppgw-macos-requal-f1-20261118.md) ·
@@ -163,7 +164,7 @@ bash cpp/gateway/tools/macos-build.sh --build-root "$UOS_MAC_BUILD/build" \
   --sqlite-prefix "$UOS_MAC_BUILD/sqlite-3.54.0" --jobs 3 --suite none --require-clean
 ```
 
-## Native results
+## Recorded native results
 
 | Gate                       | Result                                                        |
 | -------------------------- | ------------------------------------------------------------- |

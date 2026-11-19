@@ -12,6 +12,7 @@
 #include "uos/request.hpp"
 #include "uos/runtime_config.hpp"
 #include "uos/rt/kv_js.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/regex.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/rt/text_codec.hpp"
@@ -67,18 +68,24 @@ namespace {
     std::optional<runtime_config::RuntimeConfigV2> nextRuntime;
     if (intent.wantsModelUpdate) {
       if (!runtime) co_return invalid("Runtime configuration is unavailable", 503, "server_error");
-      const auto nextModel = intent.writesModel ? api_keys::normalizeDefaultModel(rt::get(raw, "model")) : std::optional(model);
-      if (!nextModel) co_return invalid("model must be a non-empty string");
+      constexpr auto unknownModel = "model is not in the stored Codex model list";
+      auto nextModel = model;
+      if (intent.writesModel) {
+        nextModel = rt::trim(rt::getString(raw, "model").value_or(""));
+        if (static_cast<std::size_t>(rt::length(nextModel)) > rt::limits::kModelIdCodeUnits) co_return invalid(unknownModel);
+        static const rt::Regex whitespace("\\s");
+        if (nextModel.empty() || whitespace.test(nextModel)) co_return invalid("model must be a non-empty string");
+      }
       const auto snapshot = co_await models::codex_models_fetch::loadCodexModelsSnapshot(); const auto* models = snapshot ? rt::getArray(*snapshot, "models") : nullptr;
       if (!snapshot || !models || models->empty()) co_return invalid("No Codex model snapshot stored", 409);
-      std::optional<json::object> record; for (const auto& row : *models) if (utils::isRecord(row) && row.is_object() && rt::getString(row, "slug") == *nextModel) { record = row.as_object(); break; }
-      if (!record) co_return invalid("model is not in the stored Codex model list");
+      std::optional<json::object> record; for (const auto& row : *models) if (utils::isRecord(row) && row.is_object() && rt::getString(row, "slug") == nextModel) { record = row.as_object(); break; }
+      if (!record) co_return invalid(unknownModel);
       const auto* effort = rt::get(*record, "default_reasoning_level"); const auto modelDefault = effort && effort->is_null() ? std::optional<std::string>("none") : base::normalizeReasoningEffort(effort); const auto levels = api_keys::extractModelReasoningLevels(record);
       const auto nextReasoning = intent.writesReasoning ? base::normalizeReasoningEffort(rt::get(raw, "reasoning_effort")) : std::optional(modelDefault.value_or(levels.empty() ? "none" : levels.front()));
       if (!nextReasoning) co_return invalid("reasoning_effort must be a non-empty string");
       runtime_config::BuildRuntimeConfigOptions options; options.defaultModel = nextModel; options.defaultReasoningEffort = nextReasoning;
       try { nextRuntime = runtime_config::buildRuntimeConfig(*snapshot, options); } catch (...) { auto response = codex::runtimeConfigErrorResponse(std::current_exception()); if (response) co_return *response; throw; }
-      model = *nextModel; reasoning = *nextReasoning;
+      model = std::move(nextModel); reasoning = *nextReasoning;
     }
     if (!nextRuntime && !intent.writesKernelLimit && !intent.writesKernelWindow) co_return http::json(200, defaultsBody(model, reasoning, limit, window));
     std::optional<::uos::kernel::quota_v2::KernelDefaultWindowCutoverGuard> guard;

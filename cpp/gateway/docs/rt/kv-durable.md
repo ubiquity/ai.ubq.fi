@@ -46,7 +46,7 @@ plus idle sweeps on the system clock), `versionIncrement` (default uniform 1..9)
 `sweepIntervalMs`/`sweepJitterMs` (60 000 / 1 000; 0/0 sweeps before every operation). Tests fix
 the increment and the clock; production passes nothing.
 
-## The file (byte-compatible with the TS store)
+## File layout
 
 - Schema: the C++ runs denokv's migration statements verbatim, so `sqlite_master.sql` is
   identical to a TS-created file (checked against the text a TS-created file holds, including the
@@ -55,8 +55,8 @@ the increment and the clock; production passes nothing.
   one row k=0, `PRAGMA journal_mode=wal`, page size 4096, user_version/application_id 0. The C++
   sets `synchronous=FULL` and `busy_timeout=5000` per connection (rusqlite's default timeout).
   `uos_kv_metadata` (codec `bun-jsc-v1`) is created by `storage::kv::openKv` as before.
-- Rows: tuple keys (`rt::packKey`); `v_encoding` 1 = Bun's node:v8 bytes (writer: canonical form;
-  reader: every form Bun writes), 2 = KvU64 8 bytes LE, 3 = raw bytes of a top-level Uint8Array
+- Rows: tuple keys (`rt::packKey`); `v_encoding` 1 = Bun/JavaScriptCore serialized bytes for supported
+  values, 2 = KvU64 8 bytes LE, 3 = raw bytes of a top-level Uint8Array
   (also a view: the viewed bytes). `version` = the commit's data_version; `seq` 0;
   `expiration_ms` absolute ms or -1 (plain sets and arithmetic reset it).
 - Versions: each committed write runs `update data_version set version = version + step` inside
@@ -78,6 +78,9 @@ keys_if_undelivered = JSON of the packed keys)` (TEXT values, as rusqlite binds 
   clock, while the handle is idle.
 
 ## Compatibility evidence
+
+The marked Bun/JSC format is shared to the extent shown by these tests and the recorded cross-reader runs.
+Rehearse with a stopped copy of production state before cutover. [Cutover checklist](../CUTOVER.md)
 
 The TypeScript side ran the pinned legacy `#kv` opener (`src/storage/kv.ts` with
 `prepareNativeKvBackend`) over the pinned native-kv artifact (denokv 9fe65cc + both patches; its
@@ -101,38 +104,36 @@ every canonical vector.
 
 Measured on the way: the native addon's busy timeout is 5 s and its error text exactly
 "database is locked"; a VE_BYTES value comes back in TS as a view into the protobuf response
-buffer (the store's model, KvBytes, is the viewed bytes); a cyclic or shared TS value round
-trips in TS but reads in C++ as copies (cycles refused).
+buffer (the store's model, KvBytes, is the viewed bytes).
+
+The later graph codec preserves sparse array entries, cycles and shared references. Its fixtures
+cover Bun's recorded array vectors and a sparse allocation guard, and the original cyclic
+offline conversion proof passed on the graph-repair revision. Dense JSON projection can
+materialize holes and rejects cycles. [Graph repair verification](../findings/cppgw-kv-jsc-graph-model-20261117b.md)
 
 ## Operational notes
 
 - Two processes on one file (a TS gateway and a C++ gateway, a gateway and an offline tool) are
   fenced by SQLite's locks and CAS: proven above. Never open the file with two different SQLite
-  libraries inside one process: their POSIX locks do not exclude each other (measured: bun:sqlite
-  and the addon in one bun process both "held" the write lock). The C++ process uses one
-  `libsqlite3.so.0` for everything.
+  libraries inside one process. In the Bun probe, bun:sqlite and the addon both held the write
+  lock. The C++ gateway uses its single linked SQLite backend.
 - A handle's open sweeps expired rows, which is a write: while another process holds the write
   lock, the open (and the first operation) waits, as the native addon's does.
-- Cutover: the C++ store reads and writes the TS store's `.data/kv-bun.sqlite3` as it is (same
-  schema, codec marker, encodings); no conversion is needed. Stop the TS gateway first if the two
-  must not interleave writes; WAL makes a stopped file self-contained once its last connection
-  closed (the `-wal` file is checkpointed and removed).
-- Never against the production file: run the C++ tests or tools with their working directory
-  at a production root (the default path is `.data/kv-bun.sqlite3`); copy the database while a
-  gateway has it open (copy the `-wal` too, or stop first); delete `-wal`/`-shm` files; open it
-  with SQLite tools that change the journal mode or page size; run kv-conversion on a live file.
-- SQLite versions: the C++ links the SDK's 3.40.1, the native addon bundles 3.53.1 (bun:sqlite 3.53.2); both read and write the
-  same file and WAL formats (the mixed-process run used both on one file).
+- For cutover, keep a single writer and rehearse native and Bun reads on a consistent stopped
+  copy of the marked `.data/kv-bun.sqlite3`. Preserve the latest database and any WAL under
+  the existing deployment lock. Offline tools require a stopped source and a new destination.
+  [Cutover checklist](../CUTOVER.md)
+- The portable C++ gateway statically links SQLite 3.54.0. The historical SDK test used 3.40.1
+  and the native addon used 3.53.1. The cross-reader evidence above is scoped to those fixtures.
+  [Release linkage](../RUNTIME.md#build-and-package)
 
 ## Limits and what is not proven
 
 - No `listenQueue`/dequeue, `watch` or the NAPI protobuf transport (no first-party module calls
   them); the nine NAPI exports of the default interface throw if called.
 - Values KvValue cannot hold fail closed on read with TypeError "Serialized value <what> has no
-  KvValue representation": cycles, boxed primitives, properties on arrays/Maps/Sets,
-  Float16Array, resizable or length-tracking buffers, arrays longer than 2^24, Blob,
-  DOMException. Shared references read as copies (identity is lost on rewrite). Nesting deeper
-  than 2000 containers throws RangeError (Bun: 40001).
+  KvValue representation". Examples include boxed primitives, Float16Array, resizable or
+  length-tracking buffers, Blob and DOMException. Nesting beyond 2,000 containers raises RangeError.
 - Readers accept serializer versions <= 14 with version-14 rules (Bun 1.4 writes 14).
 - A corrupt LE64 row (not 8 bytes) is an error here; the addon's Rust code panics there.
 - Read-only database files are detected when a write first fails with SQLITE_READONLY (the addon

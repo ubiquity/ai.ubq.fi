@@ -15,6 +15,9 @@ The command prints the directory containing `results.json` and `table.md`. The b
 passing cases, zero wire differences and two shared expectation failures, `chat-invalid-role`
 and `responses-invalid-tool-type`. Both gateways return HTTP 200 and dispatch to the DeepSeek mock.
 The case assertions require HTTP 400 and zero dispatch, so the command exits 1.
+The suite checks each runtime's exact identity in HTTP headers, health JSON and audit rows.
+The native package reports its build SHA and the detached Bun oracle uses its source's unstamped identity.
+The receipt keeps the raw values.
 
 ## Move the production pin
 
