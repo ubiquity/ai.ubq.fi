@@ -45,7 +45,7 @@ A commit listed as “this commit” is the commit that introduced that verdict 
 | D06 | FIXED — Recheck shutdown and disconnect after the module await, before the synchronous WebSocket handoff. | `fix(cpp): refuse WebSocket upgrades that race shutdown` | `runtime_http_lifetime_test`: ASan baseline accepted the upgrade, then 6/6 passed in ASan and release with a 503 refusal. |
 | D07 | LEFT — Memory KV await-expression reverification pending. | — | Pending |
 | D08 | LEFT — Cache fingerprint await-expression reverification pending. | — | Pending |
-| D09 | LEFT — Abandoned quota lease reverification pending. | — | Pending |
+| D09 | FIXED — The last public terminal callback stops periodic renewal when there is no terminal intent. The last stored lease can expire naturally. | `fix(cpp): stop renewing abandoned kernel reservations` | `kernel_quota_context_differential_test`: a retained callback copy renews the lease. Dropping it leaves the expiry unchanged and later aborts with `TimeoutError`. |
 | D10 | LEFT — Worker body read listener reverification pending. | — | Pending |
 | D11 | LEFT — Worker request bridge reverification pending. | — | Pending |
 | D12 | LEFT — Worker delivery abort listener reverification pending. | — | Pending |
@@ -113,7 +113,25 @@ bash "$scratch/run.sh" 2 python3 -B "$scratch/focused.py" src/runtime/http.cpp,s
 ```
 
 The corrected baseline exited with LSan diagnostics in 14.646 s and did not
-flush a case summary. The fixed release selection passed 6 binaries and 42/42
-cases in 40.573 s. The same six ASan binaries are the focused sanitizer gate.
+flush a case summary. The fixed selections passed 6 binaries and 42/42 cases in
+40.573 s on release and 56.102 s under ASan/UBSan/LSan.
+
+The D09 context's interval owned a shared lease context after both handles were
+dropped. The regression kept one copied callback through a renewal, then deleted
+it. The baseline extended the expiry from `1800000360000` to `1800000420000`
+and kept the signal live. The fixed context preserves already-started renewal
+and terminal-intent retry work. Clearing its interval prevents subsequent
+renewals while the existing expiry timer and durable reclaim path remain active.
+
+```sh
+bash "$scratch/run.sh" 4 python3 -B "$scratch/focused.py" tests/kernel_quota_context_differential_test.cpp --config asan
+bash "$scratch/run.sh" 2 python3 -B "$scratch/focused.py" tests/kernel_quota_context_differential_test.cpp,tests/kernel_quota_reserve_differential_test.cpp --config asan
+bash "$scratch/run.sh" 2 python3 -B "$scratch/focused.py" tests/kernel_quota_context_differential_test.cpp,tests/kernel_quota_reserve_differential_test.cpp --config release
+```
+
+The baseline passed 5/6 cases in 31.641 s. The fixed ASan differential fixtures
+passed 2 binaries and 22/22 cases in 31.403 s. A broader `kernel_quota` selection
+was interrupted during its cold compilation to finish the focused regression
+first. Its compiled objects remain in the scratch cache.
 
 [Area B audit](cppgw-lifetime-b-20261118.md)

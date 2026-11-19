@@ -362,6 +362,14 @@ namespace uos::kernel::quota_reservations {
       context->timers.renewal.reset();
     }
 
+    struct ReservationClient {
+      explicit ReservationClient(ReservationContext live) : context(std::move(live)) {}
+      ~ReservationClient() {
+        if (!context->terminalIntent) stopRenewal(context);
+      }
+      ReservationContext context;
+    };
+
     void clearLeaseExpiry(const ReservationContext& context) {
       if (!context->timers.leaseExpiry) return;
       rt::clearTimeout(*context->timers.leaseExpiry);
@@ -496,12 +504,13 @@ namespace uos::kernel::quota_reservations {
     context->requestId = std::move(requestId);
     context->route = std::move(route);
     context->leaseExpiresAtMs = initialLeaseExpiresAtMs;
+    const auto client = std::make_shared<ReservationClient>(context);
     context->timers.renewal = rt::setInterval([context] { renew(context); }, renewalIntervalMs.value_or(native_kernel::KERNEL_QUOTA_RESERVATION_RENEWAL_MS));
     scheduleLeaseExpiry(context);
     return quota_v2::KernelQuotaReservation{
       .signal = context->leaseAbort.signal(),
-      .commit = [context] { return settle(context, "committed", "completed"); },
-      .release = [context](std::optional<std::string> reason) { return settle(context, "released", reason.value_or("request_incomplete")); },
+      .commit = [client] { return settle(client->context, "committed", "completed"); },
+      .release = [client](std::optional<std::string> reason) { return settle(client->context, "released", reason.value_or("request_incomplete")); },
     };
   }
 
