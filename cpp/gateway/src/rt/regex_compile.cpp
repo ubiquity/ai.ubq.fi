@@ -105,6 +105,7 @@ namespace uos::rt::regex_detail {
     }
 
     constexpr std::string_view imageDataUrl = R"(^data:([^;,]+);base64,([a-z0-9+/]*={0,2})$)";
+    constexpr std::string_view standardBase64 = R"(^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$)";
 
     std::size_t subjectBudget(Program& program, std::string_view pattern, int flags) {
       if (flags == (LRE_FLAG_IGNORECASE | LRE_FLAG_UNICODE) && (pattern == "^data:" || pattern == "^https?://" || pattern == imageDataUrl)) {
@@ -112,6 +113,10 @@ namespace uos::rt::regex_detail {
       }
       if (flags == LRE_FLAG_GLOBAL && (pattern == R"([A-Za-z]+|\d+|[^\sA-Za-z\d])" || pattern == R"(\s+)")) {
         return limits::kCompactionRegexSubjectBytes;
+      }
+      if (flags == 0 && pattern == standardBase64) {
+        program.standardBase64 = true;
+        return limits::kBase64InputBytes;
       }
       if (flags == 0 && (pattern == R"(\r?\n\r?\n)" || pattern == R"(\r\n\r\n|\n\n|\r\r)" || pattern == R"(\r\n|\r|\n)" || pattern == R"(\r?\n)")) {
         program.sseFraming = true;

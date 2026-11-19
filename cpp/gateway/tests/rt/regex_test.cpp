@@ -943,3 +943,14 @@ TEST("the fixed image data URL pattern retains the encoded image allowance") {
   subject.push_back('A');
   EXPECT_THROWS_MESSAGE(image.test(subject), rt::RangeError, "regular expression subject is too large");
 }
+
+TEST("the fixed stored base64 pattern retains its encoded byte allowance and padding rules") {
+  const rt::Regex standard(R"(^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$)");
+  std::string subject(rt::limits::kBase64InputBytes, 'A');
+  subject.back() = '=';
+  EXPECT(standard.test(subject));
+  subject.back() = '-';
+  EXPECT(!standard.test(subject));
+  subject.push_back('A');
+  EXPECT_THROWS_MESSAGE(standard.test(subject), rt::RangeError, "regular expression subject is too large");
+}

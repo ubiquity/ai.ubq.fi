@@ -45,6 +45,7 @@ namespace uos::rt::regex_detail {
     std::size_t subjectBytes = limits::kRegexSubjectBytes;
     bool sseFraming = false;
     bool imageDataUrl = false;
+    bool standardBase64 = false;
     std::vector<NamedGroup> names;
     Bytecode bytecode;
     // String.prototype.split searches even if the input regex was sticky.
