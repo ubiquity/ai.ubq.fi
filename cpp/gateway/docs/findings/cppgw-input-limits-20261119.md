@@ -23,3 +23,4 @@ Base branch `agent-jobs/cppgw-combine-1-20261119-44443689630-1`, commit
 - Bounded stored queue JSON and encoded KV cursors before parsing, reused the shared base64 adapter for the cursor wire format, and mapped a stored regex resource rejection to the existing malformed-value error. Added boundary checks in the durable queue recovery and cursor fixtures.
 - Applied the same Ada query count at the inbound HTTP boundary. An oversized query now receives HTTP 400 before request construction instead of reaching the generic handler failure path.
 - Added the library boundary inventory to `docs/SECURITY-LIMITS.md` and checked Ada input after Unicode normalization where its size can expand.
+- Bounded composed Fetch request heads before Beast header comparisons and transmission. Added exact-size and field-count tests for outgoing heads and a loopback check for the inbound 413.

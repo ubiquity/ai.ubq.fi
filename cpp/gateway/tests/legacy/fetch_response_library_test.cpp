@@ -173,6 +173,27 @@ TEST("Fetch budgets split response heads by bytes and fields") {
   }
 }
 
+TEST("Fetch request heads enforce the same aggregate wire limits") {
+  namespace rt = uos::rt;
+  const rt::URL url("http://localhost/");
+  const auto serialize = [&](const rt::Headers& headers) {
+    return fetch::requestHead("GET", url, headers, fetch::RequestFraming::none, 0, "fixture", "identity");
+  };
+  rt::Headers headers;
+  headers.set("X-Fill", "a");
+  const auto overhead = serialize(headers).size() - 1;
+  headers.set("X-Fill", std::string(rt::limits::kHttpHeaderBlockBytes - overhead, 'a'));
+  EXPECT_EQ(serialize(headers).size(), rt::limits::kHttpHeaderBlockBytes);
+  headers.set("X-Fill", std::string(rt::limits::kHttpHeaderBlockBytes - overhead + 1, 'a'));
+  EXPECT_THROWS_MATCHING(serialize(headers), "RequestHeadersTooLarge");
+
+  rt::Headers fields;
+  for (std::size_t i = 0; i < rt::limits::kHttpHeaderFields - 5; ++i) fields.set("x-" + std::to_string(i), "a");
+  EXPECT(!serialize(fields).empty());
+  fields.set("x-overflow", "a");
+  EXPECT_THROWS_MATCHING(serialize(fields), "RequestHeadersTooLarge");
+}
+
 TEST("shared TLS context bounds peer certificate messages before ASN.1 decoding") {
   const std::unique_ptr<SSL_CTX, decltype(&SSL_CTX_free)> context(uos::rt::detail::tls::newContext(), SSL_CTX_free);
   EXPECT_EQ(SSL_CTX_get_max_cert_list(context.get()), static_cast<long>(uos::rt::limits::kCertificateBytes));

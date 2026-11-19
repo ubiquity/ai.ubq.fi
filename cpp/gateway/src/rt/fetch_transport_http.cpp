@@ -128,30 +128,57 @@ namespace uos::rt::detail::fetch {
   std::string requestHead(const std::string& method, const URL& url, const Headers& headers, RequestFraming framing, std::uint64_t length, const std::string& userAgent,
                           const std::string& acceptEncoding) {
     std::string target = url.pathname() + url.search();
+    if (target.size() > limits::kHttpHeaderBlockBytes || method.size() > limits::kHttpHeaderBlockBytes)
+      throw verboseError("RequestHeadersTooLarge", url.href());
     if (target.empty()) target = "/";
     std::string head = method + " " + target + " HTTP/1.1\r\n";
     std::vector<std::pair<std::string, std::string>> lines;
     std::vector<std::string> cookies;
+    std::size_t fieldCount = 0;
+    std::size_t bytes = head.size();
+    const auto charge = [&](std::size_t nameBytes, std::size_t valueBytes) {
+      if (++fieldCount > limits::kHttpHeaderFields || bytes >= limits::kHttpHeaderBlockBytes ||
+          nameBytes + valueBytes + 4 > limits::kHttpHeaderBlockBytes - bytes)
+        throw verboseError("RequestHeadersTooLarge", url.href());
+      bytes += nameBytes + valueBytes + 4;
+    };
     for (const auto& [name, value] : detail::headerWireFields(headers)) {
+      if (name.size() > limits::kHttpHeaderBlockBytes || value.size() > 2 * limits::kHttpHeaderBlockBytes)
+        throw verboseError("RequestHeadersTooLarge", url.href());
       if (iequals(name, "content-length") || iequals(name, "transfer-encoding")) continue;
-      lines.emplace_back(wireName(name), latin1Bytes(value));
+      auto encoded = latin1Bytes(value);
+      charge(name.size(), encoded.size());
+      lines.emplace_back(wireName(name), std::move(encoded));
     }
-    for (const std::string& value : headers.getSetCookie()) cookies.push_back(latin1Bytes(value));
+    for (const std::string& value : headers.getSetCookie()) {
+      if (value.size() > 2 * limits::kHttpHeaderBlockBytes) throw verboseError("RequestHeadersTooLarge", url.href());
+      auto encoded = latin1Bytes(value);
+      charge("set-cookie"sv.size(), encoded.size());
+      cookies.push_back(std::move(encoded));
+    }
     std::sort(lines.begin(), lines.end(), [](const auto& left, const auto& right) { return left.first < right.first; });
     for (const auto& [name, value] : lines) head += name + ": " + value + "\r\n";
     for (const std::string& cookie : cookies) head += "set-cookie: " + cookie + "\r\n";
-    if (!headers.has("connection")) head += "Connection: keep-alive\r\n";
-    if (!headers.has("user-agent")) head += "User-Agent: " + latin1Bytes(userAgent) + "\r\n";
-    if (!headers.has("accept")) head += "Accept: */*\r\n";
-    if (!headers.has("host")) head += "Host: " + url.host() + "\r\n";
-    if (!headers.has("accept-encoding")) head += "Accept-Encoding: " + acceptEncoding + "\r\n";
+    const auto appendField = [&](std::string_view name, std::string_view value) {
+      charge(name.size(), value.size());
+      head.append(name).append(": ").append(value).append("\r\n");
+    };
+    if (!headers.has("connection")) appendField("Connection", "keep-alive");
+    if (!headers.has("user-agent")) {
+      if (userAgent.size() > 2 * limits::kHttpHeaderBlockBytes) throw verboseError("RequestHeadersTooLarge", url.href());
+      appendField("User-Agent", latin1Bytes(userAgent));
+    }
+    if (!headers.has("accept")) appendField("Accept", "*/*");
+    if (!headers.has("host")) appendField("Host", url.host());
+    if (!headers.has("accept-encoding")) appendField("Accept-Encoding", acceptEncoding);
     switch (framing) {
-      case RequestFraming::length: head += "Content-Length: " + std::to_string(length) + "\r\n"; break;
-      case RequestFraming::chunked: head += "Transfer-Encoding: chunked\r\n"; break;
+      case RequestFraming::length: appendField("Content-Length", std::to_string(length)); break;
+      case RequestFraming::chunked: appendField("Transfer-Encoding", "chunked"); break;
       case RequestFraming::none:
-        if (method != "GET" && method != "HEAD" && method != "TRACE") head += "Content-Length: 0\r\n";
+        if (method != "GET" && method != "HEAD" && method != "TRACE") appendField("Content-Length", "0");
         break;
     }
+    if (head.size() > limits::kHttpHeaderBlockBytes - 2) throw verboseError("RequestHeadersTooLarge", url.href());
     head += "\r\n";
     return head;
   }
