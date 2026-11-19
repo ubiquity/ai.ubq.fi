@@ -93,7 +93,7 @@ def tool_view(sdk, view):
 def input_identity(targets):
     vendors = tuple(vendor_sources.selected())
     vendor_targets = {library.target for library in vendors}
-    paths = [GATEWAY / "PORT-MANIFEST.json", GATEWAY / "CMakeLists.txt", GATEWAY / "CMakePresets.json"]
+    paths = [GATEWAY / "PORT-MANIFEST.json", GATEWAY / "PORTED.txt", GATEWAY / "CMakeLists.txt", GATEWAY / "CMakePresets.json"]
     sources = [path for path in (GATEWAY / "src").rglob("*.cpp") if not path.name.startswith(".")]
     if not targets or any(target in targets for target in ("uos_gateway", "uos_kv_convert", "uos_kv_proof")):
         sources += list((GATEWAY / "runtime").glob("*.cpp"))

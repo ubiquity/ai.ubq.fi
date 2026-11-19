@@ -1,4 +1,5 @@
-// Recorded from src/authority/native-api-key.ts under Bun 1.4.0 (scratch oracle script).
+// Base vectors recorded from src/authority/native-api-key.ts under Bun 1.4.0 (scratch oracle script).
+// Gemini provider rows and their expected digests were added for the native adapter.
 // kApiKeyInputs holds the JSON inputs; kApiKeyResults lists, in the order
 // tests/native_api_key_differential_test.cpp replays them, each case label and the first 16 hex
 // digits of SHA-256 over JSON.stringify(result).

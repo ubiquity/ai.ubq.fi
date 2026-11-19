@@ -13,7 +13,7 @@ FROM toolchain AS cpp
 ARG JOBS=4
 RUN apt-get update && apt-get install -y --no-install-recommends ccache && rm -rf /var/lib/apt/lists/*
 WORKDIR /source
-COPY cpp/gateway/CMakeLists.txt cpp/gateway/PORT-MANIFEST.json cpp/gateway/
+COPY cpp/gateway/CMakeLists.txt cpp/gateway/PORT-MANIFEST.json cpp/gateway/PORTED.txt cpp/gateway/
 COPY cpp/gateway/cmake cpp/gateway/cmake
 COPY cpp/gateway/tools cpp/gateway/tools
 COPY cpp/gateway/include cpp/gateway/include
