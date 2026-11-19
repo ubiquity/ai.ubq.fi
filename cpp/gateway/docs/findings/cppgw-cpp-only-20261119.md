@@ -10,8 +10,8 @@
 - [x] Call the linked Linux confinement implementation directly.
 - [x] Retire the offline legacy conversion executables and helper.
 - [x] Remove unnecessary package runtime artifacts and offline tooling.
-- [ ] Update CI and current operating documents.
-- [ ] Add the ARM64 cutover checklist and runtime environment table.
+- [x] Update CI and current operating documents.
+- [x] Add the ARM64 cutover checklist and runtime environment table.
 - [ ] Verify registrations, tracked files, workflows and whitespace.
 - [ ] Build the gateway and run the selected release tests in native isolation.
 - [ ] Build and verify the portable package.
@@ -45,3 +45,7 @@ Removed the pinned offline V8 subprocess, its converter and round-trip proof ent
 Both Linux package paths now bind the single gateway executable, static assets, remaining licenses, runtime and operator closure, and the launch schema. The launch manifest no longer has an add-on provenance field. Startup still requires a private manifest and state, verifies the package and host libraries, and installs linked confinement before opening the marked store. Storage opens only a supplied local path, and serving refuses an uninitialized store before touching a listener. The Node-API artifact-only tests were retired. The startup, storage, per-process durability and bind-failure checks now use the linked native store. Compared all resolved test closures with STATE A. Only paths retired with these capabilities and the two deliberately revised test closures changed.
 
 The portable mock proof now checks refusal of a wrong launch manifest hash and a changed packaged static file before any state is opened. It runs both checks against disposable files with a clean environment inside the existing no-network container.
+
+Updated the runtime, root, release and operator guides for the single-executable package. The runtime table covers the two production `UOS_GATEWAY_*` switches and every matching environment read by the native build and test tools. The cutover checklist uses the existing systemd draft, sealer and health contract. The Arch host, copied production state, live observation, switch and rollback remain UNVERIFIED.
+
+Pre-existing outside-scope content: `static/docs/llms-agents.md` still documents legacy auth-upload commands for the live service. It remains a public asset as supplied. The portable build still reports the checked-in runtime release SHA `unknown` through health. Archive identity is bound independently to the full commit and tree, but this health value blocks production acceptance under the existing exact-release requirement. No deployment or identity change was made.

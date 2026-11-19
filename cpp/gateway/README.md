@@ -1,38 +1,8 @@
 # Native C++ gateway
 
-The native gateway runs compiled C++20. It ports the repository's TypeScript gateway, which runs on Bun, and serves
-the same gateway APIs, including OpenAI Chat Completions and Responses. The port preserves wire formats, status
-codes, stored data, authentication, validation and accounting as application contracts. Generic operations use
-standard or mature open-source libraries where they meet those contracts, including the required security checks.
-Differences in diagnostic wording are expected. [TypeScript source](https://github.com/ubiquity/ai.ubq.fi/tree/2b23fb6837e2b5c0dc9ffa50771f52d322dd413a/src) ·
-[TypeScript entry point](https://github.com/ubiquity/ai.ubq.fi/blob/2b23fb6837e2b5c0dc9ffa50771f52d322dd413a/serve.ts) · [Architecture](docs/ARCHITECTURE.md)
-
-## Where it stands
-
-- **Linux ARM64.** On the combined follow-up tree, the full Release and ASan, UBSan and LSan runs each passed
-  **451 binaries and 5,186 cases**. The earlier F2 portable package sealed and ran on Debian 12 and 13. It agreed
-  with Bun on all 186 paired conformance cases, including two validation failures shared by both gateways.
-  [Combined verification](docs/findings/cppgw-combine-1-20261119.md) · [F2 package and comparison](docs/findings/cppgw-integrate-f2-20261118.md)
-- **Linux x64.** The pre-integration comparison built 441 binaries and passed **438/441 binaries and 5,007/5,031 cases**.
-  The three failures are detailed below. [Runner verification](docs/findings/cppgw-docs-readme-20261118.md)
-- **Apple Silicon.** The macOS 26.7.2 qualification of the standard-library follow-up passed **450/450 binaries
-  and 5,119/5,119 cases**. The extracted package returned its source commit from `--version`. Serving requires
-  Linux confinement.
-  [macOS results](docs/MACOS.md) · [Packages](docs/RELEASES.md)
-- **Raspberry Pi.** This is a 64-bit ARM target. Its OS, loader, kernel confinement and memory headroom
-  still need checking on the device. [Platform requirements](docs/BUILD.md)
-
-### Speed and memory versus Bun
-
-- In the Linux ARM64 request-path benchmark with four local clients and a scripted upstream, C++ delivered
-  **1.19–1.88×** Bun 1.4.0's median requests per second in five of six scenarios. Peak gateway memory was
-  **33–40 MiB vs 112–135 MiB**, about a third. The 1 MiB Chat request reached **155.8 vs 167.6 requests/s**,
-  using **6.69 vs 9.25 ms** of gateway CPU per request and **103 vs 206 MiB** peak memory.
-  [Request-path benchmark](docs/findings/cppgw-perf-request-path-20261117.md)
-- On the separately sealed ARM64 package, paired smoke tests measured **39.4 vs 98.7–99.2 MiB** settled idle memory
-  and **41.6 vs 120.6–124.6 MiB** peak with eight concurrent requests. Quiet serial buffered Chat had a median of
-  **2.81 vs 10.02 ms**. Bun had lower warm parse and stringify times on the three documents in that package's JSON benchmark.
-  [Package performance](docs/PERFORMANCE.md)
+The C++20 gateway serves OpenAI-compatible APIs, operator routes and browser assets. It uses
+a linked SQLite store and native Linux confinement. The repository contains the gateway, C++ tests and fixtures,
+native build and packaging scripts, and browser assets. [Architecture](docs/ARCHITECTURE.md)
 
 ## Build and test on Linux ARM64
 
@@ -66,7 +36,7 @@ the pinned library into `/usr/local`. The final command printed `3.54.0`.
 )
 ```
 
-List the tests, then build and run Release. The first command prints `451`. The driver builds common objects once
+List the registered tests, then build and run a focused Release fixture. The driver builds common objects once
 and links each standalone test. It uses real Linux namespaces with loopback-only networking, a fresh temp filesystem
 and an empty home for every test. It tries unprivileged namespaces, then passwordless `sudo` for namespace setup.
 [Driver and isolation](docs/CI.md)
@@ -74,34 +44,22 @@ and an empty home for every test. It tries unprivileged namespaces, then passwor
 ```sh
 bash cpp/gateway/tools/ci-build.sh --list | wc -l
 build_dir=$(mktemp -d /tmp/uos-gateway-build.XXXXXX)
-env -i PATH="$PATH" LC_ALL=C LD_LIBRARY_PATH=/usr/local/lib CXX=clang++ UOS_CI_JOBS=4 \
-  UOS_CI_BUILD_DIR="$build_dir" bash cpp/gateway/tools/ci-build.sh --config release >"$build_dir/driver.log" 2>&1
+mkdir "$build_dir/home" "$build_dir/tmp"
+env -i PATH=/usr/local/bin:/usr/bin:/bin LC_ALL=C HOME="$build_dir/home" TMPDIR="$build_dir/tmp" \
+  CC=clang CXX=clang++ UOS_CI_JOBS=4 \
+  UOS_CI_BUILD_DIR="$build_dir" bash cpp/gateway/tools/ci-build.sh --config release oss_gateway_http_test >"$build_dir/driver.log" 2>&1
 ```
 
 The build directory holds `driver.log`, and the compiler-specific `release/` directory holds `receipt.json`,
 `results.tsv` and each test's build and run logs. Build the portable package separately with Docker Buildx.
 [Build and test entry points](docs/BUILD.md) · [Portable packages](docs/RELEASES.md)
 
-The full x64 run exited `1`. `permissions_linux_test` and `runtime_native_startup_test` check Linux ARM64
-contracts and accounted for 23 failed cases on this host. One case in `native_addon_differential_test`
-also failed. Its Linux x64 vectors still expect older Bun error wording for malformed JSON. The parser
-rejected the inputs. [Failure details](docs/findings/cppgw-docs-readme-20261118.md)
-
-For a focused local HTTP check, reuse the build directory. This fixture started the gateway handler and a scripted
-upstream on loopback and passed all **5 cases** on this runner. [HTTP fixture](tests/oss_gateway_http_test.cpp)
-
-```sh
-env -i PATH="$PATH" LC_ALL=C LD_LIBRARY_PATH=/usr/local/lib CXX=clang++ UOS_CI_JOBS=4 \
-  UOS_CI_BUILD_DIR="$build_dir" bash cpp/gateway/tools/ci-build.sh --config release oss_gateway_http_test \
-  >"$build_dir/loopback-driver.log" 2>&1
-```
-
 ## Run a sealed Linux ARM64 package
 
 Prepare the ARM64 package for the target's host libraries using the native build and packaging instructions. Set
 `package_root` to its absolute path and `launch_manifest` to the absolute path of the owner-private JSON. The
-manifest binds the package and native KV provenance hashes, the private state root and the loopback listener.
-Normal startup needs an existing private `.data/kv-bun.sqlite3` with the Bun codec marker in that state root.
+manifest binds the package hash, the private state root and the loopback listener.
+Normal startup needs an existing private `.data/kv-bun.sqlite3` with the `bun-jsc-v1` marker in that state root.
 The isolated package smoke guide describes the separate fixture mode with fresh state and a scripted upstream.
 [Package instructions](docs/RUNTIME.md) ·
 [Launch schema](runtime/launch-schema.json) · [Package smoke](tests/production_smoke/README.md)
@@ -110,24 +68,21 @@ The isolated package smoke guide describes the separate fixture mode with fresh 
 bash "$package_root/ops/launch-native.sh" "$launch_manifest"
 ```
 
-The x64 runner exercised this command against the compiled entry point in isolation. It exited `1` with
-`package manifest integrity check failed` for an intentionally wrong hash. The recorded paired ARM64 package smoke
-supplies the successful startup evidence. The current operator files are an uninstalled draft. The candidate binds
-to `127.0.0.1` and refuses service ports `7999` and `8000`. [Launch probe](docs/findings/cppgw-docs-readme-20261118.md) ·
-[Smoke results](docs/PERFORMANCE.md) · [Operations draft](ops/README.md)
+The candidate binds to IPv4 loopback and reserves ports `7999` and `8000`. See the
+[operator checklist](docs/CUTOVER.md) for the Arch Linux ARM rehearsal and health verification.
 
 ### Configuration
 
 The launch manifest selects package, state and listener. The process reads the existing gateway environment for
 authentication, provider settings and identity, including `UOS_AI_TOKEN`, `CODEX_AUTH_JSON_B64` and `DENO_TIMELINE`.
 `DENO_TIMELINE=production` disables the legacy localhost authentication bypass. The binary reads the process
-environment. Set `EnvironmentFile=` to the operator-owned `.env` in the service unit. Its use needs cutover
+environment. Set `EnvironmentFile=` to the operator-owned environment file in the service unit. Its use needs cutover
 review. [Configuration source](src/config.cpp) · [Auth policy](src/auth/index.cpp) · [Environment inventory](docs/RUNTIME.md) ·
 [Draft unit](ops/uos-gateway-native.service)
 
 ### Security in five points
 
-1. Startup verifies the sealed package, host libraries and native artifacts before opening KV or binding the listener. [Startup](runtime/startup.cpp)
+1. Startup verifies the sealed package, and host libraries before opening KV or binding the listener. [Startup](runtime/startup.cpp)
 2. Linux ARM64 startup requires Landlock ABI 8+ by default. On ABI 3–7, `UOS_GATEWAY_ALLOW_REDUCED_CONFINEMENT=1` explicitly selects the controls that the kernel supports. Seccomp thread synchronization remains required. [Confinement](docs/RUNTIME.md#linux-confinement)
 3. By default the service reads the package, private state and required OS files, writes under private `.data` and denies subprocesses. The Antigravity setting explicitly enables the CLI and its tighter child filesystem profile. [Confinement](docs/RUNTIME.md#linux-confinement)
 4. The loopback service applies the gateway's authentication, validation and admission rules at its routes. [Request routing](src/handler/index.cpp)
@@ -152,14 +107,8 @@ The table lists the release build pins and the shared libraries supplied by the 
 | zlib, Brotli, Zstd   | OS libraries       | Gzip streams and HTTP content decoding. [Gzip](src/rt/gzip.cpp) · [Fetch decoding](src/rt/fetch_transport_codec.cpp)                                                                                                                                |
 | C++20 and POSIX      | Standard libraries | Dates, filesystem paths, numeric conversion, collections and process environment. [Completed replacements](docs/OSS-REPLACEMENT-PLAN.md#ranked-component-inventory)                                                                                 |
 
-The package also carries and verifies the pinned `@deno/kv` 0.14.0 artifact for provenance. The linked C++ SQLite
-backend handles the actual database operations. [Architecture](docs/ARCHITECTURE.md) ·
-[Artifact pin](packaging/native-kv/inputs.json)
-
 ## Open items
 
-- `chat-invalid-role` and `responses-invalid-tool-type` should return HTTP 400 without dispatch. The packaged
-  gateway and Bun both returned HTTP 200 and dispatched in conformance. [Final integration](docs/findings/cppgw-integrate-f2-20261118.md)
 - The coroutine lifetime audit and rollout of the tighter input limits are in progress.
   [Coroutine audit](docs/findings/local-coroutine-lifetime-audit.md) · [Input limits](docs/RUNTIME.md#input-limits)
 - The storage reader preserves sparse entries, references and cycles in the typed graph. Projection to dense JSON
@@ -182,6 +131,7 @@ backend handles the actual database operations. [Architecture](docs/ARCHITECTURE
 - [Runtime](docs/RUNTIME.md) specifies the package, launch manifest, limits, environment and cutover gates.
 - [Releases](docs/RELEASES.md) explains how to verify and install the ARM64 archives.
 - [Conformance](docs/CONFORMANCE.md) links to the historical paired comparison.
+- [Cutover checklist](docs/CUTOVER.md) covers the week-long observation, switch and rollback.
 - [Operations draft](ops/README.md) describes the uninstalled launcher and service unit.
 - [Package smoke](tests/production_smoke/README.md) runs local authenticated checks on a sealed package.
 - [Testing](docs/TESTING.md) explains test link lists and the original SDK sweep.

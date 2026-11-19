@@ -1,9 +1,8 @@
 # Download and install C++ gateway packages
 
 Use the Linux ARM64 package for Arch Linux ARM or 64-bit Raspberry Pi OS. Use the macOS ARM64 package on Apple Silicon
-to install the development binaries and check the gateway version offline. Linux service startup needs glibc 2.36
-or newer and seccomp thread synchronization, with Landlock ABI 8 or newer by default. Gateway serving and KV
-operations require the sealed Linux package.
+to install the development executable and check the gateway version offline. Linux service startup needs glibc 2.36
+or newer and seccomp thread synchronization, with Landlock ABI 8 or newer by default. Gateway serving requires the sealed Linux package.
 
 ## Build and download in GitHub Actions
 
@@ -68,23 +67,21 @@ release="$install_root/releases/$commit"
 env -i PATH=/usr/bin:/bin LC_ALL=C python3 -B "$bundle/seal.py" "$release"
 ```
 
-The last command creates a new release directory and prints `packageRoot`, `packageManifestSha256` and
-`nativeKvProvenanceSha256`. Keep these values with the release. If sealing reports a missing library, install the
+The last command creates a new release directory and prints `packageRoot` and `packageManifestSha256`. Keep these values with the release. If sealing reports a missing library, install the
 matching distribution package and retry. After upgrading shared libraries, use a new release directory and seal again
 to record their new paths and hashes.
 
 For a separately approved Linux launch, keep the sealed directory under deployment ownership or on a read-only mount.
-Prepare a separate state directory containing an existing `.data/kv-bun.sqlite3` with the Bun codec marker. Both the
+Prepare a separate state directory containing an existing `.data/kv-bun.sqlite3` with the `bun-jsc-v1` codec marker. Both the
 state directory and its `.data` directory must be private (mode `0700`) and owned by the gateway user. Stop any other
 process using the database and keep the legacy `.data/kv.sqlite3` intact. Use a private configuration file (mode `0600`)
-owned by the gateway user and fill in the three printed values and the canonical state path:
+owned by the gateway user and fill in both printed values and the canonical state path:
 
 ```json
 {
   "schema": "uos-gateway-launch-v1",
   "packageRoot": "/absolute/path/printed/by/the/sealer",
   "packageManifestSha256": "paste-the-package-manifest-sha256",
-  "nativeKvProvenanceSha256": "paste-the-native-kv-provenance-sha256",
   "stateRoot": "/absolute/path/to/private/state",
   "hostname": "127.0.0.1",
   "port": 18080
@@ -92,9 +89,8 @@ owned by the gateway user and fill in the three printed values and the canonical
 ```
 
 Run `"$release/ops/launch-native.sh" /absolute/path/to/launch.json` as the gateway user with its approved environment.
-In another terminal, `curl -f http://127.0.0.1:18080/health` checks the listener. The sealed `bin/` also contains
-`uos-kv-convert` and `uos-kv-proof`. Their offline manifest and stopped-state requirements apply before using them.
-[Native startup and KV tools](RUNTIME.md)
+In another terminal, `curl -f http://127.0.0.1:18080/health` checks the listener.
+[Native startup](RUNTIME.md) · [Owner cutover checklist](CUTOVER.md)
 
 ## Install the files on an Apple Silicon Mac
 
@@ -106,12 +102,12 @@ mkdir -p "$HOME/uos-gateway/releases"
 release=$(mktemp -d "$HOME/uos-gateway/releases/macos.XXXXXX")
 tar --no-same-owner --no-same-permissions -xzf uos-gateway-macos-arm64.tar.gz -C "$release"
 cat "$release/VERSION"
-file "$release/bin/uos-gateway" "$release/bin/uos-kv-convert" "$release/bin/uos-kv-proof"
+file "$release/bin/uos-gateway"
 "$release/bin/uos-gateway" --version
 printf '%s\n' "$release"
 ```
 
-`VERSION` lists each executable's minimum macOS version. Check for arm64 Mach-O executables and compare the full
+`VERSION` lists the minimum macOS version. Check for an ARM64 Mach-O executable and compare the full
 commit printed by `--version` with `gitCommit` in `VERSION`. Save the printed directory for rollback. Keep your
 existing service on its supported release. [Known Darwin boundaries](MACOS.md)
 
@@ -119,12 +115,11 @@ existing service on its supported release. [Known Darwin boundaries](MACOS.md)
 
 Keep the previous archive and its checksum, sealed or extracted directory, and launch manifest. To roll back a Linux
 launch, stop the candidate gracefully and let its writes finish. Select the previous compatible release and its launch
-manifest, which must point to the current stopped Bun state. If the host libraries changed, reseal the previous archive
+manifest, which must point to the current stopped `bun-jsc-v1` state. If the host libraries changed, reseal the previous archive
 and use its new binding. Then restart the previous release and check its health and authenticated access.
 
 Use the latest stopped database when switching runtimes. A return to legacy Deno after Bun writes requires reverse
-conversion, a verified private rollback receipt, and a supported legacy release/profile. A stale backup loses those
-writes.
+conversion, a verified private rollback receipt, and a supported legacy release/profile. The offline tools are at [STATE A](https://github.com/ubiquity/ai.ubq.fi/tree/ca045a83ebaab6c50c20567d1a825638abac0891).
 
 ### Roll back the Mac file installation
 
@@ -142,7 +137,7 @@ cat "$release/VERSION"
 
 Run from the repository root after choosing a committed checkout. On Linux ARM64 with Docker Buildx, the first command
 below builds the Bookworm package. On Apple Silicon with Xcode and the Homebrew packages described in the Mac guide,
-the second command builds SQLite 3.54.0, runs the runtime gate and packages the executables. The destination directory
+the second command builds SQLite 3.54.0, runs the runtime gate and packages the executable. The destination directory
 must already exist outside the checkout and the archive path must be new. [Mac build prerequisites](MACOS.md)
 
 ```sh
@@ -156,5 +151,4 @@ For Linux, `bash cpp/gateway/packaging/portable/verify.sh /path/to/archive.tar.g
 proofs. The proofs require an ARM64 Docker host with Landlock ABI 8 or newer.
 
 Repeated builds use the committed source, normalized archive metadata and the commit timestamp. Compare builds with
-the same toolchain and dependency revisions. On Linux, set `PORTABLE_REBUILD=1` to rerun the gateway compile and native
-KV build with the dependency stages reused and the compiler cache bypassed.
+the same toolchain and dependency revisions. On Linux, set `PORTABLE_REBUILD=1` to rerun the gateway compile with the dependency stages reused and the compiler cache bypassed.

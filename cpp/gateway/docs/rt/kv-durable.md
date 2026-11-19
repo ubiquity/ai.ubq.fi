@@ -25,20 +25,9 @@ storage::kv::openKv(path)            src/storage/kv.ts: path checks, codec marke
   outstanding work, so neither `rt::Loop` nor a fake clock moves on while SQLite works).
 - `rt::KvEnqueue` (kv.hpp) is the queue capability; `paid_fallback::ledger_state::KvEnqueue` is an
   alias of it. SqliteKv and the guard over it implement it; MemoryKv does not.
-- `storage::kv::deserialize()` defaults to `rt::kvJscDeserialize` (node:v8 `deserialize` under
-  Bun), which also enables kv-conversion's bun-to-deno transcoding.
-- `native_addon::nativeKvRequire()` defaults to the linked store's interface: the nine exports
-  exist, so `prepareNativeKvBackend` still verifies the release artifact and the pinned interface
-  as ported, but nothing calls them (they throw `rt::JsError` naming the bypass): the C++ SDK talks
-  to the backend directly instead of through the addon's protobuf requests.
-
-| TypeScript                                                                        | C++                                                                                        |
-| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `await openKv(path)` (#kv)                                                        | `co_await storage::kv::openKv(path)` (unchanged; now opens SqliteKv)                       |
-| `openKv(path, { implementation: "sqlite", napi, encodeV8, decodeV8 })` (@deno/kv) | `storage::kv::openNativeKv()(path, options)`; standalone: `rt::SqliteKv kv(path, options)` |
-| `kv.enqueue(value, { delay, keysIfUndelivered })`                                 | `dynamic_cast<rt::KvEnqueue*>(kv.get())->enqueue(value, options)`                          |
-| `deserialize(bytes)` (node:v8, Bun)                                               | `rt::kvJscDeserialize(bytes)`                                                              |
-| `openKv(":memory:")` in a test                                                    | still `rt::MemoryKv`; `openKv(":memory:")` now gives a private in-memory SqliteKv          |
+- `storage::kv::deserialize()` defaults to the linked C++ `rt::kvJscDeserialize` value reader.
+- `storage::kv::openKv(path)` requires an explicit SQLite path or `:memory:`. It checks the marker before an
+  existing file can be changed. A new file receives the same format metadata.
 
 `SqliteKvOptions`: `encodeV8`/`decodeV8` (default Bun's codec behind assertPortableKvValue),
 `now` (Date.now for expireIn/enqueue deadlines and the backend's sweep clock; empty = `rt::dateNow`
@@ -79,11 +68,8 @@ keys_if_undelivered = JSON of the packed keys)` (TEXT values, as rusqlite binds 
 
 ## Compatibility evidence
 
-The TypeScript side ran the pinned legacy `#kv` opener (`src/storage/kv.ts` with
-`prepareNativeKvBackend`) over the pinned native-kv artifact (denokv 9fe65cc + both patches; its
-provenance matches the [moved inputs](../../packaging/native-kv/inputs.json)) under Bun 1.4.0,
-on throwaway databases in scratch. The C++ side ran `storage::kv::openKv` (SqliteKv + guard).
-[Historical rebuild and cross-reader script](https://github.com/ubiquity/ai.ubq.fi/blob/2b23fb6837e2b5c0dc9ffa50771f52d322dd413a/scripts/test-native-kv.ts)
+Earlier compatibility checks used the pinned legacy opener and the linked C++ store on disposable files.
+The paired comparison with the TypeScript gateway lives at [commit `ca045a83ebaab6c50c20567d1a825638abac0891`](https://github.com/ubiquity/ai.ubq.fi/tree/ca045a83ebaab6c50c20567d1a825638abac0891/cpp/gateway/conformance).
 
 |                           | Proven by running                                                                                                                                                                                                                                                   | Hermetic test                                                                                                                                                                                                                                                                                              |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -106,28 +92,16 @@ trips in TS but reads in C++ as copies (cycles refused).
 
 ## Operational notes
 
-- Two processes on one file (a TS gateway and a C++ gateway, a gateway and an offline tool) are
-  fenced by SQLite's locks and CAS: proven above. Never open the file with two different SQLite
-  libraries inside one process: their POSIX locks do not exclude each other (measured: bun:sqlite
-  and the addon in one bun process both "held" the write lock). The C++ process uses one
-  `libsqlite3.so.0` for everything.
-- A handle's open sweeps expired rows, which is a write: while another process holds the write
-  lock, the open (and the first operation) waits, as the native addon's does.
-- Cutover: the C++ store reads and writes the TS store's `.data/kv-bun.sqlite3` as it is (same
-  schema, codec marker, encodings); no conversion is needed. Stop the TS gateway first if the two
-  must not interleave writes; WAL makes a stopped file self-contained once its last connection
-  closed (the `-wal` file is checkpointed and removed).
-- Never against the production file: run the C++ tests or tools with their working directory
-  at a production root (the default path is `.data/kv-bun.sqlite3`); copy the database while a
-  gateway has it open (copy the `-wal` too, or stop first); delete `-wal`/`-shm` files; open it
-  with SQLite tools that change the journal mode or page size; run kv-conversion on a live file.
-- SQLite versions: the C++ links the SDK's 3.40.1, the native addon bundles 3.53.1 (bun:sqlite 3.53.2); both read and write the
-  same file and WAL formats (the mixed-process run used both on one file).
+- Opening a handle can migrate SQLite schema, expire rows and requeue messages. Keep one writer at cutover and
+  rehearse with a consistent stopped copy before adopting the latest state. Use one SQLite library per process
+  against the file. [Cutover checklist](../CUTOVER.md)
+- Move the exact marked `.data/kv-bun.sqlite3` format between compatible runtimes. Keep its keys, revisions,
+  absolute expiry and typed values. Preserve any WAL as part of a consistent backup. [Launch and state](../RUNTIME.md#launch-and-state)
+- Run tests in their disposable fixture boundary. The Linux package links SQLite 3.54.0 and opens its operator-selected state path.
 
 ## Limits and what is not proven
 
-- No `listenQueue`/dequeue, `watch` or the NAPI protobuf transport (no first-party module calls
-  them); the nine NAPI exports of the default interface throw if called.
+- The gateway uses queue enqueue. Its application does not use queue dequeue or watch.
 - Values KvValue cannot hold fail closed on read with TypeError "Serialized value <what> has no
   KvValue representation": cycles, boxed primitives, properties on arrays/Maps/Sets,
   Float16Array, resizable or length-tracking buffers, arrays longer than 2^24, Blob,

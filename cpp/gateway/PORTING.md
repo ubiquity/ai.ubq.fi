@@ -17,8 +17,7 @@ C++ paths. `tools/cmake-sources.py` checks the historical modules against
   ports 7999/8000, or any process you did not start. Never read secrets.
 - Two cores, about 2 GiB of spare memory, about 2 GiB of spare disk. Compile
   **only** through `cpp/gateway/tools/` wrappers, which serialise compiler runs,
-  lower their priority and cap their memory. Never run `g++`, `cmake`, `ninja`,
-  `bun test` over the whole suite, `tsc`, or `bun install` directly. Use a focused Bun test where application readback needs it, under the existing isolation rules.
+  lower their priority and cap their memory. Use native tests and recorded fixtures for application readback.
 - No debug info, no sanitizer builds, no extra build directories. Keep scratch
   under the per-agent directory the wrappers give you and delete it when done.
 - No downloads or package installs. No git commands that write (no commit,
