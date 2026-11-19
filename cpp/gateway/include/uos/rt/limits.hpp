@@ -24,6 +24,10 @@ namespace uos::rt::limits {
   inline constexpr std::size_t kImageEditJsonBytes = ((kImageEditInputBytes + 2) / 3) * 4 + 1024 * 1024;
   inline constexpr std::size_t kImageEditMultipartBytes = 64 * 1024 * 1024;
 
+  // Covers image data and the smaller base64 envelopes used by stored captures.
+  inline constexpr std::size_t kBase64DecodedBytes = kImageEditInputBytes;
+  inline constexpr std::size_t kBase64InputBytes = ((kBase64DecodedBytes + 2) / 3) * 4;
+
   inline constexpr std::size_t kCborBytes = 1024 * 1024;
   inline constexpr std::size_t kCborDepth = 8;
   inline constexpr std::size_t kCertificateBytes = 64 * 1024;

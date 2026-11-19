@@ -1,6 +1,7 @@
 // Coverage for uos/rt/base64.hpp. The vectors were recorded from Bun 1.4.0.
 // Buffer base64 and hex expectations follow the ASCII input rules where they differ.
 #include "uos/rt/base64.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/rt/test.hpp"
 
@@ -43,6 +44,21 @@ namespace {
 }
 
 #define ROW_EQ(row, actual, expected) rowEqual((actual), (expected), #actual, (row), __LINE__)
+
+TEST("base64 decoders enforce both encoded and decoded byte limits") {
+  std::string encoded(rt::limits::kBase64InputBytes, 'A');
+  encoded.back() = '=';
+  EXPECT_EQ(rt::atobBytes(encoded).size(), rt::limits::kBase64DecodedBytes);
+  EXPECT_EQ(rt::fromBase64(encoded).size(), rt::limits::kBase64DecodedBytes);
+
+  encoded.back() = 'A';
+  EXPECT_EQ(thrownText([&] { return rt::atobBytes(encoded); }), rt::InvalidCharacterError().toString());
+  EXPECT_EQ(thrownText([&] { return rt::fromBase64(encoded); }), "RangeError: Base64 decoded input is too large");
+
+  encoded.push_back('A');
+  EXPECT_EQ(thrownText([&] { return rt::atobBytes(encoded); }), rt::InvalidCharacterError().toString());
+  EXPECT_EQ(thrownText([&] { return rt::fromBase64(encoded); }), "RangeError: Base64 encoded input is too large");
+}
 
 // @generated-vectors
 namespace {
