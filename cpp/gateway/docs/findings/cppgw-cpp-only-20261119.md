@@ -6,7 +6,7 @@
 - [x] Merge the residuals branch and record the request-allowlist revert under STATE A.
 - [ ] Build and run the selected State A request tests.
 - [x] Inventory tracked language sources, toolchain commands and runtime dependencies.
-- [ ] Remove the historical comparison and formatter.
+- [x] Remove the historical comparison and formatter.
 - [ ] Remove unnecessary package runtime artifacts and offline tooling.
 - [ ] Update CI and current operating documents.
 - [ ] Add the ARM64 cutover checklist and runtime environment table.
@@ -32,4 +32,6 @@ Local verification uses qualified native dependencies and the repository's loopb
 - `src/storage/native_addon.cpp` verifies the external add-on and returns C++ placeholders. `src/storage/kv.cpp` opens `rt::SqliteKv` directly, and `src/rt/kv_sqlite.cpp` implements the store. `src/rt/kv_jsc*.cpp` implement the persisted value codec. The `serve.cpp` bootstrap gate checks preparation, which only verified that unused artifact. Keep the marked database path, marker and data format.
 - `src/runtime/permissions_linux.cpp` hashes the external helper before returning function pointers to its own Landlock and seccomp implementation. `runtime/startup.cpp` verifies both artifacts before opening the store or binding the listener. Neither artifact is loaded. Remove their build and verification paths and keep the linked confinement and manifest checks for the remaining payload.
 - `runtime/legacy-codec/typed-value.ts` is imported by `v8-helper.mjs`. The C++ `kv_conversion/legacy_codec.cpp` starts the pinned codec subprocess only for offline conversion and the round-trip proof. Native storage and serving have no call path to that helper. Native snapshot reads and portable typed-value handling are independent and remain covered.
-- The existing opt-in Gemini provider executes the owner-installed `agy` binary, expects an ELF executable, and uses the C++ child confinement policy. The gateway, workflow and package do not install that executable or a language runtime for it.
+- The existing opt-in Gemini provider executes the owner-installed `agy` binary, and confines child execution to that file and the system ARM64 loader. The gateway, workflow and package do not install that executable or a language runtime for it.
+
+Removed the paired harness and pins, comparison modes from the smoke and benchmark drivers, and the root formatter dependencies. The native HTTP smoke and JSON, regex and request-path measurements remain. The hook uses Git whitespace checks. Parsed all affected Python with `ast.parse` and ran `git diff --check`.

@@ -3,30 +3,3 @@ set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 git diff --cached --check
-
-scratch=$(mktemp -d)
-trap 'rm -rf -- "$scratch"' EXIT
-git diff --cached --name-only --diff-filter=ACMR -z > "$scratch/changes"
-paths=()
-while IFS= read -r -d '' file; do
-  case "$file" in
-    *.ts|*.tsx|*.mjs|*.cjs|*.js|*.jsx|*.json|*.jsonc|*.md|*.css|*.html|*.yml|*.yaml)
-      paths+=("$file")
-      ;;
-  esac
-done < "$scratch/changes"
-if ((${#paths[@]} == 0)); then exit 0; fi
-
-formatter="$PWD/node_modules/prettier/bin/prettier.cjs"
-if [[ ! -f $formatter ]] || [[ $(bun --no-env-file --no-install --version) != 1.4.0 ]]; then
-  echo 'Install the pinned formatter with Bun 1.4.0: bun --no-env-file install --frozen-lockfile --ignore-scripts' >&2
-  exit 1
-fi
-# The index supplies both formatting rules and the bytes to check.
-mkdir -- "$scratch/index"
-for file in .prettierrc .prettierignore "${paths[@]}"; do
-  mkdir -p -- "$scratch/index/$(dirname -- "$file")"
-  git cat-file blob ":$file" > "$scratch/index/$file"
-done
-cd "$scratch/index"
-bun --no-env-file --no-install "$formatter" --check --ignore-unknown -- "${paths[@]}"

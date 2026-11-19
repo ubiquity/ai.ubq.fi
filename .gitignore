@@ -18,9 +18,6 @@
 logs/
 *.log
 
-node_modules
-.npm-cache/
-.bun-cache/
 __pycache__/
 
 CMakeUserPresets.json
@@ -30,7 +27,6 @@ cmake-build-*/
 build/
 *.o
 *.a
-*.node
 uos-gateway-*.tar.gz
 *.swp
 *.swo

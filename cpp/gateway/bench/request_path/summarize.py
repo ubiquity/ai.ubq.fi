@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render median and run-to-run range, and rank measured native/Bun throughput ratios."""
+"""Render median and run-to-run ranges for the native gateway."""
 
 import argparse
 from collections import defaultdict
@@ -20,29 +20,16 @@ def main():
     args = parser.parse_args()
     runs = defaultdict(list)
     for trial in json.loads(args.receipt.read_text())["trials"]:
-        runs[trial["scenario"], trial["runtime"]].append(trial)
-    labels = ["Scenario", "Runtime", "n/rep", *(label for label, _ in METRICS.values())]
+        runs[trial["scenario"]].append(trial)
+    labels = ["Scenario", "n/rep", *(label for label, _ in METRICS.values())]
     print("| " + " | ".join(labels) + " |")
     print("|" + "---|" * len(labels))
-    ratios = []
-    for name in dict.fromkeys(name for name, _ in runs):
-        rates = {}
-        for runtime in ("bun", "native"):
-            group = runs[name, runtime]
-            if not group:
-                continue
-            rates[runtime] = statistics.median(row["requests_per_s"] for row in group)
-            cells = [name, runtime, str(group[0]["requests"])]
-            for metric, (_, digits) in METRICS.items():
-                values = [row[metric] for row in group]
-                cells.append(f"{statistics.median(values):.{digits}f} [{min(values):.{digits}f}–{max(values):.{digits}f}]")
-            print("| " + " | ".join(cells) + " |")
-        if len(rates) == 2:
-            ratios.append((rates["native"] / rates["bun"], name))
-    if ratios:
-        print("\nNative/Bun median throughput, lowest first\n")
-        for factor, name in sorted(ratios):
-            print(f"- {name} {factor:.3f}×")
+    for name, group in runs.items():
+        cells = [name, str(group[0]["requests"])]
+        for metric, (_, digits) in METRICS.items():
+            values = [row[metric] for row in group]
+            cells.append(f"{statistics.median(values):.{digits}f} [{min(values):.{digits}f}–{max(values):.{digits}f}]")
+        print("| " + " | ".join(cells) + " |")
 
 
 if __name__ == "__main__":

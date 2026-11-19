@@ -181,7 +181,7 @@ backend handles the actual database operations. [Architecture](docs/ARCHITECTURE
 - [Build](docs/BUILD.md) covers release toolchains, native package targets and build measurements.
 - [Runtime](docs/RUNTIME.md) specifies the package, launch manifest, limits, environment and cutover gates.
 - [Releases](docs/RELEASES.md) explains how to verify and install the ARM64 archives.
-- [Conformance](docs/CONFORMANCE.md) runs the packaged gateway and Bun against the same loopback mocks.
+- [Conformance](docs/CONFORMANCE.md) links to the historical paired comparison.
 - [Operations draft](ops/README.md) describes the uninstalled launcher and service unit.
 - [Package smoke](tests/production_smoke/README.md) runs local authenticated checks on a sealed package.
 - [Testing](docs/TESTING.md) explains test link lists and the original SDK sweep.

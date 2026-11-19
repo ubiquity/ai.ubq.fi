@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Run finite, isolated native/Bun regex comparisons and retain every sample."""
+"""Run finite, isolated native regex benchmarks and retain every sample."""
 import argparse
 import hashlib
 import json
@@ -7,7 +7,6 @@ import math
 from pathlib import Path
 import re
 import statistics
-import subprocess
 import sys
 import time
 
@@ -83,7 +82,6 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
-    parser.add_argument("--oracle", type=Path, required=True, help="Detached worktree prepared by conformance/oracle.sh")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--case", action="append", default=[])
     parser.add_argument("--samples", type=int, default=7)
@@ -93,9 +91,6 @@ def main():
     if not 1 <= args.samples <= 100 or not 0 <= args.warmups <= 100:
         raise RuntimeError("Invalid sample or warmup bounds")
     workspace = Path(__file__).resolve().parents[4]
-    oracle_root = args.oracle.resolve(strict=True)
-    pin_helper = workspace / "cpp/gateway/conformance/oracle.sh"
-    oracle_revision = subprocess.check_output(["bash", pin_helper, "--check", oracle_root], text=True).strip()
     binary = args.binary.resolve()
     if workspace / ".data" not in binary.parents or not binary.is_file():
         raise RuntimeError("Native binary must exist in this worktree's .data")
@@ -107,12 +102,10 @@ def main():
     for name in ("h", "t", "w"):
         (scratch / name).mkdir(parents=True)
     manifest = args.manifest.resolve()
-    oracle = oracle_root / "cpp/gateway/bench/regex/oracle.mjs"
-    sources = [Path(__file__).resolve(), oracle, Path(__file__).with_name("regex_bench.cpp"), manifest,
-               oracle_root / "src/codex/supervisor-secret.ts", workspace / "cpp/gateway/tools/build_support.py"] + source_inputs(workspace)
+    sources = [Path(__file__).resolve(), Path(__file__).with_name("regex_bench.cpp"), manifest,
+               workspace / "cpp/gateway/tools/build_support.py"] + source_inputs(workspace)
     inputs = {str(path): digest(path) for path in sources}
-    identity = {"native_binary": str(binary), "native_sha256": digest(binary), "bun_path": "/usr/local/bin/bun",
-                "bun_sha256": digest(Path("/usr/local/bin/bun")), "oracle_revision": oracle_revision, "inputs_sha256": inputs,
+    identity = {"native_binary": str(binary), "native_sha256": digest(binary), "inputs_sha256": inputs,
                 "samples": args.samples, "warmups": args.warmups, "p95_method": "nearest rank; seven samples yields maximum",
                 "rss_scope": "whole child maximum resident set including startup, fixture load and runtime", "before": snapshot()}
     compiled_sources = [Path(__file__).with_name("regex_bench.cpp")] + source_inputs(workspace)
@@ -124,28 +117,19 @@ def main():
         if {fixture["name"] for fixture in fixtures} != set(args.case):
             raise RuntimeError("Unknown requested benchmark case")
     rows = []
-    for index, fixture in enumerate(fixtures):
-        suffix = [str(manifest), fixture["name"], str(args.samples), str(args.warmups), str(fixture["iterations"])]
-        commands = {"native": [str(binary)] + suffix,
-                    "bun": ["/usr/local/bin/bun", "--no-env-file", "--no-install", str(oracle)] + suffix}
-        results = {}
-        for runtime in (("native", "bun") if index % 2 == 0 else ("bun", "native")):
-            results[runtime] = measured(commands[runtime], fixture["name"] + "-" + runtime, output, scratch, args.timeout)
-        parity = results["native"]["result"] == results["bun"]["result"]
-        row = {"case": fixture["name"], "bytes": len(fixture["input"].encode("utf8")), "parity": parity}
-        for runtime, result in results.items():
-            samples = result["samples_ms"]
-            median = statistics.median(samples)
-            row[runtime] = {"samples_ms": samples, "median_ms": median,
-                            "p95_ms": sorted(samples)[math.ceil(len(samples) * .95) - 1],
-                            "operations_per_second": 1000 / median, "bytes_per_second": row["bytes"] * 1000 / median,
-                            "max_rss_kib": result["max_rss_kib"]}
-        row["native_over_bun"] = row["native"]["median_ms"] / row["bun"]["median_ms"]
+    for fixture in fixtures:
+        command = [str(binary), str(manifest), fixture["name"], str(args.samples), str(args.warmups), str(fixture["iterations"])]
+        result = measured(command, fixture["name"], output, scratch, args.timeout)
+        samples = result["samples_ms"]
+        median = statistics.median(samples)
+        size = len(fixture["input"].encode("utf8"))
+        row = {"case": fixture["name"], "bytes": size, "samples_ms": samples, "median_ms": median,
+               "p95_ms": sorted(samples)[math.ceil(len(samples) * .95) - 1],
+               "operations_per_second": 1000 / median, "bytes_per_second": size * 1000 / median,
+               "max_rss_kib": result["max_rss_kib"]}
         rows.append(row)
-        print(json.dumps({key: row[key] for key in ("case", "parity", "native_over_bun")}), flush=True)
+        print(json.dumps({"case": row["case"], "median_ms": median}), flush=True)
         (output / "results.json").write_text(json.dumps(rows, indent=2) + "\n")
-        if not parity:
-            raise RuntimeError(fixture["name"] + " output differs from Bun")
     changed = [str(path) for path in sources if digest(path) != inputs[str(path)]]
     if changed or digest(binary) != identity["native_sha256"] or build_identity(binary, compiled_sources) != identity["build"]:
         raise RuntimeError("Benchmark consumed changing inputs: " + ", ".join(changed))

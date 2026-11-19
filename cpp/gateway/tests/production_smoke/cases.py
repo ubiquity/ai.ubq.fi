@@ -40,7 +40,7 @@ def environment(auth):
 
 
 def manifest(template, state, upstream):
-    value = json.loads(Path(template).read_text()) if template else {"schema": "uos-gateway-bun-source-fixture-v1"}
+    value = json.loads(Path(template).read_text())
     value.update({"stateRoot": str(state), "hostname": "127.0.0.1", "port": 0,
                   "fixture": {"syntheticOrigin": upstream.origin}})
     destination = state / "runtime-manifest.json"
@@ -168,8 +168,8 @@ def benchmark(gateway, upstream):
     return result
 
 
-def one_runtime(arguments, runtime, trial):
-    root = require_task_path(arguments.output / f"{trial}-{runtime}")
+def run_trial(arguments, trial):
+    root = require_task_path(arguments.output / f"{trial}-native")
     root.mkdir(mode=0o700)
     (root / ".data").mkdir(mode=0o700)
     auth = synthetic_auth()
@@ -177,17 +177,11 @@ def one_runtime(arguments, runtime, trial):
     gateway = None
     captures = {}
     process_receipt = None
-    result = {"runtime": runtime, "trial": trial, "state_root": str(root), "synthetic_only_environment_names": sorted(environment(auth)),
+    result = {"runtime": "native", "trial": trial, "state_root": str(root), "synthetic_only_environment_names": sorted(environment(auth)),
               "initial_state_empty": not any((root / ".data").iterdir()), "captures": captures}
     try:
         startup = manifest(arguments.runtime_template, root, upstream)
-        if runtime == "native":
-            command = [str(arguments.gateway), arguments.fixture_flag, str(startup)]
-        else:
-            if not arguments.bun_binding:
-                raise RuntimeError("Bun comparison requires a verified genuine native-KV binding")
-            command = [str(arguments.bun), "--no-env-file", "--no-install", "--config=" + str(arguments.oracle / "ops/runtime-bunfig.toml"),
-                       str(arguments.oracle / "cpp/gateway/tests/production_smoke/bun.ts"), str(startup), str(arguments.bun_binding)]
+        command = [str(arguments.gateway), arguments.fixture_flag, str(startup)]
         result["command"] = command
         result["manifest_sha256"] = sha256(startup)
         gateway = GatewayProcess(command, root, environment(auth))
@@ -296,22 +290,9 @@ def one_runtime(arguments, runtime, trial):
 
 
 def run(arguments):
-    result = {"surface": "Bun source fixture only" if arguments.bun_only else "same primary release gateway",
-              "trials": []}
-    if arguments.gateway:
-        result["gateway"] = {"path": str(arguments.gateway), "sha256": sha256(arguments.gateway)}
-    if arguments.runtime_template:
-        result["runtime_template_sha256"] = sha256(arguments.runtime_template)
-    if arguments.bun:
-        result["bun"] = {"path": str(arguments.bun), "sha256": sha256(arguments.bun)}
-    for trial in range(2 if arguments.benchmark else 1):
-        order = ("native", "bun") if trial % 2 == 0 else ("bun", "native")
-        for runtime in ("bun",) if arguments.bun_only else order if arguments.bun else ("native",):
-            result["trials"].append(one_runtime(arguments, runtime, trial))
-    if arguments.bun and not arguments.bun_only:
-        from compare import compare
-        result["comparison"] = compare(result["trials"])
-        write_json(arguments.output / "runtime-comparison.json", result["comparison"])
-        if any(not item["equal"] for item in result["comparison"]):
-            raise RuntimeError("Native/Bun status, schema, event, usage or delivery mismatch; see runtime-comparison.json")
-    return result
+    return {
+        "surface": "primary release gateway",
+        "gateway": {"path": str(arguments.gateway), "sha256": sha256(arguments.gateway)},
+        "runtime_template_sha256": sha256(arguments.runtime_template),
+        "trials": [run_trial(arguments, trial) for trial in range(2 if arguments.benchmark else 1)],
+    }

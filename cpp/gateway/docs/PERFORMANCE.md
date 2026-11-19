@@ -96,6 +96,8 @@ The intermediate Boost parser source SHA-256 is `e233b06e291c59477dc41adc4fa618a
 
 ## Operator checks
 
-Use the [same-binary smoke guide](../tests/production_smoke/README.md), the sealed package manifest and a fresh private scratch directory. The selected receipt records the full command including the packaged launcher. Use `smoke.py --json-benchmark` with the selected benchmark binary and its build receipt. The regex command and pinned fixture manifest are recorded separately. [Selected smoke command](/tmp/claude-1002/prod/smoke_perf/quiet-v25/selected-v32-current-01/paired-smoke.receipt.json), [JSON command](/tmp/claude-1002/prod/smoke_perf/quiet-v25/selected-v32-current-01/quiet/json.receipt.json) and [regex command](/tmp/claude-1002/prod/smoke_perf/quiet-v25/selected-v32-current-01/quiet/regex-timing.receipt.json)
+Use the [native smoke guide](../tests/production_smoke/README.md) with a sealed package and fresh private scratch. The [native JSON benchmark](../bench/paths/README.md) and [native regex benchmark](../bench/regex/README.md) describe current measurement commands.
+
+The paired comparison with the TypeScript gateway lives at [commit `ca045a83ebaab6c50c20567d1a825638abac0891`](https://github.com/ubiquity/ai.ubq.fi/tree/ca045a83ebaab6c50c20567d1a825638abac0891/cpp/gateway/conformance).
 
 Raspberry Pi qualification requires the target’s loader, library and confinement compatibility plus measured memory under its own workload. [Platform and ABI requirements](BUILD.md#platform-receipts)

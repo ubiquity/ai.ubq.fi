@@ -4,9 +4,9 @@
 
 - The C++20 gateway, Linux launch tools and package sources live under `cpp/gateway`. Keep gateway CI, release assembly, artifact validation, fixtures and source registration self-contained there. Root `static/` and the two root PNGs are public runtime assets.
 - Use the qualified platform and dependencies in [CI.md](cpp/gateway/docs/CI.md). Map changed paths to the smallest applicable checks. The regular registration gate is `python3 -B cpp/gateway/tools/links.py --check`. Run tests through the supported OS isolation with an empty home, fresh temp, a credential-free environment and loopback mocks. Unsupported confinement fails closed.
-- Run changed-document formatting and `git diff --check` for documentation-only work. Bun 1.4.0 is pinned for the formatter, native addon preparation and historical comparison. Install the formatter with `bun --no-env-file install --frozen-lockfile --ignore-scripts` and check selected paths with `bun --no-env-file --no-install run format:check -- <paths>`. Keep generated output, dependencies, caches and credentials out of Git.
+- Run `git diff --check` for documentation-only work. Keep generated output, dependencies, caches and credentials out of Git.
 - Preserve every native test registration and all published OpenAI request schemas. Keep the official unversioned `GET /v1/models` schema and the separate exact-version Codex catalog. Supported Codex CLI fields for `/v1/responses` belong in explicit compatibility extensions. Preserve each advertised reasoning tier verbatim, normalize a catalog's null effort to `none`, forward explicit `none` and translate the advanced `ultra` preset to upstream `max`.
-- The legacy TypeScript and Rust source, language-specific quality rules, operation history and decisions are at the [pinned legacy commit](https://github.com/ubiquity/ai.ubq.fi/tree/2b23fb6837e2b5c0dc9ffa50771f52d322dd413a). Use [the detached oracle procedure](cpp/gateway/docs/CONFORMANCE.md) for the frozen historical Bun comparison. Preserve pinned `ws@8.18.3`, `#http`, the transport receipt, and the original mock isolation in that comparison.
+- The paired comparison with the TypeScript gateway lives at [commit `ca045a83ebaab6c50c20567d1a825638abac0891`](https://github.com/ubiquity/ai.ubq.fi/tree/ca045a83ebaab6c50c20567d1a825638abac0891/cpp/gateway/conformance).
 
 ## Runtime and data
 

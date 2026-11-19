@@ -141,6 +141,4 @@ All four Linux ARM64 Release shards passed 450 binaries and 5,113 cases. ASan, U
 binaries and 1,989 cases, including every runtime binary and the HTTP, WebSocket, passkey, storage and confinement
 fixtures. [Final integration](findings/cppgw-integrate-f2-20261118.md)
 
-The paired package conformance runner launches the native and Bun gateways against the same loopback mocks and checks
-wire responses and durable readback across restart. It found agreement on all 186 cases and two failures of the
-independent validation assertions on both runtimes. [Conformance](CONFORMANCE.md)
+The paired comparison with the TypeScript gateway lives at [commit `ca045a83ebaab6c50c20567d1a825638abac0891`](https://github.com/ubiquity/ai.ubq.fi/tree/ca045a83ebaab6c50c20567d1a825638abac0891/cpp/gateway/conformance).
