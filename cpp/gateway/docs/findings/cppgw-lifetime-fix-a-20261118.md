@@ -123,12 +123,15 @@ version from inside the fixture namespace. [Dependency receipts](cppgw-integrate
 During iteration, the abort, async and stream binaries passed 59 cases in each
 profile. The first WebSocket and Fetch test attempts exposed a missing local
 socket header and an ambiguous unqualified `sleep`. Those fixture errors were
-corrected in their respective commits before the branch was published. The
+corrected and folded into their respective fix commits. The
 WebSocket write and Fetch front-end fixtures then passed 19 cases in each
 profile. A later focused run on `d77b297a3dc6ae86a6bd442f215fbba56907bed3`
 passed all 9 selected binaries and 150/150 cases in each profile. Release took
 432.541 s and ASan/UBSan/LSan took 589.796 s. These are incremental focused
 measurements with one worker competing with cold production-object builds.
+The follow-up stream and HTTP selection passed both binaries and 21/21 cases in
+each profile on `dbf15da3bad8fceeb3ebf44a885eec49a3afb653`. Release took
+99.216 s and ASan/UBSan/LSan took 129.572 s.
 
 The driver starts each binary in fresh Linux network, mount and PID namespaces.
 Its allowlisted fixture environment and private home and temporary directory also
@@ -164,11 +167,65 @@ bash "$scratch/run-gate.sh" "$config" 1 "$scratch/focus" "$scratch/focus-build" 
   python3 -B "$scratch/focused.py" "$config" rt/stream rt/http
 ```
 
-The pre-candidate warm-ups were interrupted after the last tee edit so the
-official driver can rebuild affected objects and bind acceptance to one tree.
-The baseline controls apply the new test files to the audit merge in a separate
-worktree and pass the test harness's case selector through the same isolation.
-Their results and the official shard receipts are pending.
+### Baseline controls
+
+The replay worktree uses baseline production source from the audit merge and
+the candidate fixtures in commit `73e60c6c93763284046f2e6320780536c90409f2`,
+tree `a99cc13d6060349677e0f975d3efc63c25c2abb3`. The scratch selector forwards
+one case-name substring per test binary through the standard fixture boundary.
+The command below ran five successive selections. Driver wall times were
+646.290 s for the cold build and first set, then 5.954 s, 4.495 s, 3.866 s and
+1.173 s using those objects.
+
+```bash
+bash "$scratch/run-baseline.sh"
+```
+
+| Baseline regression | Result on Clang 21.1.8 with ASan, UBSan and LSan |
+| --- | --- |
+| Abort dispatch after the last controller is destroyed | ASan heap-use-after-free |
+| Cancellation after a callback releases the active reader | UBSan null member call |
+| Pending generator next and return | Both steps can remain pending, caught by the liveness assertion |
+| Promise callback borrowing a settled outcome | ASan heap-use-after-free |
+| Loop teardown under an ambient loop | The queued job reaches the outer loop, caught by assertions |
+| Process signal set retained across loops | ASan heap-use-after-free |
+| Borrowed Fetch inputs and mock callback arguments | ASan stack-use-after-return in each case |
+| Aborted Fetch with a suspended transport | ASan heap-use-after-free |
+| Unread abortable Fetch response | LSan reported 3,640 bytes in 22 allocations |
+| Parked upload after EOF and early response | Weak owner assertions failed |
+| Response read after post-header upload failure | The read stayed pending |
+| Abandoned tee with a parked read | The original stream stayed alive |
+| Rejected HTTP body read | The original stream stayed locked |
+| Retained WebSocket after loop teardown | The closed Asio socket stayed alive, caught by weak owner assertions |
+| Public WebSocket emit after the last owner is dropped | ASan heap-use-after-free |
+| Reentrant server upgrade | Owner assertion failed and LSan reported 67,976 bytes in 12 allocations |
+
+Together the 21 controls yielded 17 expected failures. The backpressured
+socket control passed on baseline because canceling the Linux reactor operation
+does not force a dereference of the freed data. The two borrowed stream and
+generator arguments passed on this compiler in their old await
+full-expressions. The Fetch replacement case also passed on Clang and on the
+GCC 14.2 sanitizer comparison. C++ permits a different argument evaluation
+order, and the changed code pins the callable before invocation in either
+order. The GCC comparison used `CC=gcc-14 CXX=g++-14`, `-g1` and the staged
+ICU headers as system headers. With ICU passed as a project include, the first
+GCC attempt stopped on an upstream `unistr.h` conversion warning. The retry
+compiled 44 runtime objects and passed its one selected case in 485.064 s.
+
+```bash
+bash "$scratch/run-gcc-gate.sh" asan 1 "$scratch/red" "$scratch/red-gcc-build" \
+  python3 -B "$scratch/baseline.py" asan 'rt/fetch:replace itself during'
+```
+
+The tee cancellation replay on `e7610eaa` passed with only the original weak
+read change. This confirmed the cancel algorithm's existing owner is enough
+and prompted removal of the redundant follow-up source changes. The branch
+retains the regression test. The interrupted full builds from before that
+simplification are excluded from the final gate results.
+
+### Final gates
+
+Official shard receipts are pending.
 
 `python3 -B cpp/gateway/tools/links.py --check` resolved all 450 registered
 binaries. `git diff --check 72242018..HEAD` passed. No new test binary or link
