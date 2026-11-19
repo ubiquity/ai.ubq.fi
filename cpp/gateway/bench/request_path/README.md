@@ -38,7 +38,7 @@ bun_bin=$(command -v bun)
 rustup_bin=$(command -v rustup)
 mkdir "$scratch/prep-home" "$scratch/prep-tmp"
 revision=$(env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$scratch/prep-home" TMPDIR="$scratch/prep-tmp" \
-  bash cpp/gateway/conformance/oracle.sh "$scratch/oracle")
+  bash cpp/gateway/conformance/oracle.sh --production "$scratch/oracle")
 test "$("$bun_bin" --no-env-file --no-install --version)" = 1.4.0
 test -f "$scratch/oracle/bun.lock"
 

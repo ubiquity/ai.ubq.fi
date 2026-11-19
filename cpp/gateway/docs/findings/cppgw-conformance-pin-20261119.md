@@ -26,3 +26,11 @@ git show origin/development:tools/native-kv/inputs.json | cmp - cpp/gateway/pack
 ```
 
 The pin now points to that production revision. The clean package comparison is pending.
+
+The regex benchmark also reads `cpp/gateway/bench/regex/oracle.mjs` from its detached oracle, and
+that file is absent on `development`. The historical pin is retained for the existing oracle helper
+invocation used by the regex benchmark, standalone smoke and historical tooling. Paired conformance
+and the request-path benchmark now select the production pin with `oracle.sh --production`.
+Both selectors created clean detached worktrees at the recorded SHAs and refused the other
+selector's worktree. Package and gate evidence is staged outside the checkout under
+`/var/tmp/cppgw-conformance-pin-20261119.W1v0j49v`.

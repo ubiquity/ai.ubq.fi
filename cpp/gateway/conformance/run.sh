@@ -49,7 +49,7 @@ if [[ $("${prep[@]}" "$bun" --no-env-file --no-install --version) != 1.4.0 ]]; t
   exit 2
 fi
 source="$launch/oracle"
-source_revision=$("${prep[@]}" bash "$here/oracle.sh" "$source")
+source_revision=$("${prep[@]}" bash "$here/oracle.sh" --production "$source")
 source_tree=$(git -C "$source" rev-parse 'HEAD^{tree}')
 if [[ ! -f $source/bun.lock ]]; then
   echo 'The pinned Bun application must have a root lockfile' >&2
@@ -77,7 +77,7 @@ result=0
   --package "$package" --out "$launch/output" || result=$?
 if [[ $(git -C "$root" rev-parse HEAD) != "$revision" || -n $(git -C "$root" status --porcelain) ||
       $(digest "$package/manifest.sha256") != "$manifest" ]] ||
-    ! "${prep[@]}" bash "$here/oracle.sh" --check "$source" >/dev/null; then
+    ! "${prep[@]}" bash "$here/oracle.sh" --production --check "$source" >/dev/null; then
   echo "An input changed during the run. Receipt is stale: $launch/output" >&2
   exit 2
 fi

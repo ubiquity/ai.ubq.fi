@@ -33,8 +33,12 @@ The case assertions require HTTP 400 and zero dispatch, so the command exits 1.
    ```
 
 2. Commit the pin and rebuild and seal the native package from that clean checkout. Run the command
-   above. The runner fetches the exact pinned SHA and installs the frozen application dependencies.
+   above. The runner uses `oracle.sh --production` to fetch the exact pinned SHA and installs the
+   frozen application dependencies.
    The native checkout supplies the launcher, isolation and fixtures.
 3. Check the receipt for the two known shared failures and zero other differences. If another case
    differs, retain the assertions and record the case, both outputs and which side changed using
    the previous receipt. Record the oracle and candidate commit and tree with the new receipt.
+
+For historical fixtures such as standalone smoke and the regex benchmark, the default `oracle.sh`
+invocation uses the legacy revision. [Historical pin](legacy-oracle-revision.txt)

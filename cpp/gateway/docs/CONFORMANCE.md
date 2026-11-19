@@ -14,7 +14,7 @@ python3 -B "$scratch/bundle/seal.py" "$scratch/package" > "$scratch/seal-receipt
 bash cpp/gateway/conformance/run.sh "$scratch" "$scratch/seal-receipt.json"
 ```
 
-The launcher validates the seal and the candidate commit and tree in the package build profile. It fetches the exact production revision and creates a detached worktree in scratch. Bun installs from the application's frozen root lockfile with install scripts disabled. Both sides use the native KV artifact with the seal's independently bound provenance hash, and the production application's KV inputs must match the packaged inputs byte for byte. [Pin update procedure](../conformance/README.md#move-the-production-pin)
+The launcher validates the seal and the candidate commit and tree in the package build profile. It uses `oracle.sh --production` to fetch the exact production revision and create a detached worktree in scratch. Bun installs from the application's frozen root lockfile with install scripts disabled. Both sides use the native KV artifact with the seal's independently bound provenance hash, and the production application's KV inputs must match the packaged inputs byte for byte. [Pin update procedure](../conformance/README.md#move-the-production-pin)
 
 Dependency preparation can use the network. The test namespace has only loopback, proves IPv4 and IPv6 route denial and drops back to the invoking uid. Each gateway process gets an empty home, fresh temp and synthetic credentials for the mock routes. Bun launches with `--no-env-file --no-install`. Set `BUN` to the absolute path of the pinned executable when it is outside `PATH`.
 
