@@ -99,6 +99,13 @@ namespace uos::runtime::http_upgrade {
         co_await std::move(refusing);
         co_return;
       }
+      std::optional<websocket::WebSocketModule> module;
+      if (!state->stopping) {
+        const rt::Promise<websocket::WebSocketModule> loading = websocket::loadWebSocketModule();
+        module = co_await loading.wait();
+        if (controller.signal().aborted() || socket->destroyed()) co_return;
+      }
+      // Even the cached module resumes on a microtask. Check before the synchronous handoff.
       if (state->stopping) {
         rt::ResponseInit init;
         init.status = 503;
@@ -107,8 +114,6 @@ namespace uos::runtime::http_upgrade {
         co_return;
       }
       const WebSocketUpgrade accepted = std::get<WebSocketUpgrade>(*result);
-      const rt::Promise<websocket::WebSocketModule> loading = websocket::loadWebSocketModule();
-      const websocket::WebSocketModule module = co_await loading.wait();
       const std::optional<PayloadLimitClose> payloadLimitClose = accepted.payloadLimitClose;
       ws::ServerOptions options;
       options.noServer = true;
@@ -118,7 +123,7 @@ namespace uos::runtime::http_upgrade {
       options.WebSocket = [payloadLimitClose](const ws::ServerOptions& serverOptions) -> std::shared_ptr<ws::WebSocket> {
         return std::make_shared<PayloadLimitedSocket>(serverOptions.autoPong, payloadLimitClose);
       };
-      const std::shared_ptr<ws::WebSocketServer> upgradeServer = module.WebSocketServer(options);
+      const std::shared_ptr<ws::WebSocketServer> upgradeServer = module->WebSocketServer(options);
       if (accepted.headers) {
         const rt::Headers headersInit = *accepted.headers;
         upgradeServer->once("headers", [headersInit](const ws::EventArgs& event) {

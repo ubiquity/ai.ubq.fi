@@ -4,6 +4,9 @@
 #include "uos/rt/test_async.hpp"
 
 #include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/read_until.hpp>
+#include <boost/asio/streambuf.hpp>
+#include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/write.hpp>
 
 #if defined(__SANITIZE_ADDRESS__)
@@ -18,6 +21,8 @@
 #include <sanitizer/asan_interface.h>
 #endif
 
+#include <functional>
+#include <istream>
 #include <memory>
 #include <span>
 #include <string>
@@ -136,6 +141,45 @@ ASYNC_TEST("HTTP close retains a backpressured write buffer until cancellation c
   EXPECT(write->allocation != nullptr);
   EXPECT(write->liveAtClose);
 #endif
+}
+
+ASYNC_TEST("WebSocket authorization cannot finish an upgrade after the shutdown snapshot") {
+  namespace upgrade = uos::runtime::http_upgrade;
+  const auto accepted = std::make_shared<bool>(false);
+  const auto stop = std::make_shared<std::function<void()>>();
+  const std::weak_ptr<std::function<void()>> weakStop = stop;
+  http::ServeHttpOptions options;
+  options.hostname = "127.0.0.1";
+  options.port = 0;
+  options.upgrade = [accepted, weakStop](rt::Request, upgrade::UpgradeInfo) {
+    // Shutdown's ready wait resumes between accepted authorization and the ws module wait.
+    rt::queueMicrotask([weakStop] {
+      if (const auto callback = weakStop.lock()) (*callback)();
+    });
+    upgrade::WebSocketUpgrade result;
+    result.accept = [accepted](const auto&) { *accepted = true; };
+    return rt::fulfilledTask(upgrade::UpgradeResult(std::move(result)));
+  };
+  const auto server = http::serveHttp(std::move(options), [](rt::Request, http::ServeHandlerInfo) { return rt::fulfilledTask(rt::Response()); });
+  *stop = [shutdown = server.shutdown] { (void)shutdown(); };
+  const auto address = co_await server.ready.wait();
+  asio::ip::tcp::socket client(rt::executor());
+  const asio::ip::tcp::endpoint endpoint(asio::ip::address_v4::loopback(), static_cast<unsigned short>(address.port));
+  client.connect(endpoint);
+  const std::string request = "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n"
+                              "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
+  asio::write(client, asio::buffer(request));
+  asio::streambuf wire;
+  auto reading = asio::async_read_until(client, wire, "\r\n", asio::use_awaitable);
+  co_await std::move(reading);
+  std::istream input(&wire);
+  std::string status;
+  std::getline(input, status);
+  client.close();
+  const auto stopping = server.shutdown();
+  co_await stopping.wait();
+  EXPECT(status.starts_with("HTTP/1.1 503 "));
+  EXPECT(!*accepted);
 }
 
 ASYNC_TEST("HTTP normal shutdown releases state after public shutdown handles are dropped") {

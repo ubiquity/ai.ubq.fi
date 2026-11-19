@@ -42,7 +42,7 @@ A commit listed as “this commit” is the commit that introduced that verdict 
 | D03 | LEFT — Drain waiter abandonment reverification pending. | — | Pending |
 | D04 | LEFT — Early SSE registry ownership reverification pending. | — | Pending |
 | D05 | LEFT — HTTP stream abort listener reverification pending. | — | Pending |
-| D06 | LEFT — Upgrade and shutdown ordering reverification pending. | — | Pending |
+| D06 | FIXED — Recheck shutdown and disconnect after the module await, before the synchronous WebSocket handoff. | `fix(cpp): refuse WebSocket upgrades that race shutdown` | `runtime_http_lifetime_test`: ASan baseline accepted the upgrade, then 6/6 passed in ASan and release with a 503 refusal. |
 | D07 | LEFT — Memory KV await-expression reverification pending. | — | Pending |
 | D08 | LEFT — Cache fingerprint await-expression reverification pending. | — | Pending |
 | D09 | LEFT — Abandoned quota lease reverification pending. | — | Pending |
@@ -80,5 +80,20 @@ The corrected baseline fixture reported 4/5 cases in 9.709 s. Its sole failure
 was the ASan buffer-liveness assertion. The fixed tree reported 5/5 cases in
 27.917 s with ASan/UBSan/LSan and 5/5 cases in 125.103 s on a cold focused release
 build. Full linked-test verification remains open.
+
+The D06 fixture queues shutdown from the authorization callback. The server's
+ready wait resumes after authorization and before the cached module wait resumes.
+The old code accepted the socket after the shutdown snapshot. The fixed code
+preserves the immediate refusal when shutdown was already observed, and returns
+the same 503 when shutdown begins during module loading.
+
+```sh
+bash "$scratch/run.sh" 4 python3 -B "$scratch/focused.py" tests/runtime_http_lifetime_test.cpp --config asan
+bash "$scratch/run.sh" 2 python3 -B "$scratch/focused.py" src/runtime/http_upgrade.cpp --config asan runtime_http
+bash "$scratch/run.sh" 2 python3 -B "$scratch/focused.py" tests/runtime_http_lifetime_test.cpp --config release runtime_http
+```
+
+The baseline fixture passed 5/6 cases in 12.065 s. The fixed fixture passed 6/6
+cases in the ASan selection and 6/6 cases in the 7.946 s release run.
 
 [Area B audit](cppgw-lifetime-b-20261118.md)
