@@ -14,10 +14,11 @@ The runner uses macOS 26.7.2 (25G332), arm64, Xcode 26.6 and Apple Clang 21.0.0 
 - [ ] Record the final source identity, receipts and any remaining failures.
 
 The clean verification worktree is at `/private/tmp/cppgw-macos-final-20261119.2vuBKt/source`.
-The sibling `build` directory contains compile and test receipts. `deps.log`, `sqlite.log` and `runtime.log`
-finished with exit 0. The detached launcher writes each job's exit status beside its log. The full suite
-started after the runtime pass and writes to `full.log`. `package.log` is queued behind the full suite.
-`package-health.log` follows the packaging build receipt to check the health handler offline.
+The sibling `build` directory contains compile and test receipts. The detached launcher writes each job's exit
+status beside its log. `runtime-final.log`, `full-final.log` and `package-final.log` run in that order from
+commit `99c2969bf83d883a01f1858d61319bbd656c19d6`, tree `56db4224b562e0795b2240c7a36256862dabc3d5`.
+`verify-final.log` checks the extracted archive and `package-health-final.log` checks the offline health handler
+using the packaging inputs. Use this checklist and `git log` to resume.
 
 ## Runtime checkpoint
 
@@ -35,7 +36,7 @@ unchanged inputs. The SHA-256 values for `provenance.json` and `results.json` ar
 ## Gemini fixture path
 
 A focused reproduction using the driver's link inputs and Seatbelt profile failed on the delivered source.
-The first assertion failure in `gemini-reproduction.log` was:
+`gemini-reproduction.log` recorded the assertion failure.
 
 ```text
 tests/gemini_subscription_test.cpp:276: expected captured.find("TMPDIR=" + root + "/.data/antigravity-run-") != std::string::npos
@@ -47,4 +48,20 @@ The fixture creates its root through `/tmp`. Darwin's `getcwd` returns `/private
 workspace has that prefix. The test now derives its expected data directory with `realpathSync` on Darwin
 and checks the same `antigravity-run-` path prefix. The Linux expectation continues to use the original path.
 The corrected Gemini binary passed 27/27 cases in `gemini-fixed.log` after commit
-`f2b1237c61ac8d7bae0537c7da4def3ac3efb1e5`. The full qualification will rerun from the committed fix.
+`f2b1237c61ac8d7bae0537c7da4def3ac3efb1e5`. The first full attempt (`full.log`) compiled all 434 application
+test and support sources. I interrupted it after compilation and reused its object cache for the clean rerun
+with the fixture fix.
+
+## Committed review attempt
+
+The fetched base was `0c54578151b88da9afe6d014007dbffe1176214b` and the reviewed head was
+`f2b1237c61ac8d7bae0537c7da4def3ac3efb1e5`. The native CLI ran this command with a fresh home and Seatbelt
+network denial.
+
+```sh
+codex -c 'model="codex-auto-review"' -c 'review_model="codex-auto-review"' \
+  -c 'sandbox_mode="read-only"' review --base 0c54578151b88da9afe6d014007dbffe1176214b
+```
+
+The banner reported `codex-auto-review`. The review timed out with exit 124 after `failed to connect to Responses
+WebSocket stage=Unknown`, with no complete findings to ingest.
