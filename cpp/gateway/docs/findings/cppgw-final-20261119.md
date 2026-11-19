@@ -31,3 +31,71 @@ environment variables. The cutover checklist uses the existing shadow unit and
 deployment lock. It labels every live-data and Arch host step as unverified.
 The storage runbooks now reflect the sparse and cyclic graph codec already in
 the branch. Historic synthetic storage receipts remain scoped to their inputs.
+
+The gateway guide, release, architecture, security and platform pages now
+point to the current test inventory and identify prior platform results as
+historical. The paired instructions distinguish the production and legacy
+pins. The root `README.md` was inspected. Its paired-suite paragraph still names
+the historical `2b23fb6837e2b5c0dc9ffa50771f52d322dd413a` revision as the
+paired reference. The suite now reads the production pin in
+`cpp/gateway/conformance/oracle-revision.txt`. The root file is outside the
+authorized edit paths.
+
+## Runner and qualification setup
+
+The scratch root is `/tmp/cppgw-final-20261119`. The Linux ARM64 host kernel
+is `7.0.0-1017-azure` from `uname -r`. Querying
+`python3 -c 'import ctypes; print(ctypes.CDLL(None).syscall(444, 0, 0, 1))'`
+returned Landlock ABI 8. `docker buildx version` showed v0.39.0 and
+`docker version --format '{{.Server.Version}}'` showed 28.0.4.
+
+The signed Ubuntu Noble LLVM 21 repository was checked against key fingerprint
+`6084F3CF814B57C1CF12EFD515CF4D18AF4F7421`. The installed tools were
+`clang-21 llvm-21 libclang-rt-21-dev libssl-dev zlib1g-dev libicu-dev libbrotli-dev libzstd-dev mold`.
+Clang reported 21.1.8 with `clang++-21 --version`, and the Boost bootstrap used
+GCC 14.2.0. Downloaded Boost, ICU and SQLite archive SHA-256 values passed
+`sha256sum --check` against the three pins in
+`cpp/gateway/packaging/portable/dependencies.sh` before extraction.
+
+```sh
+# From each extracted source directory in scratch, respectively.
+./bootstrap.sh --with-libraries=json,container --with-toolset=gcc
+./b2 --ignore-site-config --user-config=/dev/null -j2 toolset=gcc --with-json --with-container \
+  variant=release link=static runtime-link=shared cxxstd=20 cxxflags=-march=armv8-a stage
+sudo install -m644 stage/lib/libboost_{json,container}.a /usr/local/lib/
+sudo cp -a boost /usr/local/include/
+
+./configure --prefix=/usr/local --disable-static --disable-readline CFLAGS='-O2 -DSQLITE_DQS=3'
+make -j1 && sudo make install && sudo ldconfig
+
+CC=gcc-14 CXX=g++-14 ./configure --prefix=/usr/local --disable-tests --disable-samples --disable-extras
+make -j2 && sudo make install && sudo ldconfig
+
+pkg-config --modversion openssl zlib icu-uc libbrotlidec libzstd sqlite3
+```
+
+The last command reported 3.0.13, 1.3, 78.3, 1.1.0, 1.5.5 and 3.54.0.
+The source archives and build output are outside the repository. The portable
+Bookworm toolchain stage was warmed with `docker buildx build --platform linux/arm64 --progress plain --target toolchain --build-arg JOBS=2`
+using the archived portable packaging directory. Bun 1.4.0 installed the
+pinned formatter using `bun --no-env-file install --frozen-lockfile --ignore-scripts`
+in a scratch copy of `package.json` and `bun.lock`.
+
+The test driver resolved 453 tests after the revert with
+`bash cpp/gateway/tools/ci-build.sh --list | wc -l`. The two initial driver
+commands below used the revert commit to warm their object caches. The final
+qualification runs the same shards from the committed documentation candidate.
+
+```bash
+scratch=/tmp/cppgw-final-20261119
+session=$(mktemp -d "$scratch/suite-env.XXXXXXXX")
+mkdir "$session/home" "$session/tmp"
+env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC \
+  HOME="$session/home" TMPDIR="$session/tmp" CC=clang-21 CXX=clang++-21 UOS_CI_JOBS=2 \
+  UOS_CI_BUILD_DIR="$scratch/suite" UOS_CI_SQLITE_PREFIX=/usr/local \
+  bash cpp/gateway/tools/ci-build.sh --config "$config" --shard "$shard/4"
+```
+
+Both warmups reached the isolated SQLite 3.54.0 probe and the object build.
+The full qualification results, exact candidate identity and completed
+commands are pending.

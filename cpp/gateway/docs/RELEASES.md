@@ -3,13 +3,13 @@
 Use the Linux ARM64 package for Arch Linux ARM or 64-bit Raspberry Pi OS. Use the macOS ARM64 package on Apple Silicon
 to install the development binaries and check the gateway version offline. Linux service startup needs glibc 2.36
 or newer and seccomp thread synchronization, with Landlock ABI 8 or newer by default. Gateway serving and KV
-operations require the sealed Linux package.
+operations require the sealed Linux package. The Arch service switch and rollback have separate owner gates. [Cutover checklist](CUTOVER.md)
 
 ## Build and download in GitHub Actions
 
-1. In the repository, open **Actions → C++ gateway ARM64 packages → Run workflow**. Select the branch you intend to
-   build. The workflow must be available on the default branch for manual runs. To build a tagged commit instead, push a
-   tag beginning with `cpp-gateway-v`, for example `cpp-gateway-v0.1.0`, pointing to a commit containing the workflow.
+1. In the repository, open **Actions → C++ gateway ARM64 packages** and select the successful run for the intended
+   commit. For an owner-approved manual build, use **Run workflow** and select the intended branch. The workflow
+   also builds tags beginning with `cpp-gateway-v`. [Package workflow](../../../.github/workflows/cpp-gateway-release.yml)
 2. Open the run and check the commit shown at the top. Wait for your platform's job to succeed. The Linux job checks
    the package in Debian 12 and 13 containers. The macOS job runs the runtime tests and checks the extracted gateway's
    offline version command.
@@ -92,9 +92,10 @@ owned by the gateway user and fill in the three printed values and the canonical
 ```
 
 Run `"$release/ops/launch-native.sh" /absolute/path/to/launch.json` as the gateway user with its approved environment.
+For systemd, reference the owner-selected settings with `EnvironmentFile=` in the reviewed unit. The runtime performs no implicit `.env` discovery.
 In another terminal, `curl -f http://127.0.0.1:18080/health` checks the listener. The sealed `bin/` also contains
 `uos-kv-convert` and `uos-kv-proof`. Their offline manifest and stopped-state requirements apply before using them.
-[Native startup and KV tools](RUNTIME.md)
+[Native startup and KV tools](RUNTIME.md) · [Service draft](../ops/uos-gateway-native.service)
 
 ## Install the files on an Apple Silicon Mac
 
@@ -152,8 +153,9 @@ python3 -B cpp/gateway/packaging/macos/build.py /var/tmp/uos-gateway-macos-arm64
 
 Generate `SHA256SUMS` with `sha256sum uos-gateway-linux-arm64.tar.gz > SHA256SUMS` on Linux or
 `shasum -a 256 uos-gateway-macos-arm64.tar.gz > SHA256SUMS` on macOS from the corresponding output directory.
-For Linux, `bash cpp/gateway/packaging/portable/verify.sh /path/to/archive.tar.gz /path/to/new-evidence-dir` runs both
-proofs. The proofs require an ARM64 Docker host with Landlock ABI 8 or newer.
+For Linux, `bash cpp/gateway/packaging/portable/verify.sh /path/to/archive.tar.gz /path/to/new-evidence-dir` seals
+against both Debian 12 and Debian 13 and runs the loopback checks at 512 MiB and 256 MiB. The verifier requires
+an ARM64 Docker host with Landlock ABI 8 or newer. [Final qualification](findings/cppgw-final-20261119.md)
 
 Repeated builds use the committed source, normalized archive metadata and the commit timestamp. Compare builds with
 the same toolchain and dependency revisions. On Linux, set `PORTABLE_REBUILD=1` to rerun the gateway compile and native
