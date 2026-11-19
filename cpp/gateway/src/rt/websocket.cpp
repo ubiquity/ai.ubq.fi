@@ -2,6 +2,7 @@
 // (lib/websocket-server.js) in noServer mode, the EventEmitter surface they
 // inherit, and the helpers the other websocket_*.cpp files share.
 #include "websocket_internal.hpp"
+#include "uos/rt/limits.hpp"
 
 #include "uos/rt/number.hpp"
 #include "uos/rt/string.hpp"
@@ -16,6 +17,7 @@
 #include <array>
 #include <cerrno>
 #include <cmath>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -320,6 +322,7 @@ namespace uos::rt::ws {
         state.receiver->end();
         state.socketAttached = false;
         clearTimeout(state.closeTimer);
+        clearTimeout(state.idleTimer);
         if (state.receiver->finished() || state.receiver->errorEmitted()) {
           emitClose(websocket);
         } else {
@@ -377,7 +380,11 @@ namespace uos::rt::ws {
           safeEmit(target, "pong", args);
         }
       };
-      socket->onActivity = nullptr;
+      constexpr auto idleMs = std::chrono::duration_cast<std::chrono::milliseconds>(limits::kWebSocketIdleTimeout).count();
+      state.idleTimer = rt::detail::createTimer([weak] {
+        if (auto target = weak.lock(); target && target->state().socketAttached) target->state().socket->destroy();
+      }, static_cast<double>(idleMs), false);
+      socket->onActivity = [idle = state.idleTimer]() mutable { idle.refresh(); };
       socket->onFinish = nullptr;
       socket->setNoDelay();
       socket->unshift(std::move(head));
@@ -658,15 +665,17 @@ namespace uos::rt::ws {
 
     std::optional<std::vector<std::string>> parseSubprotocols(std::string_view header) {
       constexpr std::string_view whitespace = " \t";
-      if (header.empty() || whitespace.find(header.front()) != whitespace.npos || whitespace.find(header.back()) != whitespace.npos) return std::nullopt;
+      if (header.empty() || header.size() > limits::kHttpHeaderBlockBytes || whitespace.find(header.front()) != whitespace.npos ||
+          whitespace.find(header.back()) != whitespace.npos) return std::nullopt;
       const boost::beast::http::opt_token_list offered(header);
       std::vector<std::string> protocols;
+      std::set<std::string_view> seen;
       const auto end = offered.end();
       auto it = offered.begin();
       for (; !it.error() && it != end; ++it) {
         const auto token = *it;
         const std::string_view protocol(token.data(), token.size());
-        if (std::ranges::find(protocols, protocol) != protocols.end()) return std::nullopt;
+        if (!seen.insert(protocol).second) return std::nullopt;
         protocols.emplace_back(protocol);
       }
       // HTTP token lists permit empty entries, which are invalid subprotocol offers.

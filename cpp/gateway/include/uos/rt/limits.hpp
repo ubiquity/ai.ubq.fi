@@ -15,6 +15,7 @@ namespace uos::rt::limits {
 
   // Live sideband already caps messages at 4 MiB.
   inline constexpr std::size_t kWebSocketMessageBytes = 16 * 1024 * 1024;
+  inline constexpr std::size_t kWebSocketFragments = 4096;
   inline constexpr auto kWebSocketIdleTimeout = std::chrono::seconds(60);
 
   inline constexpr std::size_t kRegexPatternBytes = 4 * 1024;

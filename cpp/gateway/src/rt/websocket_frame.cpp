@@ -1,6 +1,7 @@
 // WebSocket framing and validation for the gateway's event-driven transport.
 #include "websocket_internal.hpp"
 
+#include "uos/rt/limits.hpp"
 #include "uos/rt/number.hpp"
 #include "uos/rt/text_codec.hpp"
 
@@ -9,6 +10,7 @@
 #include <boost/beast/websocket/detail/prng.hpp>
 #include <boost/endian/conversion.hpp>
 
+#include <algorithm>
 #include <string>
 #include <utility>
 
@@ -27,6 +29,8 @@ namespace uos::rt::ws::detail {
 
     // `Buffer.from(data)` for a string (UTF-8, a lone surrogate as U+FFFD), the bytes otherwise.
     Bytes toBuffer(const Data& data) {
+      if (std::visit([](const auto& value) { return value.size(); }, data) > limits::kWebSocketMessageBytes)
+        throw RangeError("Max payload size exceeded");
       if (const auto* text = std::get_if<std::string>(&data)) return encodeUtf8(*text);
       return std::get<Bytes>(data);
     }
@@ -34,7 +38,10 @@ namespace uos::rt::ws::detail {
 
   // ---- Receiver ----------------------------------------------------------------
 
-  Receiver::Receiver(Options options) : maxPayload_(toInt32(options.maxPayload)), isServer_(options.isServer) {}
+  Receiver::Receiver(Options options) : maxPayload_(limits::kWebSocketMessageBytes), isServer_(options.isServer) {
+    const auto requested = toInt32(options.maxPayload);
+    if (requested > 0) maxPayload_ = std::min(maxPayload_, static_cast<std::size_t>(requested));
+  }
 
   void Receiver::write(BytesView chunk) {
     // A destroyed or ended Writable takes no more data (ws detaches its data
@@ -143,9 +150,12 @@ namespace uos::rt::ws::detail {
   }
 
   void Receiver::haveLength() {
-    if (payloadLength_ && opcode_ < 0x08) {
-      totalPayloadLength_ += payloadLength_;
-      if (maxPayload_ > 0 && totalPayloadLength_ > static_cast<std::uint64_t>(maxPayload_)) return fail("RangeError", "Max payload size exceeded", false, 1009, "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH");
+    if (opcode_ < 0x08) {
+      if (payloadLength_ > maxPayload_ - totalPayloadLength_)
+        return fail("RangeError", "Max payload size exceeded", false, 1009, "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH");
+      if (++dataFrames_ > limits::kWebSocketFragments)
+        return fail("RangeError", "Max fragment count exceeded", false, 1009, "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH");
+      totalPayloadLength_ += static_cast<std::size_t>(payloadLength_);
     }
     state_ = masked_ ? Step::getMask : Step::getData;
   }
@@ -183,6 +193,7 @@ namespace uos::rt::ws::detail {
     }
     std::vector<Bytes> fragments = std::move(fragments_);
     totalPayloadLength_ = 0;
+    dataFrames_ = 0;
     fragmented_ = 0;
     fragments_.clear();
     Bytes data;
@@ -260,6 +271,7 @@ namespace uos::rt::ws::detail {
   Sender::Sender(std::shared_ptr<Socket> socket) : socket_(std::move(socket)) {}
 
   Bytes Sender::frame(BytesView data, int opcode, bool fin, bool rsv1, bool mask) {
+    if (data.size() > limits::kWebSocketMessageBytes) throw RangeError("Max payload size exceeded");
     const auto maskKey = mask ? beastWs::make_prng(true)() : 0;
     const beastWs::frame_header header{data.size(), maskKey, static_cast<beastWs::opcode>(opcode), fin, mask, rsv1, false, false};
     beastWs::fh_buffer serialized;
@@ -309,12 +321,15 @@ namespace uos::rt::ws::detail {
   }
 
   void Sender::send(const Data& data, bool binary, bool mask, bool fin, Callback cb) {
-    int opcode = binary ? 2 : 1;
-    if (firstFragment_) firstFragment_ = false;
-    else opcode = 0;
-    if (fin) firstFragment_ = true;
     const Bytes payload = toBuffer(data);
-    sendFrame(frame(payload, opcode, fin, false, mask), std::move(cb));
+    if (payload.size() > limits::kWebSocketMessageBytes - messageBytes_) throw RangeError("Max payload size exceeded");
+    if (dataFrames_ == limits::kWebSocketFragments) throw RangeError("Max fragment count exceeded");
+    const int opcode = firstFragment_ ? (binary ? 2 : 1) : 0;
+    auto encoded = frame(payload, opcode, fin, false, mask);
+    firstFragment_ = fin;
+    messageBytes_ = fin ? 0 : messageBytes_ + payload.size();
+    dataFrames_ = fin ? 0 : dataFrames_ + 1;
+    sendFrame(std::move(encoded), std::move(cb));
   }
 
   void Sender::sendFrame(Bytes frame, Callback cb) { socket_->write(std::move(frame), std::move(cb)); }

@@ -1,6 +1,7 @@
 // Links: tests/rt/websocket_lifetime_test.cpp (every src/rt/*.cpp links automatically).
 // Teardown releases ownership without inventing events after the loop stops.
 #include "src/rt/websocket_internal.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/test.hpp"
 
 #include <boost/asio/ip/tcp.hpp>
@@ -90,6 +91,33 @@ TEST("loop teardown releases an opening WebSocket and its pending connect attemp
     EXPECT(!weak.expired());
   }
   EXPECT(weak.expired());
+}
+
+TEST("WebSocket idle expiry refreshes on activity and closes at sixty seconds") {
+  rt::FakeClock clock;
+  rt::Loop loop(clock);
+  rt::LoopScope scope(loop);
+  asio::ip::tcp::acceptor acceptor(rt::executor(), asio::ip::tcp::endpoint(asio::ip::make_address("127.0.0.1"), 0));
+  asio::ip::tcp::socket client(rt::executor());
+  client.connect(acceptor.local_endpoint());
+  auto peer = acceptor.accept();
+  auto websocket = openSocket(std::move(client));
+  int code = 0;
+  websocket->once("close", [&](const ws::EventArgs& event) { code = event.code; });
+  constexpr auto idleMs = static_cast<double>(std::chrono::duration_cast<std::chrono::milliseconds>(rt::limits::kWebSocketIdleTimeout).count());
+  rt::queueMicrotask([&] {
+    clock.advance(idleMs - 1);
+    EXPECT_EQ(websocket->readyState(), ws::WebSocket::OPEN);
+    websocket->state().socket->onActivity();
+    clock.advance(idleMs - 1);
+    rt::queueMicrotask([&] {
+      EXPECT_EQ(websocket->readyState(), ws::WebSocket::OPEN);
+      clock.advance(1);
+    });
+  });
+  loop.run();
+  EXPECT_EQ(websocket->readyState(), ws::WebSocket::CLOSED);
+  EXPECT_EQ(code, 1006);
 }
 
 TEST("a synchronous Unix handshake exception releases the unpublished WebSocket") {
