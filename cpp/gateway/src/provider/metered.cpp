@@ -702,15 +702,10 @@ namespace uos::provider::metered {
       co_return own;
     }
     meteredModelsFetchInFlight = request;
-    std::optional<MeteredModelsSnapshot> result;
-    rt::Reason failure;
-    try {
-      result = co_await request.wait();
-    } catch (...) {
-      failure = std::current_exception();
-    }
-    if (meteredModelsFetchInFlight && *meteredModelsFetchInFlight == request) meteredModelsFetchInFlight.reset();
-    if (failure) std::rethrow_exception(failure);
+    const auto cleanup = rt::scopeExit([request] {
+      if (meteredModelsFetchInFlight && *meteredModelsFetchInFlight == request) meteredModelsFetchInFlight.reset();
+    });
+    auto result = co_await request.wait();
     co_return result;
   }
 

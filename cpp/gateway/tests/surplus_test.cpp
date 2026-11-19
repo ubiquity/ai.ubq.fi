@@ -1,6 +1,7 @@
 // Links: tests/surplus_test.cpp src/provider/surplus.cpp src/provider/surplus_claude_chat_request.cpp src/provider/surplus_claude_request.cpp src/provider/anthropic_chat_responses.cpp src/provider/anthropic_chat_stream.cpp src/provider/anthropic_replay.cpp src/provider/anthropic_response_wire.cpp src/bounded_response_body.cpp src/inference_deadline.cpp src/responses_stream.cpp src/utils.cpp
 // Port of tests/surplus.test.ts.
 #include "uos/provider/surplus.hpp"
+#include "uos/rt/env.hpp"
 #include "uos/rt/json.hpp"
 #include "uos/rt/regex.hpp"
 #include "uos/rt/test_async.hpp"
@@ -130,6 +131,38 @@ ASYNC_TEST("fetchSurplusModels preserves exact IDs and exposes text-capable rout
   EXPECT_EQ(headersOf(calls[0].init).get("Accept"), std::optional<std::string>("application/json"));
   EXPECT_EQ(headersOf(calls[0].init).has("Authorization"), false);
   EXPECT_EQ(headersOf(calls[0].init).has("X-SI-Mask-Secrets"), false);
+}
+
+TEST("a new loop can discover Surplus models after the shared request was abandoned") {
+  const rt::env::ScopedOverride environment({{"SURPLUS_API_KEY", std::string("discovery-fixture-key")}});
+  resetSurplusModelsCacheForTest();
+  const auto cleanup = rt::scopeExit([] { resetSurplusModelsCacheForTest(); });
+  {
+    rt::FakeClock clock;
+    rt::Loop first(clock);
+    const rt::LoopScope scope(first);
+    const auto entered = rt::withResolvers();
+    const rt::Promise<rt::Response> never;
+    const rt::GlobalFetchOverride fetcher(SurplusFetch([start = entered.resolve, never](rt::RequestInfo, rt::RequestInit) {
+      start();
+      return never.wait();
+    }));
+    const rt::Promise<std::optional<SurplusModelsSnapshot>> pending(fetchSurplusModels());
+    rt::blockOn(first, entered.promise.wait());
+    EXPECT(pending.pending());
+  }
+  {
+    rt::FakeClock clock;
+    rt::Loop second(clock);
+    const rt::LoopScope scope(second);
+    const rt::GlobalFetchOverride fetcher(SurplusFetch([](rt::RequestInfo, rt::RequestInit) {
+      return jsonResponse(parse(R"({"data":[{"id":"mock-surplus-model"}]})"));
+    }));
+    const auto snapshot = rt::blockOn(second, fetchSurplusModels());
+    ASSERT(snapshot);
+    ASSERT_EQ(snapshot->models.size(), std::size_t{1});
+    EXPECT_EQ(snapshot->models[0].id, std::string("mock-surplus-model"));
+  }
 }
 
 ASYNC_TEST("fetchSurplusResponses omits unsupported parallel-tool control and returns the request ID") {

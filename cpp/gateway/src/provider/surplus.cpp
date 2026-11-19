@@ -693,15 +693,10 @@ namespace uos::provider::surplus {
       co_return own;
     }
     surplusModelsFetchInFlight = request;
-    std::optional<SurplusModelsSnapshot> result;
-    rt::Reason failure;
-    try {
-      result = co_await request.wait();
-    } catch (...) {
-      failure = std::current_exception();
-    }
-    if (surplusModelsFetchInFlight && *surplusModelsFetchInFlight == request) surplusModelsFetchInFlight.reset();
-    if (failure) std::rethrow_exception(failure);
+    const auto cleanup = rt::scopeExit([request] {
+      if (surplusModelsFetchInFlight && *surplusModelsFetchInFlight == request) surplusModelsFetchInFlight.reset();
+    });
+    auto result = co_await request.wait();
     co_return result;
   }
 
