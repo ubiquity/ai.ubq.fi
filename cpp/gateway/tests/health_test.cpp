@@ -228,7 +228,8 @@ ASYNC_TEST("public health is passive release provenance with zero upstream and K
 #ifdef UOS_PACKAGE_GIT_COMMIT
     EXPECT_EQ(*rt::getString(object(payload, "release"), "git_sha"), std::string_view(UOS_PACKAGE_GIT_COMMIT));
     EXPECT(*rt::getString(object(payload, "release"), "git_sha") != std::string_view("unknown"));
-#endif EXPECT(rt::getString(object(payload, "release"), "deployment_id").has_value()); EXPECT(scope.store->commands.empty());
+#endif
+    EXPECT(rt::getString(object(payload, "release"), "deployment_id").has_value()); EXPECT(scope.store->commands.empty());
 }
 ASYNC_TEST("public health HEAD is release liveness without a response body") {
   T2IngressScope ingress;
