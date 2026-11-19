@@ -1,7 +1,6 @@
 # uos::rt WebSocket: the `ws` package (8.18.3)
 
-Oracle: ws 8.18.3 (the version `package.json` pins) running under Bun 1.4.0, which is
-what `src/runtime/websocket.ts` loads. Headers: `uos/rt/websocket.hpp` (namespace
+The recorded oracle used ws 8.18.3 under Bun 1.4.0. Headers are `uos/rt/websocket.hpp` (namespace
 `uos::rt::ws`, mirroring the npm package) and `uos/runtime/websocket.hpp` (the port of
 `src/runtime/websocket.ts`). The implementation in `src/rt/websocket{,_frame,_socket,_client}.cpp`
 uses Boost.Beast for masking, handshake primitives, and received UTF-8 validation.
