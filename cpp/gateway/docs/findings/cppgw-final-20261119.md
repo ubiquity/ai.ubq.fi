@@ -110,8 +110,10 @@ env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 LC_ALL=C.UTF-8 TZ=UTC \
 ```
 
 - `python3 cpp/gateway/tools/links.py --check` exited 0 in the credential-free
-  environment. `python3 -B cpp/gateway/conformance/compare_test.py` passed
-  9 comparator controls.
+  environment with 453 successful registrations. The integration base and
+  candidate have identical test file lists from
+  `git ls-tree -r --name-only "$ref" cpp/gateway/tests | rg '_test\.cpp$' | LC_ALL=C sort`.
+  `python3 -B cpp/gateway/conformance/compare_test.py` passed 9 comparator controls.
 - Stock `actionlint -color=false` 1.7.12 exited 1 on the three uses of
   `ubuntu-26.04-arm` in the existing CI workflow. GitHub's hosted runner
   inventory at `fbb26cb01c3651ea3a0347e54bfa2ef83d740d49` lists that label.
@@ -259,6 +261,37 @@ the source identity in its package metadata and the compiled constant in
 `src/release.cpp` remains `unknown`. That artifact cannot pass production
 identity acceptance. Arch systemd, live-data rehearsal and ingress are
 unverified. [Cutover checklist](../CUTOVER.md)
+
+The rendered shadow unit passed `systemd-analyze verify --recursive-errors=one
+"$unit_file"` on Ubuntu systemd 255 using the sealed package path and scratch
+state paths. This checks unit syntax. Linux ARM target-host enforcement
+requires the live host checks in the checklist.
+
+## Release snapshot replay
+
+Rebuilt the archive after completing the cutover documentation at
+`be033a747e12d6d1703d02e6ed42347783e551c8`, tree
+`f55aa029a10b08be8bc654f97a4fdc79252bd270`. The output root is
+`/tmp/cppgw-final-20261119/release-snapshot.5tylerEa`. The scripts and arguments
+above were repeated from the clean detached snapshot with that root as `q`.
+`git diff --name-only 2507e122..be033a74` returned only four Markdown paths
+and `stat -c '%s' "$q/package/uos-gateway-linux-arm64.tar.gz"` returned 84,268,698.
+The cached build took 36.07 s and the verifier took 63.88 s. The gateway
+executable hash was identical to the first build. The archive digest was
+`de5047dcb654a1c5baa86eb4bf9dd712af58d8d2ce1753b1cc80657f95b39df3` and
+the Ubuntu seal's manifest digest was
+`b8e9431c0a032f174c190041f8a0fca2164e620032d1d962535202ba1820d824`.
+
+All four Debian proofs again passed 1,161 mock Chat completions and the same
+settlement total on reopen, with zero OOMs. The paired comparison again
+reported 184 matches, zero wire differences and exactly the two shared
+expectation failures. It took 19.337 s in the namespace and 27.59 s end to end.
+The paired receipt `conformance/run.tTvKsl20/output/results.json` has SHA-256
+`07dae5c581f11244e891a1a42cdebc591e2a4c4ff6350770974fc59bc028e27c`.
+All four public read pairs matched on the exact snapshot package, with zero
+mock dispatches. The exact production SHA check failed again. Setting
+`DENO_DEPLOY_BUILD_ID=vps-be033a747e12d6d1703d02e6ed42347783e551c8`
+set the expected deployment ID while the Git SHA remained `unknown`.
 
 ## Committed-diff review
 
