@@ -233,7 +233,7 @@ It verified that the tracked production source still matched `9353aa20` and that
 the historical revision. The documented paired runner and loopback isolation then ran the full matrix.
 
 ```bash
-historical=$(cat cpp/gateway/conformance/oracle-revision.txt)
+historical=2b23fb6837e2b5c0dc9ffa50771f52d322dd413a
 # $launch is the direct gate's run directory, with its detached oracle and verified KV binding.
 source="$launch/oracle"
 git archive "$historical" cpp/gateway/tests/production_smoke | tar -x -C "$source"
@@ -250,12 +250,13 @@ zero native/Bun wire differences and the same two shared validation failures. Ea
 cleanly on both phases. IPv4 and IPv6 outside-route probes returned `ENETUNREACH`. The launcher
 used `#http`, pinned `ws@8.18.3`, the package-bound native KV and newly created state.
 
-The oracle pin remains `2b23fb6837e2b5c0dc9ffa50771f52d322dd413a` because the documented gate can
-load its fixtures there. A pin-only change to `9353aa20` fails before the comparison. The unmodified
+At the end of the drift port, the oracle pin was `2b23fb6837e2b5c0dc9ffa50771f52d322dd413a` because
+the gate loaded its fixtures there. A pin-only change to `9353aa20` failed before the comparison. The unmodified
 historical gate completed 186 cases in 8.089 seconds with 176 matches, the two shared failures and
 eight production drift differences. They affect the admin and public catalogs, model capabilities,
 and versioned Codex rows and their ETags. The older Bun fixture advertises the previous compaction
-limits and DeepSeek window in those replies.
+limits and DeepSeek window in those replies. The follow-up moved the fixture into the native suite
+and pinned production. [Production pin findings](cppgw-conformance-pin-20261119.md)
 
 | Evidence                              | SHA-256                                                            |
 | ------------------------------------- | ------------------------------------------------------------------ |
@@ -286,5 +287,5 @@ The Antigravity changes belong to their separate port.
 
 ARM64 release shard 3/4 passed all 113 binaries and 1,486 cases. All focused release and sanitizer checks passed.
 The paired run against production passed 184 of 186 cases with the original smoke fixture restored in scratch.
-The other two were the known shared validation failures. The oracle pin stays historical because `development`
-lacks that fixture. The isolated model review timed out.
+The other two were the known shared validation failures. This job kept the historical pin because `development`
+lacked the fixture. The isolated model review timed out. [Production pin follow-up](cppgw-conformance-pin-20261119.md)

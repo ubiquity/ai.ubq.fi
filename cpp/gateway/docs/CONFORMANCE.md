@@ -1,6 +1,6 @@
 # Native gateway functional conformance
 
-Run the packaged ARM64 release and the pinned TypeScript application on Bun 1.4.0 against the same loopback mock. The suite shares the request-path benchmark's launch arguments, isolation and DeepSeek fixtures. It uses the production-smoke Bun launcher, which serves through `#http` and pinned `ws@8.18.3`. Both runtimes open their own new, codec-marked SQLite state and use ordinary authenticated routes. They restart once for durable readback.
+Run the packaged ARM64 release and the TypeScript application from the pinned production `development` commit on Bun 1.4.0 against the same loopback mock. The suite shares the request-path benchmark's launch arguments, isolation and DeepSeek fixtures. It uses the native checkout's production-smoke Bun launcher and Python helpers. The launcher serves through the pinned application's `#http` and `ws@8.18.3`. Both runtimes open their own new, codec-marked SQLite state and use ordinary authenticated routes. They restart once for durable readback. [Production pin](../conformance/oracle-revision.txt)
 
 ## Run on Linux ARM64
 
@@ -14,7 +14,7 @@ python3 -B "$scratch/bundle/seal.py" "$scratch/package" > "$scratch/seal-receipt
 bash cpp/gateway/conformance/run.sh "$scratch" "$scratch/seal-receipt.json"
 ```
 
-The launcher validates the seal and the candidate commit and tree in the package build profile. It fetches the exact commit in `oracle-revision.txt` and creates a detached worktree in scratch. The Bun install uses its frozen dependencies with install scripts disabled. Both sides use the native KV artifact with the seal's independently bound provenance hash, and the pinned oracle inputs must match the packaged inputs byte for byte.
+The launcher validates the seal and the candidate commit and tree in the package build profile. It fetches the exact production revision and creates a detached worktree in scratch. Bun installs from the application's frozen root lockfile with install scripts disabled. Both sides use the native KV artifact with the seal's independently bound provenance hash, and the production application's KV inputs must match the packaged inputs byte for byte.
 
 Dependency preparation can use the network. The test namespace has only loopback, proves IPv4 and IPv6 route denial and drops back to the invoking uid. Each gateway process gets an empty home, fresh temp and synthetic credentials for the mock routes. Bun launches with `--no-env-file --no-install`. Set `BUN` to the absolute path of the pinned executable when it is outside `PATH`.
 

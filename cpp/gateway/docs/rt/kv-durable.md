@@ -82,8 +82,8 @@ keys_if_undelivered = JSON of the packed keys)` (TEXT values, as rusqlite binds 
 The TypeScript side ran the pinned legacy `#kv` opener (`src/storage/kv.ts` with
 `prepareNativeKvBackend`) over the pinned native-kv artifact (denokv 9fe65cc + both patches; its
 provenance matches the [moved inputs](../../packaging/native-kv/inputs.json)) under Bun 1.4.0,
-on throwaway databases in scratch. The rebuild and cross-reader script is `scripts/test-native-kv.ts`
-in the [pinned oracle worktree](../CONFORMANCE.md). The C++ side ran `storage::kv::openKv` (SqliteKv + guard).
+on throwaway databases in scratch. The C++ side ran `storage::kv::openKv` (SqliteKv + guard).
+[Historical rebuild and cross-reader script](https://github.com/ubiquity/ai.ubq.fi/blob/2b23fb6837e2b5c0dc9ffa50771f52d322dd413a/scripts/test-native-kv.ts)
 
 |                           | Proven by running                                                                                                                                                                                                                                                   | Hermetic test                                                                                                                                                                                                                                                                                              |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

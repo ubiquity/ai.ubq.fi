@@ -12,4 +12,17 @@ from `serve.ts` there. The frozen install checks `ws@8.18.3`. The production app
 KV inputs still have to match the sealed package inputs. The existing nine comparator controls
 passed, and Bash syntax, ShellCheck and Prettier passed on the changed launcher paths.
 
-The production pin and clean package comparison are pending.
+The fetched tip of `origin/development` and the independently queried remote ref both resolved to
+`9353aa208a336da2c1516d604e0be16dc8af0ade`, tree `e349a209c455dad00d5c82579f8f69934c94d6ec`.
+The production tree has no `cpp/gateway/tests/production_smoke/` entries, and its native KV inputs
+match the candidate's packaged source inputs byte for byte.
+
+```bash
+git fetch --no-tags origin refs/heads/development:refs/remotes/origin/development
+git rev-parse 'origin/development^{commit}' 'origin/development^{tree}'
+git ls-remote --exit-code origin refs/heads/development
+git ls-tree origin/development cpp/gateway/tests/production_smoke
+git show origin/development:tools/native-kv/inputs.json | cmp - cpp/gateway/packaging/native-kv/inputs.json
+```
+
+The pin now points to that production revision. The clean package comparison is pending.
