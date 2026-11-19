@@ -18,5 +18,5 @@ else()
       --native-kv-provenance-sha256 "${UOS_PACKAGE_NATIVE_KV_PROVENANCE_SHA256}"
       --permissions "${UOS_PACKAGE_PERMISSIONS_DIR}"
       --output "${UOS_PACKAGE_OUTPUT}"
-    DEPENDS uos_gateway uos_kv_convert uos_kv_proof VERBATIM)
+    DEPENDS uos_gateway VERBATIM)
 endif()

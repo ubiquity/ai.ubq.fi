@@ -39,7 +39,7 @@ RUN --network=none --mount=type=cache,target=/var/cache/ccache \
       '-DCMAKE_C_FLAGS_RELEASE=-O2 -g0' '-DCMAKE_CXX_FLAGS_RELEASE=-O2 -g0' \
       '-DCMAKE_EXE_LINKER_FLAGS=-L/opt/uos/lib -static-libstdc++ -static-libgcc' \
       '-DCMAKE_CXX_STANDARD_LIBRARIES=/opt/uos/lib/libicudata.a -lm' \
-    && cmake --build /build --parallel "$JOBS" --target uos_gateway uos_kv_convert uos_kv_proof \
+    && cmake --build /build --parallel "$JOBS" --target uos_gateway \
     && ccache --show-stats
 
 FROM base AS native

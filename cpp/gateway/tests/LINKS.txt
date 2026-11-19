@@ -65,7 +65,6 @@ tests/jev_compaction_test.cpp: (header)
     note: w07c7 completed gateway compaction cases; use its full owner-maintained source closure
 tests/key_compatibility_test.cpp: src/storage/key_compatibility.cpp
 tests/kv_conversion_cursors_differential_test.cpp: src/kv_conversion/cursors.cpp
-tests/kv_conversion_legacy_codec_differential_test.cpp: src/kv_conversion/legacy_codec.cpp src/kv_conversion/typed_value.cpp
 tests/kv_conversion_native_schema_differential_test.cpp: src/kv_conversion/native_schema.cpp
 tests/kv_conversion_typed_value_differential_test.cpp: src/kv_conversion/typed_value.cpp
 tests/live_routes_differential_test.cpp: src/live/routes.cpp

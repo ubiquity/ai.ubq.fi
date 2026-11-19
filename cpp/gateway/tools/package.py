@@ -127,7 +127,7 @@ def main():
         raise ValueError("The qualified compiler/profile identity is required")
     verify_native_kv(args.native_kv, args.native_kv_inputs, args.native_kv_provenance_sha256)
     verify_permissions(args.permissions)
-    binaries = {"bin/uos-gateway": build / "uos_gateway", "bin/uos-kv-convert": build / "uos_kv_convert", "bin/uos-kv-proof": build / "uos_kv_proof"}
+    binaries = {"bin/uos-gateway": build / "uos_gateway"}
     document = runtime.closure(binaries)
     operators = runtime.closure({name: Path(name).resolve(strict=True) for name in ("/bin/sh", "/usr/bin/env")}, host_programs=True)
     required = {"libsqlite3.so.0", "libz.so.1", "libbrotlidec.so.1", "libzstd.so.1"}
@@ -154,10 +154,6 @@ def main():
                 copy_file(source, stage / "static" / source.relative_to(assets))
         for name in ("favicon.png", "favicon-32.png"):
             copy_file(WORKSPACE / name, stage / name)
-        # The pinned offline V8 helper imports this unchanged TypeScript graph
-        # primitive; neither is application code executed at gateway startup.
-        for name in ("v8-helper.mjs", "typed-value.ts"):
-            copy_file(GATEWAY / "runtime/legacy-codec" / name, stage / "src/kv-conversion" / name)
         for name in ("native-kv.node", "native-kv.provenance.json"):
             copy_file(args.native_kv / name, stage / "native/kv" / name)
         copy_file(args.native_kv_inputs, stage / "native/kv/inputs.json")
@@ -169,7 +165,6 @@ def main():
         copy_file(GATEWAY / "docs/RUNTIME.md", stage / "README.md")
         copy_file(args.profile_manifest, stage / "build-profile.json")
         copy_file(GATEWAY / "runtime/launch-schema.json", stage / "runtime/launch-schema.json")
-        copy_file(GATEWAY / "runtime/offline-schema.json", stage / "runtime/offline-schema.json")
         write_json(stage / "runtime-closure.json", document)
         write_json(stage / "operator-closure.json", operators)
         write_json(stage / "package.json", {"schema": "uos-native-package-v1", "nativeKvProvenanceSha256": args.native_kv_provenance_sha256,

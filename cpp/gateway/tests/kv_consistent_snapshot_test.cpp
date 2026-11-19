@@ -1,7 +1,7 @@
 // Port of tests/kv-consistent-snapshot.test.ts (every case). Fixtures live under rt::os::tmpdir()
 // (TMPDIR), as the TS uses os.tmpdir(); rt::fs has no symlinkSync, so the symlink fixture uses
 // symlink(2) directly.
-// Links: tests/kv_consistent_snapshot_test.cpp src/kv_conversion/convert.cpp src/kv_conversion/cursors.cpp src/kv_conversion/legacy_codec.cpp
+// Links: tests/kv_consistent_snapshot_test.cpp src/kv_conversion/convert.cpp src/kv_conversion/cursors.cpp
 //        src/kv_conversion/native_schema.cpp src/kv_conversion/typed_value.cpp src/storage/kv.cpp src/storage/sqlite_readonly.cpp
 //        src/storage/native_kv.cpp src/storage/value_compatibility.cpp src/storage/native_addon.cpp src/storage/key_compatibility.cpp
 #include "uos/kv_conversion/convert.hpp"

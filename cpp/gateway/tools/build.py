@@ -95,13 +95,9 @@ def input_identity(targets):
     vendor_targets = {library.target for library in vendors}
     paths = [GATEWAY / "PORT-MANIFEST.json", GATEWAY / "PORTED.txt", GATEWAY / "CMakeLists.txt", GATEWAY / "CMakePresets.json"]
     sources = [path for path in (GATEWAY / "src").rglob("*.cpp") if not path.name.startswith(".")]
-    if not targets or any(target in targets for target in ("uos_gateway", "uos_kv_convert", "uos_kv_proof")):
-        sources += list((GATEWAY / "runtime").glob("*.cpp"))
     if not targets or "uos_gateway" in targets:
+        sources += list((GATEWAY / "runtime").glob("*.cpp"))
         sources += [GATEWAY / "entrypoints/gateway.cpp"]
-    for target, entry in (("uos_kv_convert", "kv-convert.cpp"), ("uos_kv_proof", "kv-proof.cpp")):
-        if not targets or target in targets:
-            sources.append(GATEWAY / "entrypoints" / entry)
     if targets and set(targets) <= vendor_targets:
         sources = []
     elif targets and all(target.startswith("uos_obj_") for target in targets):
@@ -121,7 +117,7 @@ def input_identity(targets):
         paths += [registry, GATEWAY / "tests/LINKS.txt", GATEWAY / "tools/links.py", GATEWAY / "tools/generate-tests.py", GATEWAY / "tools/ctest-run.py"]
         for target in targets:
             paths += [GATEWAY / name for name in tests[target].get("inputs", [])]
-    elif targets and any(target not in ("uos_gateway", "uos_gateway_modules", "uos_kv_convert", "uos_kv_proof") for target in targets):
+    elif targets and any(target not in ("uos_gateway", "uos_gateway_modules") for target in targets):
         registry = GATEWAY / "cmake/extra-targets.json"
         extra = {item["target"]: item for item in json.loads(registry.read_text())["targets"]}
         if any(target not in extra for target in targets):
@@ -265,7 +261,7 @@ def main():
                 return code
         after = input_identity(selected)
         changed = sorted(path for path in inputs.keys() | after.keys() if inputs.get(path) != after.get(path))
-        artifact_paths = [build / name for name in ("libuos_gateway.a", "uos_gateway", "uos_kv_convert", "uos_kv_proof")]
+        artifact_paths = [build / name for name in ("libuos_gateway.a", "uos_gateway")]
         artifact_paths += [build / target for target in selected]
         artifact_paths += [build / library.archive for library in vendors if all(source in after for source in library.sources)]
         artifacts = {path.name: {"sha256": digest(path), "bytes": path.stat().st_size}

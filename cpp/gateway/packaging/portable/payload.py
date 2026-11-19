@@ -41,10 +41,7 @@ def main(commit, tree, epoch):
             native.copy_file(asset, payload / asset.relative_to(ROOT))
     for name in ("favicon.png", "favicon-32.png"):
         native.copy_file(ROOT / name, payload / name)
-    for name in ("v8-helper.mjs", "typed-value.ts"):
-        native.copy_file(GATEWAY / "runtime/legacy-codec" / name, payload / "src/kv-conversion" / name)
-    for name in ("launch-schema.json", "offline-schema.json"):
-        native.copy_file(GATEWAY / "runtime" / name, payload / "runtime" / name)
+    native.copy_file(GATEWAY / "runtime/launch-schema.json", payload / "runtime/launch-schema.json")
     native.copy_file(GATEWAY / "ops/launch-native.sh", payload / "ops/launch-native.sh", executable=True)
     for name in ("native-kv.node", "native-kv.provenance.json", "build-commands.jsonl"):
         native.copy_file(kv / name, payload / "native/kv" / name)

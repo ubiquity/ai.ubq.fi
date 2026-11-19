@@ -190,8 +190,6 @@ modules = [p.relative_to(gateway) for p in sorted((gateway / "src").rglob("*.cpp
 startup = Path("runtime/startup.cpp")
 entrypoints = {
     "uos-gateway": Path("entrypoints/gateway.cpp"),
-    "uos-kv-convert": Path("entrypoints/kv-convert.cpp"),
-    "uos-kv-proof": Path("entrypoints/kv-proof.cpp"),
 }
 production_sources = runtime + modules + [startup, *entrypoints.values()]
 production = compile_phase("production", production_sources)

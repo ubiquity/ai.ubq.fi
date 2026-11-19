@@ -8,6 +8,7 @@
 - [x] Inventory tracked language sources, toolchain commands and runtime dependencies.
 - [x] Remove the historical comparison and formatter.
 - [x] Call the linked Linux confinement implementation directly.
+- [x] Retire the offline legacy conversion executables and helper.
 - [ ] Remove unnecessary package runtime artifacts and offline tooling.
 - [ ] Update CI and current operating documents.
 - [ ] Add the ARM64 cutover checklist and runtime environment table.
@@ -38,3 +39,5 @@ Local verification uses qualified native dependencies and the repository's loopb
 Removed the paired harness and pins, comparison modes from the smoke and benchmark drivers, and the root formatter dependencies. The native HTTP smoke and JSON, regex and request-path measurements remain. The hook uses Git whitespace checks. Parsed all affected Python with `ast.parse` and ran `git diff --check`.
 
 The confinement change keeps the same Landlock and seccomp implementations and policy. It removes the lookup of a separate, never-loaded helper from the confinement API. Three helper-file-only cases were retired. The kernel, strict and reduced boundary, and Gemini child checks remain. Clang 21 strict syntax checks and the registration gate passed.
+
+Removed the pinned offline V8 subprocess, its converter and round-trip proof entry points, and their exclusively offline CLI, conversion and proof tests. The file-digest case, private SQLite snapshot API and tests, schema and queue checks, native profile export, typed values, and cursor fixtures remain. The executable and package target lists now build the gateway only. The CMake inventory and native registration gates passed after the removal.

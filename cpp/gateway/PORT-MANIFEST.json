@@ -3202,18 +3202,9 @@
       "ported": true,
       "tests": ["tests/admin-kernel-coverage.test.ts", "tests/kernel-usage-coverage.test.ts"]
     },
-    "src/kv-conversion/cli.ts": {
-      "deps": ["src/kv-conversion/convert.ts", "src/kv-conversion/cursors.ts"],
-      "header": "cpp/gateway/include/uos/kv_conversion/cli.hpp",
-      "impl": "cpp/gateway/src/kv_conversion/cli.cpp",
-      "loc": 43,
-      "ported": true,
-      "tests": []
-    },
     "src/kv-conversion/convert.ts": {
       "deps": [
         "src/kv-conversion/cursors.ts",
-        "src/kv-conversion/legacy-codec.ts",
         "src/kv-conversion/native-schema.ts",
         "src/kv-conversion/typed-value.ts",
         "src/storage/kv.ts"
@@ -3235,14 +3226,6 @@
         "tests/native-capture-operator.test.ts",
         "tests/private-bun-copy.test.ts"
       ]
-    },
-    "src/kv-conversion/legacy-codec.ts": {
-      "deps": ["src/kv-conversion/typed-value.ts"],
-      "header": "cpp/gateway/include/uos/kv_conversion/legacy_codec.hpp",
-      "impl": "cpp/gateway/src/kv_conversion/legacy_codec.cpp",
-      "loc": 86,
-      "ported": true,
-      "tests": ["tests/kv-runtime-conversion.test.ts"]
     },
     "src/kv-conversion/native-schema.ts": {
       "deps": [],
@@ -3269,20 +3252,6 @@
         "tests/kv-migration.test.ts",
         "tests/kv-runtime-conversion.test.ts"
       ]
-    },
-    "src/kv-conversion/proof.ts": {
-      "deps": [
-        "src/kv-conversion/convert.ts",
-        "src/kv-conversion/legacy-codec.ts",
-        "src/kv-conversion/typed-value.ts",
-        "src/runtime/native-kv-bootstrap.ts",
-        "src/storage/kv.ts"
-      ],
-      "header": "cpp/gateway/include/uos/kv_conversion/proof.hpp",
-      "impl": "cpp/gateway/src/kv_conversion/proof.cpp",
-      "loc": 178,
-      "ported": true,
-      "tests": []
     },
     "src/kv-conversion/typed-value.ts": {
       "deps": [],
@@ -5743,9 +5712,9 @@
     }
   },
   "summary": {
-    "loc": 113485,
-    "modules": 327,
-    "ported_loc": 113485,
-    "ported_modules": 327
+    "loc": 113178,
+    "modules": 324,
+    "ported_loc": 113178,
+    "ported_modules": 324
   }
 }

@@ -33,7 +33,7 @@ LIBRARIES = {
     "zstd": ("libzstd.a",),
     "zlib": ("libz.a",),
 }
-EXECUTABLES = ("uos-gateway", "uos-kv-convert", "uos-kv-proof")
+EXECUTABLES = ("uos-gateway",)
 
 
 def capture(*command, env=None):

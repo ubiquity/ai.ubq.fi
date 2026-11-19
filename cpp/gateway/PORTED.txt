@@ -50,7 +50,6 @@ src/provider/anthropic-replay.ts
 src/kv-conversion/typed-value.ts
 src/harmony/tools/backend.ts
 src/storage/native-kv.ts
-src/kv-conversion/legacy-codec.ts
 src/catalog/types.ts
 src/live/routes.ts
 src/release.ts
@@ -106,8 +105,6 @@ src/cache/prompt-analytics.ts
 src/models/codex-models-availability.ts
 src/kv-conversion/convert.ts
 src/codex/session.ts
-src/kv-conversion/proof.ts
-src/kv-conversion/cli.ts
 src/kernel/attestation.ts
 src/paid-fallback/ledger-state.ts
 src/analytics.ts
