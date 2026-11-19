@@ -6,6 +6,8 @@
 namespace uos::rt::limits {
   // Use a smaller limit where the route or protocol already requires one.
   inline constexpr std::size_t kHttpHeaderBlockBytes = 32 * 1024;
+  inline constexpr std::size_t kHttpHeaderFields = 256;
+  inline constexpr std::size_t kHttpChunkLineBytes = 4 * 1024;
   inline constexpr std::size_t kHttpBodyBytes = 16 * 1024 * 1024;
 
   // Live sideband already caps messages at 4 MiB.

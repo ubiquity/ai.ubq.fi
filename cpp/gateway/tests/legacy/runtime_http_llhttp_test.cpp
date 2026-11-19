@@ -165,3 +165,57 @@ TEST("llhttp bounds the complete trailer block across fields") {
   EXPECT(!connection.decodeChunked(chunk));
   EXPECT(!connection.bodyComplete);
 }
+
+TEST("client header bytes and field counts admit the exact ceiling") {
+  using namespace uos::runtime::http::node_http;
+  for (const std::size_t extra : {0u, 1u}) {
+    std::string head = "GET / HTTP/1.1\r\nHost: local\r\nX-Fill: ";
+    head.resize(MAX_HEAD_BYTES - 4 + extra, 'a');
+    head += "\r\n\r\n";
+    RequestParser parser;
+    std::size_t consumed = 0;
+    EXPECT(parser.parseHead(head, consumed) == (extra == 0 ? RequestParser::Head::complete : RequestParser::Head::overflow));
+
+    head = "GET / HTTP/1.1\r\nHost: local\r\n";
+    for (std::size_t i = 1; i < MAX_HEADER_FIELDS + extra; ++i) head += "X: a\r\n";
+    head += "\r\n";
+    RequestParser fields;
+    EXPECT(fields.parseHead(head, consumed) == (extra == 0 ? RequestParser::Head::complete : RequestParser::Head::overflow));
+
+    Fixture trail;
+    trail.append("POST / HTTP/1.1\r\nHost: local\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n");
+    ASSERT(trail.connection->parseHead());
+    rt::ByteChunk payload;
+    ASSERT(trail.connection->decodeChunked(payload));
+    for (std::size_t i = 0; i < MAX_HEADER_FIELDS + extra; ++i) trail.append("X: a\r\n");
+    trail.append("\r\n");
+    EXPECT_EQ(trail.connection->decodeChunked(payload).has_value(), extra == 0);
+  }
+}
+
+TEST("fixed and chunked request bodies keep the HTTP and image route ceilings") {
+  using namespace std::string_literals;
+  constexpr auto ordinary = rt::limits::kHttpBodyBytes;
+  constexpr auto imageJson = rt::limits::kImageEditJsonBytes;
+  constexpr auto imageMultipart = rt::limits::kImageEditMultipartBytes;
+  for (const std::size_t extra : {0u, 1u}) {
+    for (const auto& [target, type, limit] : std::array{
+           std::tuple{"/v1/responses", "application/json", ordinary},
+           std::tuple{"/v1/images/edits/?q=1", "application/json", imageJson},
+           std::tuple{"/v1/images/edits", "Multipart/Form-Data; boundary=demo", imageMultipart}}) {
+      Fixture fixture;
+      fixture.append("POST "s + target + " HTTP/1.1\r\nHost: local\r\nContent-Type: " + type + "\r\nContent-Length: " + std::to_string(limit + extra) + "\r\n\r\n");
+      EXPECT_EQ(fixture.connection->parseHead(), extra == 0);
+    }
+
+    Fixture chunked;
+    chunked.append("POST /v1/responses HTTP/1.1\r\nHost: local\r\nTransfer-Encoding: chunked\r\n\r\n");
+    ASSERT(chunked.connection->parseHead());
+    // One 16 MiB chunk spends the complete budget as soon as its size is known.
+    chunked.append(extra == 0 ? "1000000\r\n" : "1000001\r\n");
+    rt::ByteChunk chunk;
+    EXPECT_EQ(chunked.connection->decodeChunked(chunk).has_value(), extra == 0);
+    EXPECT(chunk.empty());
+    EXPECT_EQ(chunked.connection->parser.bodyTooLarge, extra != 0);
+  }
+}

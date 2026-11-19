@@ -3,6 +3,7 @@
 #include "uos/rt/date.hpp"
 #include "uos/rt/error.hpp"
 #include "uos/rt/json.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/number.hpp"
 #include "uos/rt/ordered.hpp"
 #include "uos/rt/regex.hpp"
@@ -147,11 +148,11 @@ namespace uos::runtime::http {
 
     namespace {
       // Bun's parser limits (a head of at most 16408 bytes, at most 198 fields).
-      constexpr std::size_t MAX_HEAD_BYTES = 16408;
-      constexpr std::size_t MAX_HEADER_FIELDS = 198;
-      constexpr std::size_t MAX_CHUNK_LINE_BYTES = 4096;
+      constexpr std::size_t MAX_HEAD_BYTES = std::min<std::size_t>(16408, rt::limits::kHttpHeaderBlockBytes);
+      constexpr std::size_t MAX_HEADER_FIELDS = std::min<std::size_t>(198, rt::limits::kHttpHeaderFields);
       constexpr std::size_t MAX_LENGTH_DIGITS = 15;
       constexpr std::string_view BAD_REQUEST = "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n";
+      constexpr std::string_view BODY_OVERFLOW = "HTTP/1.1 413 Payload Too Large\r\nConnection: close\r\n\r\n";
       constexpr std::string_view HEADER_OVERFLOW = "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n";
       // ServerResponse.writableHighWaterMark in Bun.
       constexpr std::size_t HIGH_WATER_MARK = 65536;
@@ -161,6 +162,21 @@ namespace uos::runtime::http {
       // How long a closing connection keeps reading (and discarding) after its last
       // response, so unread request bytes do not turn the close into a reset.
       constexpr double LINGER_MS = 2000;
+
+      std::size_t requestBodyLimit(std::string_view method, std::string_view target, const std::optional<std::string_view>& contentType) {
+        if (method != "POST") return rt::limits::kHttpBodyBytes;
+        try {
+          const auto path = rt::URL(target, "http://localhost").pathname();
+          if (std::string_view(path).substr(0, path.find_last_not_of('/') + 1) == "/v1/images/edits") {
+            const auto type = contentType.value_or("");
+            if (rt::toLowerCase(rt::trim(type.substr(0, type.find(';')))) == "multipart/form-data") return rt::limits::kImageEditMultipartBytes;
+            return rt::limits::kImageEditJsonBytes;
+          }
+        } catch (const rt::TypeError&) {
+          // The request adapter reports an invalid target through its existing error path.
+        }
+        return rt::limits::kHttpBodyBytes;
+      }
 
       bool isTokenChar(unsigned char character) {
         if (character >= '0' && character <= '9') return true;
@@ -335,6 +351,13 @@ namespace uos::runtime::http {
             self.fields[self.fieldCount].name.append(self.headBase, at, length);
             return 0;
           };
+          callbacks.on_header_field_complete = [](llhttp_t* parser) -> int {
+            if ((parser->flags & F_TRAILING) && ++from(parser).trailerCount > MAX_HEADER_FIELDS) {
+              llhttp_set_error_reason(parser, "Too many HTTP trailers");
+              return HPE_USER;
+            }
+            return 0;
+          };
           callbacks.on_header_value = [](llhttp_t* parser, const char* at, std::size_t length) {
             if (!(parser->flags & F_TRAILING)) {
               auto& self = from(parser);
@@ -385,6 +408,8 @@ namespace uos::runtime::http {
           target = {};
           fields[0] = {};
           fieldCount = 0;
+          trailerCount = 0;
+          bodyTooLarge = false;
           chunkPart = ChunkPart::size;
         }
         const std::size_t end = std::min(text.size(), MAX_HEAD_BYTES);
@@ -406,7 +431,7 @@ namespace uos::runtime::http {
       // consumed input, then dispatches the data event outside the C callbacks.
       std::optional<std::size_t> decodeChunked(std::string_view text, std::string_view& chunk) {
         const ChunkPart part = chunkPart;
-        const std::size_t limit = part == ChunkPart::size ? MAX_CHUNK_LINE_BYTES : MAX_HEAD_BYTES;
+        const std::size_t limit = part == ChunkPart::size ? rt::limits::kHttpChunkLineBytes : MAX_HEAD_BYTES;
         const bool metadata = part == ChunkPart::size || part == ChunkPart::trailers;
         std::size_t end = metadata ? std::min(text.size(), limit) : text.size();
         // Deliver payload before validating its delimiter, regardless of how the
@@ -429,10 +454,19 @@ namespace uos::runtime::http {
           return 0;
         }
         const std::size_t consumed = error == HPE_PAUSED ? static_cast<std::size_t>(llhttp_get_error_pos(&wire) - text.data()) : end;
-        if (part == ChunkPart::size && text.substr(0, consumed).find_first_not_of("0123456789abcdefABCDEF") > MAX_LENGTH_DIGITS) {
-          error = HPE_INVALID_CHUNK_SIZE;
-          llhttp_set_error_reason(&wire, "Chunk size exceeds digit limit");
-          return std::nullopt;
+        if (part == ChunkPart::size) {
+          if (text.substr(0, consumed).find_first_not_of("0123456789abcdefABCDEF") > MAX_LENGTH_DIGITS) {
+            error = HPE_INVALID_CHUNK_SIZE;
+            llhttp_set_error_reason(&wire, "Chunk size exceeds digit limit");
+            return std::nullopt;
+          }
+          if (wire.content_length > bodyBytesRemaining) {
+            bodyTooLarge = true;
+            error = HPE_USER;
+            llhttp_set_error_reason(&wire, "HTTP request body exceeds limit");
+            return std::nullopt;
+          }
+          bodyBytesRemaining -= static_cast<std::size_t>(wire.content_length);
         }
         buffered = 0;
         return consumed;
@@ -442,6 +476,8 @@ namespace uos::runtime::http {
       Span target;
       std::array<Field, MAX_HEADER_FIELDS> fields;
       std::size_t fieldCount = 0;
+      std::size_t bodyBytesRemaining = rt::limits::kHttpBodyBytes;
+      bool bodyTooLarge = false;
       ChunkPart chunkPart = ChunkPart::size;
       llhttp_errno_t error = HPE_OK;
 
@@ -450,6 +486,7 @@ namespace uos::runtime::http {
       static_assert(MAX_HEAD_BYTES <= UINT16_MAX);
       const char* headBase = nullptr;
       std::size_t buffered = 0;
+      std::size_t trailerCount = 0;
       std::string_view payload;
     };
 
@@ -658,6 +695,7 @@ namespace uos::runtime::http {
         bool hasHost = false;
         bool isUpgrade = false;
         bool expectContinue = false;
+        std::optional<std::string_view> contentType;
         std::vector<std::string> rawHeaders;
         rawHeaders.reserve(parser.fieldCount * 2);
         for (std::size_t i = 0; i < parser.fieldCount; ++i) {
@@ -669,6 +707,10 @@ namespace uos::runtime::http {
           if (lower == "content-length" && value.size() > MAX_LENGTH_DIGITS) {
             refuse(BAD_REQUEST);
             return false;
+          }
+          if (lower == "content-type") {
+            if (!contentType) contentType = value;
+            else if (contentType->find(';') == std::string_view::npos) contentType = std::string_view{};
           }
           hasHost = hasHost || lower == "host";
           expectContinue = expectContinue || (lower == "expect" && lowerAscii(value) == "100-continue");
@@ -685,6 +727,12 @@ namespace uos::runtime::http {
         keepAlive = http11 && llhttp_should_keep_alive(&parser.wire);
         remaining = parser.wire.content_length;
         framing = chunked ? Framing::chunked : remaining > 0 ? Framing::length : Framing::none;
+        parser.bodyBytesRemaining = chunked || remaining > rt::limits::kHttpBodyBytes
+                                      ? requestBodyLimit(method, target, contentType) : rt::limits::kHttpBodyBytes;
+        if (remaining > parser.bodyBytesRemaining) {
+          refuse(BODY_OVERFLOW);
+          return false;
+        }
 
         auto self = shared_from_this();
         auto incoming = std::make_shared<IncomingMessage>(self, socket);
@@ -790,7 +838,7 @@ namespace uos::runtime::http {
           destroy(error);
           return;
         }
-        destroyAfter(BAD_REQUEST);
+        destroyAfter(parser.bodyTooLarge ? BODY_OVERFLOW : BAD_REQUEST);
       }
 
       void onBodyComplete() {
