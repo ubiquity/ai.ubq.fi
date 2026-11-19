@@ -5,6 +5,7 @@
 #include "uos/rt/ordered.hpp"
 #include "uos/rt/prelude.hpp"
 #include <array>
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <string>
@@ -19,7 +20,10 @@ namespace uos::deepseek::waterfall {
   inline constexpr std::string_view DEEPSEEK_WATERFALL_DESCRIPTION = "Latest DeepSeek Flash waterfall: official DeepSeek, OpenRouter, LithosAI, Surplus, and OpenLux. Each hop uses the provider's latest alias and falls back only on infrastructure or serving failures.";
   inline constexpr double DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS = 1'048'576;
   inline constexpr double DEEPSEEK_WATERFALL_EFFECTIVE_CONTEXT_WINDOW_PERCENT = 95;
-  inline constexpr double DEEPSEEK_WATERFALL_AUTO_COMPACT_TOKEN_LIMIT = 891'289;
+  // Compact earlier because admission can reject a prompt before the provider window is full.
+  inline constexpr double DEEPSEEK_WATERFALL_AUTO_COMPACT_PERCENT = 75;
+  inline constexpr double DEEPSEEK_WATERFALL_AUTO_COMPACT_TOKEN_LIMIT = static_cast<double>(static_cast<std::int64_t>(
+    DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS * DEEPSEEK_WATERFALL_EFFECTIVE_CONTEXT_WINDOW_PERCENT * DEEPSEEK_WATERFALL_AUTO_COMPACT_PERCENT / 10'000));
   inline constexpr double DEEPSEEK_WATERFALL_CREATED = 1'791'244'800;
   inline constexpr std::array<std::string_view, 3> DEEPSEEK_WATERFALL_REASONING_LEVELS{"low", "high", "max"};
   inline constexpr std::string_view DEEPSEEK_WATERFALL_DEFAULT_REASONING_LEVEL = "high";
