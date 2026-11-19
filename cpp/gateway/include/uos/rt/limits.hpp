@@ -9,6 +9,9 @@ namespace uos::rt::limits {
   inline constexpr std::size_t kHttpHeaderFields = 256;
   inline constexpr std::size_t kHttpChunkLineBytes = 4 * 1024;
   inline constexpr std::size_t kHttpBodyBytes = 16 * 1024 * 1024;
+  inline constexpr std::size_t kHttpChunkMetadataBytes = kHttpBodyBytes;
+  inline constexpr std::size_t kHttpInformationalResponses = 32;
+  inline constexpr std::size_t kSseLineBytes = 8 * 1024 * 1024;
   inline constexpr std::size_t kDecompressionRatio = 1024;
   inline constexpr std::size_t kDecompressionRatioSlackBytes = 1024 * 1024;
   inline constexpr int kZstdWindowLog = 24;
@@ -60,4 +63,7 @@ namespace uos::rt::limits {
   inline constexpr std::size_t kCertificateBase64Bytes = ((kCertificateBytes + 2) / 3) * 4;
   inline constexpr std::size_t kCertificatePemBytes = kCertificateBase64Bytes + ((kCertificateBase64Bytes + 63) / 64) * 2 + 64;
   inline constexpr std::size_t kTrustStoreBytes = 1024 * 1024;
+  inline constexpr std::size_t kTextInputBytes = kImageEditJsonBytes;
+  inline constexpr std::size_t kIcuInputBytes = kJsonDocumentBytes;
+  inline constexpr std::size_t kKvCursorBytes = 16 * 1024;
 }

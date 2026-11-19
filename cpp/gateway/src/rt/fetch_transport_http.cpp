@@ -234,6 +234,7 @@ namespace uos::rt::detail::fetch {
     settings.on_chunk_header = [](llhttp_t* parser) -> int {
       auto& self = *static_cast<ResponseParser*>(parser->data);
       if (parser->content_length > self.bodyBytesRemaining_) {
+        self.bodyLimitExceeded_ = true;
         llhttp_set_error_reason(parser, "HTTP response body exceeds limit");
         return HPE_USER;
       }
@@ -328,6 +329,7 @@ namespace uos::rt::detail::fetch {
     if (result != HPE_OK) return result;
     chunked_ = head_.framing.framing == Framing::chunked;
     if (head_.framing.framing == Framing::length && head_.framing.length > bodyBytesRemaining_) {
+      bodyLimitExceeded_ = true;
       llhttp_set_error_reason(&parser_, "HTTP response body exceeds limit");
       return HPE_USER;
     }
@@ -340,9 +342,11 @@ namespace uos::rt::detail::fetch {
     headBytes_ = 0;
     bodyBytesRemaining_ = limits::kHttpBodyBytes;
     metadataBytes_ = 0;
+    metadataRemaining_ = limits::kHttpChunkMetadataBytes;
     trailerCount_ = 0;
     chunkPart_ = ChunkPart::size;
     bodyComplete_ = false;
+    bodyLimitExceeded_ = false;
     chunked_ = false;
     firstHeadBytes_ = true;
     startField_ = true;
@@ -358,12 +362,13 @@ namespace uos::rt::detail::fetch {
       const bool metadata = chunked_ && chunkPart_ != ChunkPart::data;
       if (metadata) {
         const auto limit = chunkPart_ == ChunkPart::size ? limits::kHttpChunkLineBytes : maxHeadBytes_;
-        capacity = limit - metadataBytes_;
+        capacity = std::min(limit - metadataBytes_, metadataRemaining_);
       } else if (chunked_) {
         // A finished chunk still has its CRLF delimiter to consume.
         capacity = parser_.content_length == 0 ? 2 : static_cast<std::size_t>(parser_.content_length);
       }
       if (capacity == 0) {
+        bodyLimitExceeded_ = !metadata;
         llhttp_set_error_reason(&parser_, metadata ? "HTTP response chunk metadata exceeds limit" : "HTTP response body exceeds limit");
         result = HPE_USER;
         break;
@@ -372,7 +377,10 @@ namespace uos::rt::detail::fetch {
       result = execute(input.substr(0, capacity), step);
       consumed += step;
       input.remove_prefix(step);
-      if (metadata) metadataBytes_ += step;
+      if (metadata) {
+        metadataBytes_ += step;
+        metadataRemaining_ -= step;
+      }
       if (result == HPE_PAUSED && !bodyComplete_) {
         metadataBytes_ = 0;
         llhttp_resume(&parser_);

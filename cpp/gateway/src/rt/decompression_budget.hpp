@@ -3,8 +3,11 @@
 #include "uos/rt/limits.hpp"
 
 #include <cstddef>
+#include <string_view>
 
 namespace uos::rt::detail {
+  inline constexpr std::string_view decompressionLimitCode = "ERR_DECOMPRESSION_LIMIT";
+
   class DecompressionBudget {
   public:
     explicit DecompressionBudget(std::size_t byteLimit = limits::kHttpBodyBytes) : byteLimit_(byteLimit) {}

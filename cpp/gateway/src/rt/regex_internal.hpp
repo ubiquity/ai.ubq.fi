@@ -43,6 +43,7 @@ namespace uos::rt::regex_detail {
     std::uint32_t captureCount = 0;
     std::size_t registerCount = 0;
     std::size_t subjectBytes = limits::kRegexSubjectBytes;
+    bool sseFraming = false;
     std::vector<NamedGroup> names;
     Bytecode bytecode;
     // String.prototype.split searches even if the input regex was sticky.

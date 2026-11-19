@@ -103,6 +103,7 @@ namespace uos::rt::detail::fetch {
     ResponseHead takeHead() { return std::move(head_); }
     const char* errorReason() const { return llhttp_get_error_reason(&parser_); }
     bool headLimitReached() const { return headBytes_ == maxHeadBytes_; }
+    bool bodyLimitExceeded() const { return bodyLimitExceeded_; }
     // Completes immediately if llhttp determines the response has no body.
     llhttp_errno_t beginBody(bool headRequest = false);
     bool needsEof() const { return llhttp_message_needs_eof(&parser_); }
@@ -128,9 +129,11 @@ namespace uos::rt::detail::fetch {
     std::size_t headBytes_ = 0;
     std::size_t bodyBytesRemaining_ = limits::kHttpBodyBytes;
     std::size_t metadataBytes_ = 0;
+    std::size_t metadataRemaining_ = limits::kHttpChunkMetadataBytes;
     std::size_t trailerCount_ = 0;
     ChunkPart chunkPart_ = ChunkPart::size;
     bool bodyComplete_ = false;
+    bool bodyLimitExceeded_ = false;
     bool chunked_ = false;
     bool firstHeadBytes_ = true;
     bool startField_ = true;

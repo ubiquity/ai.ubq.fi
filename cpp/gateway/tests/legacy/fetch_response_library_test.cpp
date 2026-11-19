@@ -222,6 +222,23 @@ TEST("Fetch bounds each chunk line and the trailer block") {
   }
 }
 
+TEST("Fetch bounds chunk metadata cumulatively") {
+  namespace limits = uos::rt::limits;
+  constexpr auto fullLines = (limits::kHttpChunkMetadataBytes / limits::kHttpChunkLineBytes) - 1;
+  const std::string line = "1;x=" + std::string(limits::kHttpChunkLineBytes - 6, 'a') + "\r\na\r\n";
+  for (const std::size_t extra : {0u, 1u}) {
+    fetch::ChunkedDecoder decoder;
+    std::string data;
+    for (std::size_t i = 0; i < fullLines; ++i) {
+      std::size_t offset = 0;
+      ASSERT_EQ(decoder.decode(line, offset, data), fetch::ChunkedDecoder::Result::more);
+    }
+    std::string last = "1;x=" + std::string(limits::kHttpChunkLineBytes - 11 + extra, 'a') + "\r\na\r\n0\r\n\r\n";
+    std::size_t offset = 0;
+    EXPECT_EQ(decoder.decode(last, offset, data), extra == 0 ? fetch::ChunkedDecoder::Result::done : fetch::ChunkedDecoder::Result::invalid);
+  }
+}
+
 TEST("decompression budgets admit exact input, output and cumulative ratio") {
   namespace limits = uos::rt::limits;
   using uos::rt::detail::DecompressionBudget;
@@ -251,7 +268,7 @@ TEST("Fetch gzip bounds decoded bytes independently of wire size") {
       decoder->finish(out);
       EXPECT_EQ(out.size(), limits::kHttpBodyBytes);
     } else {
-      EXPECT_THROWS_MATCHING(decoder->write(wire, out), "ZlibError");
+      EXPECT_THROWS_MATCHING(decoder->write(wire, out), "ResponseBodyTooLarge");
     }
   }
 }
@@ -268,5 +285,5 @@ TEST("Fetch Brotli rejects a valid stream past the expansion budget") {
 
   auto rejected = fetch::contentDecoder("br", "http://localhost");
   out.clear();
-  EXPECT_THROWS_MATCHING(rejected->write(beyond, out), "BrotliDecompressionError");
+  EXPECT_THROWS_MATCHING(rejected->write(beyond, out), "ResponseBodyTooLarge");
 }

@@ -410,6 +410,7 @@ namespace uos::runtime::http {
           fieldCount = 0;
           trailerCount = 0;
           bodyTooLarge = false;
+          chunkMetadataRemaining = rt::limits::kHttpChunkMetadataBytes;
           chunkPart = ChunkPart::size;
         }
         const std::size_t end = std::min(text.size(), MAX_HEAD_BYTES);
@@ -431,8 +432,13 @@ namespace uos::runtime::http {
       // consumed input, then dispatches the data event outside the C callbacks.
       std::optional<std::size_t> decodeChunked(std::string_view text, std::string_view& chunk) {
         const ChunkPart part = chunkPart;
-        const std::size_t limit = part == ChunkPart::size ? rt::limits::kHttpChunkLineBytes : MAX_HEAD_BYTES;
+        const std::size_t limit = std::min(chunkMetadataRemaining, part == ChunkPart::size ? rt::limits::kHttpChunkLineBytes : MAX_HEAD_BYTES);
         const bool metadata = part == ChunkPart::size || part == ChunkPart::trailers;
+        if (metadata && limit == 0) {
+          error = HPE_USER;
+          llhttp_set_error_reason(&wire, "Chunk metadata exceeds limit");
+          return std::nullopt;
+        }
         std::size_t end = metadata ? std::min(text.size(), limit) : text.size();
         // Deliver payload before validating its delimiter, regardless of how the
         // socket split the input. llhttp tracks the bytes left in this chunk.
@@ -454,6 +460,7 @@ namespace uos::runtime::http {
           return 0;
         }
         const std::size_t consumed = error == HPE_PAUSED ? static_cast<std::size_t>(llhttp_get_error_pos(&wire) - text.data()) : end;
+        if (metadata) chunkMetadataRemaining -= consumed;
         if (part == ChunkPart::size) {
           if (text.substr(0, consumed).find_first_not_of("0123456789abcdefABCDEF") > MAX_LENGTH_DIGITS) {
             error = HPE_INVALID_CHUNK_SIZE;
@@ -487,6 +494,7 @@ namespace uos::runtime::http {
       const char* headBase = nullptr;
       std::size_t buffered = 0;
       std::size_t trailerCount = 0;
+      std::size_t chunkMetadataRemaining = rt::limits::kHttpChunkMetadataBytes;
       std::string_view payload;
     };
 

@@ -231,12 +231,14 @@ namespace uos::rt::gzip {
       wipe(buffer);
     }
 
-    [[noreturn]] void fail(InflateFailure reason) {
+    [[noreturn]] void fail(InflateFailure reason, bool exceededLimit = false) {
       wipe(buffer);
       filled = 0;
       handedOut = false;
       pending = {};
-      failure = std::make_exception_ptr(InflateError(reason));
+      InflateError error(reason);
+      if (exceededLimit) error.code = detail::decompressionLimitCode;
+      failure = std::make_exception_ptr(std::move(error));
       std::rethrow_exception(failure);
     }
 
@@ -291,7 +293,7 @@ namespace uos::rt::gzip {
         filled += produced;
         stream.next_in = nullptr;
         stream.avail_in = 0;
-        if (!budget.advance(consumed, produced)) fail(InflateFailure::corrupt);
+        if (!budget.advance(consumed, produced)) fail(InflateFailure::corrupt, true);
         if (status == Z_STREAM_END) {
           atEnd = true;
         } else if (status == Z_NEED_DICT) {
@@ -345,7 +347,7 @@ namespace uos::rt::gzip {
     State& s = *state;
     if (s.failure) std::rethrow_exception(s.failure);
     if (!s.pending.empty()) throw std::logic_error("rt::gzip::Inflater::write: the previous chunk is not used up (read() until it returns std::nullopt)");
-    if (!s.budget.feed(chunk.size())) s.fail(InflateFailure::corrupt);
+    if (!s.budget.feed(chunk.size())) s.fail(InflateFailure::corrupt, true);
     if (s.discarding) return;
     if (s.handedOut) {
       s.filled = 0;

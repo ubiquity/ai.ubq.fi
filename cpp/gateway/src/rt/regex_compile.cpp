@@ -106,7 +106,7 @@ namespace uos::rt::regex_detail {
 
     constexpr std::string_view imageDataUrl = R"(^data:([^;,]+);base64,([a-z0-9+/]*={0,2})$)";
 
-    std::size_t subjectBudget(std::string_view pattern, int flags) {
+    std::size_t subjectBudget(Program& program, std::string_view pattern, int flags) {
       if (flags == (LRE_FLAG_IGNORECASE | LRE_FLAG_UNICODE) && (pattern == "^data:" || pattern == "^https?://" || pattern == imageDataUrl)) {
         return limits::kImageRegexSubjectBytes;
       }
@@ -114,6 +114,7 @@ namespace uos::rt::regex_detail {
         return limits::kCompactionRegexSubjectBytes;
       }
       if (flags == 0 && (pattern == R"(\r?\n\r?\n)" || pattern == R"(\r\n\r\n|\n\n|\r\r)" || pattern == R"(\r\n|\r|\n)" || pattern == R"(\r?\n)")) {
+        program.sseFraming = true;
         return limits::kSseRegexSubjectBytes;
       }
       return limits::kRegexSubjectBytes;
@@ -124,7 +125,7 @@ namespace uos::rt::regex_detail {
     if (pattern.size() > limits::kRegexPatternBytes) throw RangeError("regular expression pattern is too large");
     auto program = std::make_shared<Program>();
     int mask = parseFlags(*program, flags);
-    program->subjectBytes = subjectBudget(pattern, mask);
+    program->subjectBytes = subjectBudget(*program, pattern, mask);
     program->source = escapeSource(pattern, program->unicodeSets);
     // The image data URL validator accepts tens of MiB of encoded data. Fixed-size
     // blocks avoid a backtracking entry per byte, and the lookahead commits to the

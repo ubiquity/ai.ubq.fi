@@ -30,7 +30,7 @@ namespace uos::rt {
     // UTF-16 code units plus a checkpoint every 64 units for mapping indices back to bytes.
     class Subject {
     public:
-      Subject(std::string_view bytes, const Program& program) : bytes_(bytes), ascii_(checkAscii(bytes, program.subjectBytes)) {
+      Subject(std::string_view bytes, const Program& program) : bytes_(bytes), ascii_(checkAscii(bytes, program)) {
         if (ascii_) {
           length_ = bytes.size();
           return;
@@ -96,8 +96,16 @@ namespace uos::rt {
       }
 
     private:
-      static bool checkAscii(std::string_view bytes, std::size_t maxBytes) {
-        if (bytes.size() > maxBytes) throw RangeError("regular expression subject is too large");
+      static bool checkAscii(std::string_view bytes, const Program& program) {
+        if (bytes.size() > program.subjectBytes) throw RangeError("regular expression subject is too large");
+        if (program.sseFraming && bytes.size() > limits::kSseLineBytes) {
+          for (auto remaining = bytes; !remaining.empty();) {
+            const auto end = remaining.find_first_of("\r\n");
+            if (std::min(end, remaining.size()) > limits::kSseLineBytes) throw RangeError("SSE line exceeds limit");
+            if (end == std::string_view::npos) break;
+            remaining.remove_prefix(end + 1);
+          }
+        }
         return isAscii(bytes);
       }
 

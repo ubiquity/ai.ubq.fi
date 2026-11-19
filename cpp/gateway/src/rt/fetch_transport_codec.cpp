@@ -10,6 +10,7 @@
 #if defined(UOS_GATEWAY_NATIVE_LIBRARIES)
 #include <brotli/decode.h>
 #include <zstd.h>
+#include <zstd_errors.h>
 #else
 #include <dlfcn.h>
 #endif
@@ -65,7 +66,7 @@ namespace uos::rt::detail::fetch {
 
       void write(std::string_view input, std::string& out) override {
         if (input.empty()) return;
-        if (!budget_.feed(input.size())) decompressionFailed("ZlibError", url_);
+        if (!budget_.feed(input.size())) decompressionFailed("ResponseBodyTooLarge", url_);
         try {
           if (!inflater_) {
             gzip::InflateOptions options;
@@ -81,11 +82,11 @@ namespace uos::rt::detail::fetch {
           inflater_->write(bytesOf(input));
           budget_.advance(input.size(), 0);
           while (const auto piece = inflater_->read()) {
-            if (!budget_.advance(0, piece->size())) decompressionFailed("ZlibError", url_);
+            if (!budget_.advance(0, piece->size())) decompressionFailed("ResponseBodyTooLarge", url_);
             out.append(reinterpret_cast<const char*>(piece->data()), piece->size());
           }
-        } catch (const gzip::InflateError&) {
-          decompressionFailed("ZlibError", url_);
+        } catch (const gzip::InflateError& error) {
+          decompressionFailed(error.code == decompressionLimitCode ? "ResponseBodyTooLarge" : "ZlibError", url_);
         }
       }
 
@@ -160,7 +161,7 @@ namespace uos::rt::detail::fetch {
       BrotliDecoder& operator=(const BrotliDecoder&) = delete;
 
       void write(std::string_view input, std::string& out) override {
-        if (!budget_.feed(input.size())) decompressionFailed("BrotliDecompressionError", url_);
+        if (!budget_.feed(input.size())) decompressionFailed("ResponseBodyTooLarge", url_);
         if (input.empty() || done_) return;
         received_ = true;
         const auto* next = reinterpret_cast<const std::uint8_t*>(input.data());
@@ -172,7 +173,8 @@ namespace uos::rt::detail::fetch {
           const std::size_t before = available;
           const int result = api_.decompressStream(state_, &available, &next, &room, &cursor, nullptr);
           const auto produced = static_cast<std::size_t>(cursor - buffer);
-          if (result == kBrotliError || !budget_.advance(before - available, produced)) decompressionFailed("BrotliDecompressionError", url_);
+          if (result == kBrotliError) decompressionFailed("BrotliDecompressionError", url_);
+          if (!budget_.advance(before - available, produced)) decompressionFailed("ResponseBodyTooLarge", url_);
           out.append(reinterpret_cast<const char*>(buffer), produced);
           if (result == kBrotliSuccess) {
             done_ = true;
@@ -202,6 +204,7 @@ namespace uos::rt::detail::fetch {
     using ZstdOutBuffer = ::ZSTD_outBuffer;
     using ZstdStream = ::ZSTD_DStream;
     constexpr auto kZstdWindowLogMax = ZSTD_d_windowLogMax;
+    constexpr auto kZstdWindowTooLarge = ZSTD_error_frameParameter_windowTooLarge;
     struct ZstdApi {
       decltype(&::ZSTD_createDStream) createDStream = &::ZSTD_createDStream;
       decltype(&::ZSTD_freeDStream) freeDStream = &::ZSTD_freeDStream;
@@ -209,11 +212,13 @@ namespace uos::rt::detail::fetch {
       decltype(&::ZSTD_DCtx_setParameter) setParameter = &::ZSTD_DCtx_setParameter;
       decltype(&::ZSTD_decompressStream) decompressStream = &::ZSTD_decompressStream;
       decltype(&::ZSTD_isError) isError = &::ZSTD_isError;
+      decltype(&::ZSTD_getErrorCode) getErrorCode = &::ZSTD_getErrorCode;
     };
 #else
     // zstd 1.x lib/zstd.h (streaming decompression)
     using ZstdStream = void;
     constexpr int kZstdWindowLogMax = 100;  // ZSTD_d_windowLogMax in the zstd 1.x API.
+    constexpr int kZstdWindowTooLarge = 16;  // ZSTD_error_frameParameter_windowTooLarge.
     struct ZstdInBuffer {
       const void* src;
       std::size_t size;
@@ -231,6 +236,7 @@ namespace uos::rt::detail::fetch {
       std::size_t (*setParameter)(void*, int, int) = nullptr;
       std::size_t (*decompressStream)(void*, ZstdOutBuffer*, ZstdInBuffer*) = nullptr;
       unsigned (*isError)(std::size_t) = nullptr;
+      int (*getErrorCode)(std::size_t) = nullptr;
     };
 
 #endif
@@ -251,7 +257,7 @@ namespace uos::rt::detail::fetch {
         if (!resolveSymbol(library, loaded.createDStream, "ZSTD_createDStream") || !resolveSymbol(library, loaded.freeDStream, "ZSTD_freeDStream") ||
             !resolveSymbol(library, loaded.initDStream, "ZSTD_initDStream") || !resolveSymbol(library, loaded.setParameter, "ZSTD_DCtx_setParameter") ||
             !resolveSymbol(library, loaded.decompressStream, "ZSTD_decompressStream") ||
-            !resolveSymbol(library, loaded.isError, "ZSTD_isError"))
+            !resolveSymbol(library, loaded.isError, "ZSTD_isError") || !resolveSymbol(library, loaded.getErrorCode, "ZSTD_getErrorCode"))
           return std::nullopt;
         return loaded;
       }();
@@ -275,7 +281,7 @@ namespace uos::rt::detail::fetch {
 
       void write(std::string_view input, std::string& out) override {
         if (input.empty()) return;
-        if (!budget_.feed(input.size())) decompressionFailed("ZstdDecompressionError", url_);
+        if (!budget_.feed(input.size())) decompressionFailed("ResponseBodyTooLarge", url_);
         received_ = true;
         ZstdInBuffer in{input.data(), input.size(), 0};
         for (;;) {
@@ -283,7 +289,8 @@ namespace uos::rt::detail::fetch {
           ZstdOutBuffer target{buffer, std::min(sizeof buffer, budget_.remainingOutput() + 1), 0};
           const auto before = in.pos;
           const std::size_t result = api_.decompressStream(stream_, &target, &in);
-          if (api_.isError(result) || !budget_.advance(in.pos - before, target.pos)) decompressionFailed("ZstdDecompressionError", url_);
+          if (api_.isError(result)) decompressionFailed(api_.getErrorCode(result) == kZstdWindowTooLarge ? "ResponseBodyTooLarge" : "ZstdDecompressionError", url_);
+          if (!budget_.advance(in.pos - before, target.pos)) decompressionFailed("ResponseBodyTooLarge", url_);
           out.append(reinterpret_cast<const char*>(buffer), target.pos);
           frameOpen_ = result != 0;
           if (in.pos == in.size && target.pos < target.size) return;
