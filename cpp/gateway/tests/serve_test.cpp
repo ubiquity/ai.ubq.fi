@@ -49,8 +49,8 @@ namespace queue=uos::cache::prompt_analytics_queue;
 
 namespace {
   void prepareStartupFixture(const std::string& directory) {
-    const auto root = rt::path::resolve(rt::path::dirname(__FILE__), "../../..");
-    const auto inputs = rt::path::join(root, rt::process::platform == "darwin" ? "tools/native-kv/inputs-darwin-arm64.json" : "tools/native-kv/inputs.json");
+    const auto nativeKv = rt::path::resolve(rt::path::dirname(__FILE__), "../packaging/native-kv");
+    const auto inputs = rt::path::join(nativeKv, rt::process::platform == "darwin" ? "inputs-darwin-arm64.json" : "inputs.json");
     const auto manifest = rt::fs::readFileSync(inputs, "utf8");
     const auto hash = [](std::string_view value) { return rt::crypto::createHash("sha256").update(value).digest("hex"); };
     // The C++ loader verifies the binding and uses its already linked KV backend.
