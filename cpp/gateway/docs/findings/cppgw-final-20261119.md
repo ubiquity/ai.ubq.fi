@@ -504,7 +504,19 @@ supervisor evidence file. The target host's enforcement remains unverified.
 
 ## Post-fix fuzz replay
 
-The workflow command above is running from the clean `3946c4a3` checkout.
-For `regex`, the 300-second campaign passed with 305 observed seconds,
-3,053 corpus files, one classified fork-parent leak and zero harness findings.
-The other four post-fix campaigns are in progress.
+The workflow command above is running from the clean checkout of
+`3946c4a3227fd8966130010b810de25c689a1498`, tree
+`c053a41ed19f107e88c1977e4906313c9c3e2f13`. The receipts are under
+`/tmp/cppgw-final-20261119/identity-final.THqVkvsc/fuzz`. The first three
+campaigns passed with 300 seconds requested, four jobs, one classified
+fork-parent leak each and zero harness findings.
+
+| Harness | Build (s) | Observed fuzzing (s) | Corpus files |
+| ------- | --------: | -------------------: | -----------: |
+| regex   |    98.425 |                  305 |        3,053 |
+| kv_jsc  |    98.838 |                  304 |        2,286 |
+| json    |    98.097 |                  303 |        1,810 |
+
+Read the result for each target with
+`jq '{target,seconds,jobs,build_seconds,fuzzed_seconds,corpus_count,outcome,expected_fork_exit_leaks,findings}' "$out/summary.json"`.
+The HTTP request and URL replay campaigns are pending.
