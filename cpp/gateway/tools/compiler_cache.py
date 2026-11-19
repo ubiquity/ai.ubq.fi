@@ -6,14 +6,14 @@ import shutil
 import subprocess
 
 
-def launcher(*, path=None):
+def launcher():
     requested = os.environ.get("UOS_CI_COMPILER_LAUNCHER")
     if requested is None:
-        ccache = shutil.which("ccache", path=path)
+        ccache = shutil.which("ccache")
         return [os.path.abspath(ccache)] if ccache else []
     command = shlex.split(requested)
     if command:
-        executable = shutil.which(command[0], path=path)
+        executable = shutil.which(command[0])
         if not executable:
             raise ValueError(f"UOS_CI_COMPILER_LAUNCHER executable not found: {command[0]}")
         command[0] = os.path.abspath(executable)
