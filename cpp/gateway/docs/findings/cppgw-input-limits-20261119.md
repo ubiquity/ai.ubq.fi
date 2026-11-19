@@ -92,7 +92,7 @@ The timing diagnostics observed Release 16 passing binaries, three failing binar
 
 ## Acceptance runs
 
-The code under test is `577ada6b3463f6cd3c9a181877c8f13ff6ff39fa`, tree `1d3dec2e8fb331f9a17f419ce3f0b57ff55b732b`. The focused uninstrumented checks each passed **4 binaries and 62 cases**. They covered `fetch_response_library_test`, `gzip_test`, `http_test` and `regex_test`, including the corrected compatibility failures. The Release driver took 437.388 s and ASan took 601.783 s. Both receipts recorded unchanged source SHA-256 `7c4de595fe1b2e26608362c9e6f596b19834602df0843f9319d8552bc8caa6bb`.
+The first focused uninstrumented checks used `577ada6b3463f6cd3c9a181877c8f13ff6ff39fa`, tree `1d3dec2e8fb331f9a17f419ce3f0b57ff55b732b`. They each passed **4 binaries and 62 cases** and covered `fetch_response_library_test`, `gzip_test`, `http_test` and `regex_test`. The Release driver took 437.388 s and ASan took 601.783 s. Both receipts recorded unchanged source SHA-256 `7c4de595fe1b2e26608362c9e6f596b19834602df0843f9319d8552bc8caa6bb`.
 
 ```sh
 bash "$scratch/run-smoke.sh" release 1 '^tests/(legacy/fetch_response_library|rt/(gzip|http|regex))_test\.cpp$'
@@ -101,7 +101,9 @@ bash "$scratch/run-shards.sh" release 2
 bash "$scratch/run-shards.sh" asan 2
 ```
 
-The smoke wrapper uses the driver with only the registered test closures and every runtime object. `run-shards.sh` invokes `bash "$scratch/run-gate.sh" "$profile" 2 --shard "$shard/4"` for shards 1 through 4 in each profile. It keeps each `driver.log`, `results.tsv` and `receipt.json` in `final-<profile>-<shard>`. The full matrix is in progress.
+The smoke wrapper uses the driver with only the registered test closures and every runtime object. `run-shards.sh` invokes `bash "$scratch/run-gate.sh" "$profile" 2 --shard "$shard/4"` for shards 1 through 4 in each profile. It keeps each `driver.log`, `results.tsv` and `receipt.json` in `final-<profile>-<shard>`.
+
+The first full Release shard observed 112 of 113 binaries and 1,197 of 1,198 cases passing. The sole failure was the stored Sentinel base64 compatibility case described above. The matrix restarted after that fix. The new code commit is `36fc3ddaf898ee0573cbd88a5b00a15da5543753`, tree `4bc704e799797a1fa77f3f7087f584d7d02b4169`. Its Release shard 1 passed **113 binaries and 1,199 cases**, with unchanged source SHA-256 `68b151c9a6e7cdb80860d0df9e01b563a1caa6809d048d19e72d9a10d7a397f6`. Compile took 12.066 s and link and test took 29.744 s. The other shards are in progress.
 
 ## Committed review
 
@@ -131,3 +133,4 @@ Lowering the enforced deadline is an explicit requirement. The revised full-imag
 
 - `docs/RUNTIME.md` and `docs/rt/regex.md` still describe several limits from the combined base, including the 2.5-second regex deadline. The current inventory lives in `SECURITY-LIMITS.md`.
 - Some provider parsers search a growing SSE buffer from the beginning on each read. The transport and runtime regex checks now bound that buffer and its lines. Changes to the provider parsing loops were outside the assigned paths.
+- The admin default-model normalizer runs its whitespace regex before validating against the catalog. A model field above the generic regex subject ceiling can therefore reach the generic HTTP 500 handler instead of the route’s usual validation response. This path was identified by source inspection. [Normalizer](../../src/admin/api_keys.cpp#L260) · [Admin defaults caller](../../src/admin/defaults.cpp#L70)
