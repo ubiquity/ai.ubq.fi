@@ -105,6 +105,7 @@ namespace {
 #include "uos/rt/date.hpp"
 #include "uos/rt/env.hpp"
 #include "uos/rt/json.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/number.hpp"
 #include "uos/rt/regex.hpp"
 #include "uos/rt/string.hpp"
@@ -1116,6 +1117,26 @@ TEST("brief output parsing accepts only a grounded {about,status} object") {
   EXPECT(!parseSupervisorBriefOutput(json::value(R"({"about":"only one field"})")).has_value());
   EXPECT(!parseSupervisorBriefOutput(json::value("not json at all")).has_value());
   EXPECT(!parseSupervisorBriefOutput(json::value(nullptr)).has_value());
+}
+
+ASYNC_TEST("the brief route rejects oversized source and thread IDs with the normal errors") {
+  IsolatedEnvironment isolated;
+  const std::string oversized(rt::limits::kRegexSubjectBytes + 1, 'x');
+  const std::array keys{"source", "id"};
+  for (const auto key : keys) {
+    json::object payload{{"source", "local"}, {"id", "thread-1"}};
+    payload[key] = oversized;
+    rt::RequestInit init;
+    init.method = "POST";
+    init.body = rt::jsonStringify(payload);
+    const rt::Request request("http://localhost/admin/codex/supervisor/brief", init);
+    auto handling = handleAdminCodexSupervisorBrief(request);
+    const auto response = co_await std::move(handling);
+    EXPECT_EQ(response.status(), 400);
+    const auto body = co_await response.json();
+    EXPECT_EQ(rt::getString(body.at("error"), "message"),
+              std::string_view(key) == "source" ? "Invalid supervisor source id" : "Invalid thread id");
+  }
 }
 
 ASYNC_TEST("the brief route stays behind admin auth in the real router") {

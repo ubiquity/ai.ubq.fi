@@ -91,7 +91,9 @@ namespace {
     return std::nullopt;
   }
   std::optional<std::string> normalizeImageMediaType(const std::string& value) {
-    const auto mediaType = rt::toLowerCase(rt::trim(rt::split(value, ";", 1).front()));
+    const auto trimmed = rt::trim(std::string_view(value).substr(0, value.find(';')));
+    if (trimmed.size() > rt::limits::kIcuInputBytes) return std::nullopt;
+    const auto mediaType = rt::toLowerCase(trimmed);
     for (const auto& [alias, normalized] : IMAGE_MEDIA_TYPE_ALIASES) if (mediaType == alias) return std::string(normalized);
     return std::nullopt;
   }
@@ -137,14 +139,14 @@ namespace {
   json::value parseMultipartInteger(const rt::FormValue& value) {
     if (const auto* string = std::get_if<std::string>(&value)) {
       const auto normalized = rt::trim(*string); static const rt::Regex pattern(R"(^(?:0|[1-9]\d*)$)", "u");
-      if (pattern.test(normalized)) return rt::makeNumber(rt::stringToNumber(normalized));
+      if (normalized.size() <= rt::limits::kRegexSubjectBytes && pattern.test(normalized)) return rt::makeNumber(rt::stringToNumber(normalized));
     }
     return multipartValue(value);
   }
   json::value parseMultipartNumber(const rt::FormValue& value) {
     if (const auto* string = std::get_if<std::string>(&value)) {
       const auto normalized = rt::trim(*string); static const rt::Regex pattern(R"(^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$)", "u");
-      if (pattern.test(normalized)) { const auto parsed = rt::stringToNumber(normalized); if (rt::Number::isFinite(parsed)) return rt::makeNumber(parsed); }
+      if (normalized.size() <= rt::limits::kRegexSubjectBytes && pattern.test(normalized)) { const auto parsed = rt::stringToNumber(normalized); if (rt::Number::isFinite(parsed)) return rt::makeNumber(parsed); }
     }
     return multipartValue(value);
   }
