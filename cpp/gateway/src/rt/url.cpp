@@ -120,7 +120,9 @@ namespace uos::rt {
     ada::result<ada::url_aggregator> parseUrl(std::string_view input, const ada::url_aggregator* base = nullptr) {
       if (!boundedUrl(input)) return tl::unexpected(ada::errors::type_error);
       std::string storage;
-      auto parsed = ada::parse(usv(input, storage), base);
+      const auto prepared = usv(input, storage);
+      if (!storage.empty() && !boundedUrl(prepared)) return tl::unexpected(ada::errors::type_error);
+      auto parsed = ada::parse(prepared, base);
       if (parsed && (!validHost(*parsed) || !detail::boundedUrlQuery(parsed->get_search()))) return tl::unexpected(ada::errors::type_error);
       return parsed;
     }
@@ -251,8 +253,11 @@ namespace uos::rt {
     checkQueryOperands(name, value);
     if (size() == limits::kUrlQueryPairs) throw TypeError("URL search parameters exceed limit");
     std::string keyStorage, valueStorage;
+    name = usv(name, keyStorage);
+    value = usv(value, valueStorage);
+    checkQueryOperands(name, value);
     auto candidate = data();
-    candidate.append(usv(name, keyStorage), usv(value, valueStorage));
+    candidate.append(name, value);
     if (!detail::boundedUrlQuery(candidate.to_string())) throw TypeError("URL search parameters exceed limit");
     *params_ = std::move(candidate);
     update();
@@ -301,8 +306,11 @@ namespace uos::rt {
   void URLSearchParams::set(std::string_view name, std::string_view value) {
     checkQueryOperands(name, value);
     std::string keyStorage, valueStorage;
+    name = usv(name, keyStorage);
+    value = usv(value, valueStorage);
+    checkQueryOperands(name, value);
     auto candidate = data();
-    candidate.set(usv(name, keyStorage), usv(value, valueStorage));
+    candidate.set(name, value);
     if (!detail::boundedUrlQuery(candidate.to_string())) throw TypeError("URL search parameters exceed limit");
     *params_ = std::move(candidate);
     update();
@@ -438,9 +446,11 @@ namespace uos::rt {
   std::string URL::hash() const { return url_ ? std::string(url_->get_hash()) : std::string{}; }
 
   void URL::setComponent(std::string_view value, bool (ada::url_aggregator::*setter)(std::string_view), bool checkHost) {
-    if (!url_ || value.size() > (checkHost ? limits::kUrlAuthorityBytes : limits::kUrlBytes)) return;
+    const auto limit = checkHost ? limits::kUrlAuthorityBytes : limits::kUrlBytes;
+    if (!url_ || value.size() > limit) return;
     std::string storage;
     const auto input = usv(value, storage);
+    if (input.size() > limit) return;
     if (checkHost) {
       auto candidate = *url_;
       if (!(candidate.*setter)(input) || !validHost(candidate)) return;
@@ -468,8 +478,10 @@ namespace uos::rt {
   void URL::search(std::string_view value) {
     if (!url_ || !detail::boundedUrlQuery(value)) return;
     std::string storage;
+    const auto input = usv(value, storage);
+    if (input.size() > limits::kUrlQueryBytes + 1) return;
     auto candidate = *url_;
-    candidate.set_search(usv(value, storage));
+    candidate.set_search(input);
     if (!detail::boundedUrlQuery(candidate.get_search())) return;
     *url_ = std::move(candidate);
     refreshRecord();
@@ -479,7 +491,9 @@ namespace uos::rt {
   void URL::hash(std::string_view value) {
     if (!url_ || value.size() > limits::kUrlBytes) return;
     std::string storage;
-    url_->set_hash(usv(value, storage));
+    const auto input = usv(value, storage);
+    if (input.size() > limits::kUrlBytes) return;
+    url_->set_hash(input);
     refreshRecord();
   }
 
@@ -489,17 +503,20 @@ namespace uos::rt {
     if (resolved.size() > limits::kUrlAuthorityBytes) throw NodeURLError("File URL path exceeds limit", "ERR_INVALID_FILE_URL_PATH");
     if (path.ends_with('/') && !resolved.ends_with('/')) resolved += '/';
     std::string storage;
-    return URL("file://" + ada::unicode::percent_encode(usv(resolved, storage), filePathEscapes.data()));
+    const auto input = usv(resolved, storage);
+    if (input.size() > limits::kUrlAuthorityBytes) throw NodeURLError("File URL path exceeds limit", "ERR_INVALID_FILE_URL_PATH");
+    return URL("file://" + ada::unicode::percent_encode(input, filePathEscapes.data()));
   }
 
   std::string fileURLToPath(const URL& url) {
     if (url.protocol() != "file:") throw NodeURLError("The URL must be of scheme file", "ERR_INVALID_URL_SCHEME");
     if (!url.hostname().empty()) throw NodeURLError("File URL host must be \"localhost\" or empty on linux", "ERR_INVALID_FILE_URL_HOST");
     const std::string pathname = url.pathname();
-    if (pathname.size() > limits::kUrlAuthorityBytes) throw NodeURLError("File URL path exceeds limit", "ERR_INVALID_FILE_URL_PATH");
+    if (pathname.size() > 3 * limits::kUrlAuthorityBytes) throw NodeURLError("File URL path exceeds limit", "ERR_INVALID_FILE_URL_PATH");
     if (pathname.find("%2f") != std::string::npos || pathname.find("%2F") != std::string::npos)
       throw NodeURLError("File URL path must not include encoded / characters", "ERR_INVALID_FILE_URL_PATH");
     std::string decoded = ada::unicode::percent_decode(pathname, pathname.find('%'));
+    if (decoded.size() > limits::kUrlAuthorityBytes) throw NodeURLError("File URL path exceeds limit", "ERR_INVALID_FILE_URL_PATH");
     return isUtf8(decoded) ? std::move(decoded) : std::string{};
   }
 
