@@ -1,5 +1,7 @@
 #pragma once
 
+#include "uos/rt/limits.hpp"
+
 #include <array>
 #include <chrono>
 #include <cstddef>
@@ -40,6 +42,7 @@ namespace uos::rt::regex_detail {
     bool fullUnicode() const { return unicode || unicodeSets; }
     std::uint32_t captureCount = 0;
     std::size_t registerCount = 0;
+    std::size_t subjectBytes = limits::kRegexSubjectBytes;
     std::vector<NamedGroup> names;
     Bytecode bytecode;
     // String.prototype.split searches even if the input regex was sticky.
@@ -48,7 +51,7 @@ namespace uos::rt::regex_detail {
 
   struct Limits {
     using Clock = std::chrono::steady_clock;
-    Clock::time_point deadline = Clock::now() + std::chrono::milliseconds(2500);
+    Clock::time_point deadline = Clock::now() + limits::kRegexDeadline;
     std::uintptr_t stackFloor = 0;
     // libregexp calls the hook once per 10,000 backtracking/loop polls.
     unsigned pollsRemaining = 4096;

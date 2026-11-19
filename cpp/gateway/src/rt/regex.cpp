@@ -30,7 +30,7 @@ namespace uos::rt {
     // UTF-16 code units plus a checkpoint every 64 units for mapping indices back to bytes.
     class Subject {
     public:
-      explicit Subject(std::string_view bytes) : bytes_(bytes), ascii_(isAscii(bytes)) {
+      Subject(std::string_view bytes, const Program& program) : bytes_(bytes), ascii_(checkAscii(bytes, program.subjectBytes)) {
         if (ascii_) {
           length_ = bytes.size();
           return;
@@ -96,6 +96,11 @@ namespace uos::rt {
       }
 
     private:
+      static bool checkAscii(std::string_view bytes, std::size_t maxBytes) {
+        if (bytes.size() > maxBytes) throw RangeError("regular expression subject is too large");
+        return isAscii(bytes);
+      }
+
       struct Checkpoint {
         std::size_t index;
         std::size_t byte;
@@ -156,14 +161,14 @@ namespace uos::rt {
     }
 
     std::optional<RegexMatch> execWith(const Program& program, std::string_view input, std::size_t& lastIndex) {
-      Subject subject(input);
+      Subject subject(input, program);
       Matcher matcher(program);
       if (!builtinExec(program, matcher, subject, lastIndex)) return std::nullopt;
       return buildMatch(program, matcher.captures(), subject, input);
     }
 
     bool testWith(const Program& program, std::string_view input, std::size_t& lastIndex) {
-      Subject subject(input);
+      Subject subject(input, program);
       Matcher matcher(program);
       return builtinExec(program, matcher, subject, lastIndex);
     }
@@ -234,7 +239,7 @@ namespace uos::rt {
 
     // RegExp.prototype[@@replace]: all matches are found first, then callbacks run in order.
     std::string replaceWith(const Program& program, std::string_view input, std::size_t& lastIndex, std::string_view replacement, const RegexReplacer* replacer) {
-      Subject subject(input);
+      Subject subject(input, program);
       Matcher matcher(program);
       std::size_t width = 2 * (static_cast<std::size_t>(program.captureCount) + 1);
       std::vector<std::size_t> found;
@@ -268,7 +273,7 @@ namespace uos::rt {
 
     std::optional<std::vector<std::string>> matchGlobalWith(const Program& program, std::string_view input, std::size_t& lastIndex) {
       if (!program.global) throw std::logic_error("rt::matchGlobal: the regex has no g flag; use rt::match");
-      Subject subject(input);
+      Subject subject(input, program);
       Matcher matcher(program);
       std::vector<std::string> out;
       lastIndex = 0;
@@ -284,7 +289,7 @@ namespace uos::rt {
     template <class Piece, class OnCaptures> std::vector<Piece> splitWith(const Program& program, std::string_view input, std::uint32_t limit, OnCaptures&& onCaptures) {
       std::vector<Piece> out;
       if (limit == 0) return out;
-      Subject subject(input);
+      Subject subject(input, program);
       Matcher matcher(program);
       std::size_t size = subject.length();
       if (size == 0) {
@@ -373,7 +378,7 @@ namespace uos::rt {
   std::vector<RegexMatch> matchAll(std::string_view input, const Regex& re) {
     const Program& program = re.program();
     if (!program.global) throw TypeError("String.prototype.matchAll argument must not be a non-global regular expression");
-    Subject subject(input);
+    Subject subject(input, program);
     Matcher matcher(program);
     std::vector<RegexMatch> out;
     std::size_t lastIndex = re.lastIndex;
@@ -420,7 +425,7 @@ namespace uos::rt {
 
   std::int64_t search(std::string_view input, const Regex& re) {
     const Program& program = re.program();
-    Subject subject(input);
+    Subject subject(input, program);
     Matcher matcher(program);
     std::size_t lastIndex = 0;
     if (!builtinExec(program, matcher, subject, lastIndex)) return -1;

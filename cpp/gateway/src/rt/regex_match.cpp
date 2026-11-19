@@ -18,7 +18,7 @@ namespace uos::rt::regex_detail {
     if (length > static_cast<std::size_t>(std::numeric_limits<int>::max() >> shift)) throw RangeError("regular expression subject is too large");
     if (start > length) return false;
     // Also check the shared deadline between searches that are individually too short to poll.
-    if (++searches_ % 256 == 0 && Limits::Clock::now() >= limits_.deadline) throw RangeError("regular expression execution limit exceeded");
+    if (searches_++ % 256 == 0 && Limits::Clock::now() >= limits_.deadline) throw RangeError("regular expression execution limit exceeded");
     const auto* bytes = static_cast<const std::uint8_t*>(subject);
     const auto* bytecode = splitting && program_.splitBytecode ? program_.splitBytecode.get() : program_.bytecode.get();
     auto* registers = registers_ ? registers_.get() : inlineRegisters_.data();

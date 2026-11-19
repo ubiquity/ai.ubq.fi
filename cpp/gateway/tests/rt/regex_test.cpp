@@ -21,6 +21,7 @@
 #include "uos/rt/regex.hpp"
 
 #include "uos/rt/error.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/prelude.hpp"
 #include "uos/rt/test.hpp"
 
@@ -639,7 +640,7 @@ TEST("construction: SyntaxError text, flags, limits") {
   for (int i = 0; i < 254; ++i) captures += "()";
   EXPECT_EQ(rt::Regex(captures).captureCount(), 254u);
   EXPECT_THROWS_MESSAGE(rt::Regex(captures + "()"), rt::SyntaxError, "too many captures");
-  while (captures.size() < 65536) captures += "()";
+  while (captures.size() < rt::limits::kRegexPatternBytes) captures += "()";
   EXPECT_THROWS_MESSAGE(rt::Regex(captures), rt::SyntaxError, "too many captures");
   EXPECT_THROWS_MESSAGE(rt::Regex(captures + "()"), rt::RangeError, "regular expression pattern is too large");
   const std::string nestedCaptures = std::string(500, '(') + std::string(500, ')');
@@ -658,8 +659,8 @@ TEST("construction: SyntaxError text, flags, limits") {
   for (int i = 0; i < 40; ++i) nested += "(?:";
   EXPECT(rt::Regex(nested + "x" + std::string(40, ')')).test("x"));
   nested.clear();
-  for (int i = 0; i < 2000; ++i) nested += "(?:";
-  EXPECT_THROWS_MESSAGE(rt::Regex(nested + "x" + std::string(2000, ')')), rt::RangeError, "stack overflow");
+  for (int i = 0; i < 1000; ++i) nested += "(?:";
+  EXPECT_THROWS_MESSAGE(rt::Regex(nested + "x" + std::string(1000, ')')), rt::RangeError, "stack overflow");
 #endif
 }
 
@@ -832,14 +833,14 @@ TEST("re-entrancy: a callback may use the regex it is called from") {
   EXPECT_EQ(agree.load(), 400);
 }
 
-TEST("backtracking memory: deep searches give up where JavaScriptCore does") {
+TEST("long backtracking searches retain accepted inputs and reject oversized subjects") {
   // Bun: /^(?:a|b)*$/.test("a".repeat(1e6)) is true, with 2e6 it is false (backtracking memory).
   static const rt::Regex alternation("^(?:a|b)*$", "");
   EXPECT(alternation.test(std::string(1000000, 'a')));
 #if 0  // Original Bun behavior on an exhausted search.
   EXPECT(!alternation.test(std::string(2000000, 'a')));
 #else
-  EXPECT_THROWS_MESSAGE(alternation.test(std::string(2000000, 'a')), rt::RangeError, "regular expression memory limit exceeded");
+  EXPECT_THROWS_MESSAGE(alternation.test(std::string(2000000, 'a')), rt::RangeError, "regular expression subject is too large");
 #endif
 #if 0  // Original Bun behavior for a long character-class repeat.
   // Single-character repeats keep no per-character state and have no such limit.
@@ -847,8 +848,21 @@ TEST("backtracking memory: deep searches give up where JavaScriptCore does") {
 #else
   const rt::Regex characterClass("^[ab]*$");
   EXPECT(characterClass.test(std::string(1000000, 'a')));
-  EXPECT_THROWS_MESSAGE(characterClass.test(std::string(4000000, 'a')), rt::RangeError, "regular expression memory limit exceeded");
+  EXPECT_THROWS_MESSAGE(characterClass.test(std::string(4000000, 'a')), rt::RangeError, "regular expression subject is too large");
 #endif
+}
+
+TEST("regex pattern and subject byte limits admit their exact boundaries") {
+  std::string pattern(rt::limits::kRegexPatternBytes, 'a');
+  EXPECT(rt::Regex(pattern).test(pattern));
+  pattern.push_back('a');
+  EXPECT_THROWS_MESSAGE(rt::Regex(pattern), rt::RangeError, "regular expression pattern is too large");
+
+  const rt::Regex anchored("^a");
+  std::string subject(rt::limits::kRegexSubjectBytes, 'a');
+  EXPECT(anchored.test(subject));
+  subject.push_back('a');
+  EXPECT_THROWS_MESSAGE(anchored.test(subject), rt::RangeError, "regular expression subject is too large");
 }
 
 TEST("execution budget rejects an unfinished match") {
