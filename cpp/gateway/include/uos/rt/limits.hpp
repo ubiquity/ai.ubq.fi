@@ -9,6 +9,9 @@ namespace uos::rt::limits {
   inline constexpr std::size_t kHttpHeaderFields = 256;
   inline constexpr std::size_t kHttpChunkLineBytes = 4 * 1024;
   inline constexpr std::size_t kHttpBodyBytes = 16 * 1024 * 1024;
+  inline constexpr std::size_t kDecompressionRatio = 1024;
+  inline constexpr std::size_t kDecompressionRatioSlackBytes = 1024 * 1024;
+  inline constexpr int kZstdWindowLog = 24;
 
   // Live sideband already caps messages at 4 MiB.
   inline constexpr std::size_t kWebSocketMessageBytes = 16 * 1024 * 1024;
@@ -25,6 +28,8 @@ namespace uos::rt::limits {
   inline constexpr std::size_t kImageEditInputBytes = 50 * 1024 * 1024;
   inline constexpr std::size_t kImageEditJsonBytes = ((kImageEditInputBytes + 2) / 3) * 4 + 1024 * 1024;
   inline constexpr std::size_t kImageEditMultipartBytes = 64 * 1024 * 1024;
+  // Stored replay envelopes can exceed the ordinary HTTP body limit.
+  inline constexpr std::size_t kStoredGzipBytes = 64 * 1024 * 1024;
 
   // Covers image data and the smaller base64 envelopes used by stored captures.
   inline constexpr std::size_t kBase64DecodedBytes = kImageEditInputBytes;

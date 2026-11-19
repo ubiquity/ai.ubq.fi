@@ -3,6 +3,7 @@
 // the retained SDK comparison declares and resolves its stable C entry points.
 // A coding unavailable in that SDK path is left out of Accept-Encoding.
 #include "fetch_transport_internal.hpp"
+#include "decompression_budget.hpp"
 
 #include "uos/rt/gzip.hpp"
 
@@ -13,6 +14,7 @@
 #include <dlfcn.h>
 #endif
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <span>
@@ -63,6 +65,7 @@ namespace uos::rt::detail::fetch {
 
       void write(std::string_view input, std::string& out) override {
         if (input.empty()) return;
+        if (!budget_.feed(input.size())) decompressionFailed("ZlibError", url_);
         try {
           if (!inflater_) {
             gzip::InflateOptions options;
@@ -76,7 +79,11 @@ namespace uos::rt::detail::fetch {
             inflater_.emplace(options);
           }
           inflater_->write(bytesOf(input));
-          while (const std::optional<std::span<const std::uint8_t>> piece = inflater_->read()) out.append(reinterpret_cast<const char*>(piece->data()), piece->size());
+          budget_.advance(input.size(), 0);
+          while (const auto piece = inflater_->read()) {
+            if (!budget_.advance(0, piece->size())) decompressionFailed("ZlibError", url_);
+            out.append(reinterpret_cast<const char*>(piece->data()), piece->size());
+          }
         } catch (const gzip::InflateError&) {
           decompressionFailed("ZlibError", url_);
         }
@@ -95,6 +102,7 @@ namespace uos::rt::detail::fetch {
       bool gzip_;
       std::string url_;
       std::optional<gzip::Inflater> inflater_;
+      DecompressionBudget budget_;
     };
 
     // ---- brotli -----------------------------------------------------------------
@@ -152,6 +160,7 @@ namespace uos::rt::detail::fetch {
       BrotliDecoder& operator=(const BrotliDecoder&) = delete;
 
       void write(std::string_view input, std::string& out) override {
+        if (!budget_.feed(input.size())) decompressionFailed("BrotliDecompressionError", url_);
         if (input.empty() || done_) return;
         received_ = true;
         const auto* next = reinterpret_cast<const std::uint8_t*>(input.data());
@@ -159,10 +168,12 @@ namespace uos::rt::detail::fetch {
         for (;;) {
           std::uint8_t buffer[65536];
           std::uint8_t* cursor = buffer;
-          std::size_t room = sizeof buffer;
+          std::size_t room = std::min(sizeof buffer, budget_.remainingOutput() + 1);
+          const std::size_t before = available;
           const int result = api_.decompressStream(state_, &available, &next, &room, &cursor, nullptr);
-          out.append(reinterpret_cast<const char*>(buffer), static_cast<std::size_t>(cursor - buffer));
-          if (result == kBrotliError) decompressionFailed("BrotliDecompressionError", url_);
+          const auto produced = static_cast<std::size_t>(cursor - buffer);
+          if (result == kBrotliError || !budget_.advance(before - available, produced)) decompressionFailed("BrotliDecompressionError", url_);
+          out.append(reinterpret_cast<const char*>(buffer), produced);
           if (result == kBrotliSuccess) {
             done_ = true;
             return;
@@ -179,6 +190,7 @@ namespace uos::rt::detail::fetch {
       const BrotliApi& api_;
       std::string url_;
       BrotliState* state_;
+      DecompressionBudget budget_;
       bool received_ = false;
       bool done_ = false;
     };
@@ -189,16 +201,19 @@ namespace uos::rt::detail::fetch {
     using ZstdInBuffer = ::ZSTD_inBuffer;
     using ZstdOutBuffer = ::ZSTD_outBuffer;
     using ZstdStream = ::ZSTD_DStream;
+    constexpr auto kZstdWindowLogMax = ZSTD_d_windowLogMax;
     struct ZstdApi {
       decltype(&::ZSTD_createDStream) createDStream = &::ZSTD_createDStream;
       decltype(&::ZSTD_freeDStream) freeDStream = &::ZSTD_freeDStream;
       decltype(&::ZSTD_initDStream) initDStream = &::ZSTD_initDStream;
+      decltype(&::ZSTD_DCtx_setParameter) setParameter = &::ZSTD_DCtx_setParameter;
       decltype(&::ZSTD_decompressStream) decompressStream = &::ZSTD_decompressStream;
       decltype(&::ZSTD_isError) isError = &::ZSTD_isError;
     };
 #else
     // zstd 1.x lib/zstd.h (streaming decompression)
     using ZstdStream = void;
+    constexpr int kZstdWindowLogMax = 100;  // ZSTD_d_windowLogMax in the zstd 1.x API.
     struct ZstdInBuffer {
       const void* src;
       std::size_t size;
@@ -213,6 +228,7 @@ namespace uos::rt::detail::fetch {
       void* (*createDStream)() = nullptr;
       std::size_t (*freeDStream)(void*) = nullptr;
       std::size_t (*initDStream)(void*) = nullptr;
+      std::size_t (*setParameter)(void*, int, int) = nullptr;
       std::size_t (*decompressStream)(void*, ZstdOutBuffer*, ZstdInBuffer*) = nullptr;
       unsigned (*isError)(std::size_t) = nullptr;
     };
@@ -233,7 +249,8 @@ namespace uos::rt::detail::fetch {
         if (!library) return std::nullopt;
         ZstdApi loaded;
         if (!resolveSymbol(library, loaded.createDStream, "ZSTD_createDStream") || !resolveSymbol(library, loaded.freeDStream, "ZSTD_freeDStream") ||
-            !resolveSymbol(library, loaded.initDStream, "ZSTD_initDStream") || !resolveSymbol(library, loaded.decompressStream, "ZSTD_decompressStream") ||
+            !resolveSymbol(library, loaded.initDStream, "ZSTD_initDStream") || !resolveSymbol(library, loaded.setParameter, "ZSTD_DCtx_setParameter") ||
+            !resolveSymbol(library, loaded.decompressStream, "ZSTD_decompressStream") ||
             !resolveSymbol(library, loaded.isError, "ZSTD_isError"))
           return std::nullopt;
         return loaded;
@@ -247,7 +264,10 @@ namespace uos::rt::detail::fetch {
     public:
       ZstdDecoder(const ZstdApi& api, std::string url) : api_(api), url_(std::move(url)), stream_(api.createDStream()) {
         if (!stream_) throw std::bad_alloc();
-        api_.initDStream(stream_);
+        if (api_.isError(api_.initDStream(stream_)) || api_.isError(api_.setParameter(stream_, kZstdWindowLogMax, limits::kZstdWindowLog))) {
+          api_.freeDStream(stream_);
+          decompressionFailed("ZstdDecompressionError", url_);
+        }
       }
       ~ZstdDecoder() override { api_.freeDStream(stream_); }
       ZstdDecoder(const ZstdDecoder&) = delete;
@@ -255,13 +275,15 @@ namespace uos::rt::detail::fetch {
 
       void write(std::string_view input, std::string& out) override {
         if (input.empty()) return;
+        if (!budget_.feed(input.size())) decompressionFailed("ZstdDecompressionError", url_);
         received_ = true;
         ZstdInBuffer in{input.data(), input.size(), 0};
         for (;;) {
           std::uint8_t buffer[65536];
-          ZstdOutBuffer target{buffer, sizeof buffer, 0};
+          ZstdOutBuffer target{buffer, std::min(sizeof buffer, budget_.remainingOutput() + 1), 0};
+          const auto before = in.pos;
           const std::size_t result = api_.decompressStream(stream_, &target, &in);
-          if (api_.isError(result)) decompressionFailed("ZstdDecompressionError", url_);
+          if (api_.isError(result) || !budget_.advance(in.pos - before, target.pos)) decompressionFailed("ZstdDecompressionError", url_);
           out.append(reinterpret_cast<const char*>(buffer), target.pos);
           frameOpen_ = result != 0;
           if (in.pos == in.size && target.pos < target.size) return;
@@ -276,6 +298,7 @@ namespace uos::rt::detail::fetch {
       const ZstdApi& api_;
       std::string url_;
       ZstdStream* stream_;
+      DecompressionBudget budget_;
       bool received_ = false;
       bool frameOpen_ = false;
     };

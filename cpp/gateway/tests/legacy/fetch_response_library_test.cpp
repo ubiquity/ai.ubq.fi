@@ -1,6 +1,8 @@
 // Links: tests/legacy/fetch_response_library_test.cpp
 #include "src/rt/fetch_transport_internal.hpp"
+#include "src/rt/decompression_budget.hpp"
 #include "src/rt/websocket_internal.hpp"
+#include "uos/rt/gzip.hpp"
 #include "uos/rt/test.hpp"
 
 namespace {
@@ -212,4 +214,53 @@ TEST("Fetch bounds each chunk line and the trailer block") {
     offset = 0;
     EXPECT_EQ(trailerParser.decode("0\r\n" + trailers, offset, body), extra == 0 ? fetch::ChunkedDecoder::Result::done : fetch::ChunkedDecoder::Result::invalid);
   }
+}
+
+TEST("decompression budgets admit exact input, output and cumulative ratio") {
+  namespace limits = uos::rt::limits;
+  using uos::rt::detail::DecompressionBudget;
+  constexpr auto max = limits::kHttpBodyBytes;
+  DecompressionBudget bytes;
+  EXPECT(bytes.feed(max));
+  EXPECT(!bytes.feed(1));
+  EXPECT(bytes.advance(max, max));
+  EXPECT(!bytes.advance(0, 1));
+
+  DecompressionBudget ratio;
+  EXPECT(ratio.feed(2));
+  EXPECT(ratio.advance(1, limits::kDecompressionRatioSlackBytes));
+  EXPECT(ratio.advance(1, 2 * limits::kDecompressionRatio));
+  EXPECT(!ratio.advance(0, 1));
+}
+
+TEST("Fetch gzip bounds decoded bytes independently of wire size") {
+  namespace limits = uos::rt::limits;
+  for (const std::size_t extra : {0u, 1u}) {
+    const auto compressed = uos::rt::gzip::gzipSync(uos::rt::gzip::Bytes(limits::kHttpBodyBytes + extra, 'a'));
+    const std::string_view wire(reinterpret_cast<const char*>(compressed.data()), compressed.size());
+    auto decoder = fetch::contentDecoder("gzip", "http://localhost");
+    std::string out;
+    if (extra == 0) {
+      decoder->write(wire, out);
+      decoder->finish(out);
+      EXPECT_EQ(out.size(), limits::kHttpBodyBytes);
+    } else {
+      EXPECT_THROWS_MATCHING(decoder->write(wire, out), "ZlibError");
+    }
+  }
+}
+
+TEST("Fetch Brotli rejects a valid stream past the expansion budget") {
+  // Brotli 1.1.0 (-q 5) encoding of 1,048,576 and 1,100,000 ASCII 'a' bytes.
+  constexpr auto within = "\x5f\xff\xff\x0f\x40\x22\x2c\x1e\x0b\x24\xf7\xfe\x01"sv;
+  constexpr auto beyond = "\x9f\xdf\xc8\x10\x00\x24\xc2\xe2\xb1\x40\x32\x81\x21\x00"sv;
+  auto accepted = fetch::contentDecoder("br", "http://localhost");
+  std::string out;
+  accepted->write(within, out);
+  accepted->finish(out);
+  EXPECT_EQ(out.size(), uos::rt::limits::kDecompressionRatioSlackBytes);
+
+  auto rejected = fetch::contentDecoder("br", "http://localhost");
+  out.clear();
+  EXPECT_THROWS_MATCHING(rejected->write(beyond, out), "BrotliDecompressionError");
 }
