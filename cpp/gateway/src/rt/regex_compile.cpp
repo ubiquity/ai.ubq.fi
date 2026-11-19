@@ -106,6 +106,7 @@ namespace uos::rt::regex_detail {
 
     constexpr std::string_view imageDataUrl = R"(^data:([^;,]+);base64,([a-z0-9+/]*={0,2})$)";
     constexpr std::string_view standardBase64 = R"(^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$)";
+    constexpr std::string_view credentialKey = R"re(\b(?=\w*(?:key|token|secret|password))(?=(\w*))\1(?:[.-]\w*){0,16}(["']?)\s*(?=[:=]))re";
 
     std::size_t subjectBudget(Program& program, std::string_view pattern, int flags) {
       if (flags == (LRE_FLAG_IGNORECASE | LRE_FLAG_UNICODE) && (pattern == "^data:" || pattern == "^https?://" || pattern == imageDataUrl)) {
@@ -131,6 +132,8 @@ namespace uos::rt::regex_detail {
     auto program = std::make_shared<Program>();
     int mask = parseFlags(*program, flags);
     program->subjectBytes = subjectBudget(*program, pattern, mask);
+    // The fixed supervisor redaction scan took 593 ms under sanitizers.
+    if (mask == (LRE_FLAG_GLOBAL | LRE_FLAG_IGNORECASE) && pattern == credentialKey) program->matchDeadline = limits::kRegexDeadline * 3;
     program->source = escapeSource(pattern, program->unicodeSets);
     // The image data URL validator accepts tens of MiB of encoded data. Fixed-size
     // blocks avoid a backtracking entry per byte, and the lookahead commits to the

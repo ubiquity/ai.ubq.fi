@@ -43,6 +43,7 @@ namespace uos::rt::regex_detail {
     std::uint32_t captureCount = 0;
     std::size_t registerCount = 0;
     std::size_t subjectBytes = limits::kRegexSubjectBytes;
+    std::chrono::milliseconds matchDeadline = limits::kRegexDeadline;
     bool sseFraming = false;
     bool imageDataUrl = false;
     bool standardBase64 = false;
