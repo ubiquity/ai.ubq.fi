@@ -5,9 +5,9 @@
 Close the confirmed coroutine, callback and native buffer lifetime defects in the
 [area A audit](cppgw-lifetime-a-20261118.md). The integration parent is
 `aae39d0ea73e7b5678dc92c437f7da6fb32f0c06` and the audit-first merge is
-`72242018d0605061c8659961cff69d1a2daa3467`. Each commit covers one defect or closely
-related family. A row saying “this commit” refers to the Git commit that last
-changed the verdict in that row. Run `git log -p -- <this report>` to recover it.
+`72242018d0605061c8659961cff69d1a2daa3467`. Each implementation commit covers
+one defect or a closely related family. The table identifies the commits that
+recorded the fixes and the deferred design.
 
 Owned surfaces are the assigned runtime modules under `src/rt` and
 `include/uos/rt`, their existing or registered tests, and this report. TypeScript,
@@ -37,35 +37,35 @@ completes, or record the precise pending work and last passing tree.
 
 | Audit ID and site | Verdict and reason | Commit | Regression or coverage |
 | --- | --- | --- | --- |
-| A-ABORT-OWNER (`src/rt/abort.cpp`) | FIXED. `AbortController::abort` passed its member slot by reference into `signalAbort`. A listener could destroy that slot before the next once listener and final cleanup. Dispatch now owns the original signal. | This commit | `rt/abort_test`, a listener destroys the only controller. |
-| A-LOOP-TEARDOWN-OWNER (`src/rt/async.cpp`) | FIXED. Frame destructors could post under the ambient loop after the dying loop's run scope ended. Run destruction under the dying loop and discard work submitted to it during shutdown, including dispatch that would otherwise run inline. | This commit | `rt/async_test`, a destroyed frame queues a microtask while another loop is in scope. Baseline leaks the job into that loop. |
-| A-PROMISE-REACTION-CYCLE (`src/rt/async.cpp`) | LEFT. The void `all` reaction still captures its own pending source. The intrusive list releases the cycle at scoped shutdown, which never runs for the process loop. Moving the owner to a queued delivery requires the coordinated change below. | This report | Static owner trace through `all`, `react` and `settle`. |
-| A-PROMISE-GCC-AWAIT (`include/uos/rt/async.hpp`) | FIXED. `awaitOwned` and `awaitState` implicitly constructed an owning base pointer in the await full-expression. Create the Task first. | This commit | Existing Promise await and turn-count cases in `rt/async_test`. The GCC 12 rule is checked by inspection. |
-| A-PROMISE-CALLBACK-INPUT (`include/uos/rt/async.hpp`) | FIXED. The reaction was the last owner of the outcome passed by reference to a Task-returning callback. Its child now owns both the callable and the outcome through completion. Value and Promise callbacks use the same settlement path as before. | This commit | `rt/async_test`, a pending sibling reads the value after early rejection, and `then` and `catch_` read rejection reasons after suspension. |
-| A-PROMISE-REACTION-CYCLE (`include/uos/rt/async.hpp`) | LEFT. Typed adoption, callback registration and combinators have the same backedge. Tuple `all` additionally retains all input Promises in each reaction. A change at one site is insufficient to establish ownership of the combinators. | This report | Static owner trace. Existing `rt/async_test` settles inputs or runs under a scoped loop. |
-| A-GENERATOR-STEP-OWNER (`include/uos/rt/async.hpp`) | FIXED. `requestStep` eagerly enqueues the result, but the generator body deliberately keeps only a weak link. Keep the core in the returned Task so either step can still settle after the last generator handle is dropped. | This commit | `rt/async_test`, checks `next` and a queued `return_` before a timer. The baseline failure is liveness. |
-| A-GENERATOR-GCC-AWAIT (`include/uos/rt/async.hpp`) | FIXED. `delegateTo` and `forAwait` materialized owning yielded arguments in await expressions. Name the Tasks. The same review found that `runGenerator` erased its Yield argument by value. Forward the frame's own Yield instead so reference-taking bodies can use it after suspension. | This commit | Existing delegation and iteration tests plus a borrowed Yield regression in `rt/async_test`. GCC 12 expression shapes were checked by inspection. |
-| A-PROCESS-SIGNAL-CONTEXT (`src/rt/process_loop.cpp`) | FIXED. The static signal set could retain the first scoped Asio context past destruction. An Asio service for each loop now owns that loop's listeners and destroys its signal set at shutdown. | This commit | `rt/process_test`, leaves an armed registration at teardown, checks the default action, then removes the identity in a new loop. |
-| A-STREAM-GCC-AWAIT (`include/uos/rt/stream.hpp`) | FIXED. `runAsync` and `iterateStream` now name the Tasks before awaiting. The async erasure forwards a reference to the argument owned by `runAsync`. | This commit | `rt/stream_test`, a pull Task borrows its controller across suspension. Existing stream iteration covers named yields. |
-| A-PROMISE-REACTION-CYCLE (`include/uos/rt/stream.hpp`) | LEFT. Stream start, pull, cancel and tee-closed reactions still capture their own source Promise. The weak tee change removes the source-stream retention without redesigning these registrations. | This report | Static owner trace. `rt/stream_test` checks the separate abandoned-tee defect. |
-| A-STREAM-CANCEL-OWNER (`include/uos/rt/stream.hpp`) | FIXED. `cancelStreamInto` read the reader's stream slot after the synchronous cancel algorithm could empty it through `releaseLock`. Take an owning copy before closing the stream or invoking the callback. | This commit | `rt/stream_test`, cancel releases the reader while a read is pending. |
-| A-STREAM-TEE-READ-CYCLE (`include/uos/rt/stream.hpp`) | FIXED. `teeRead` held the reader and its source across an await on that source's own request. Let the branch algorithms own the tee, and use a weak link while waiting. The async algorithm wrapper already owns the cancellation callable across its await, so an active cancellation still owns the tee. The original weak fix passed the follow-up cancel replay without a separate cancellation owner. | `5a54034d` and this commit | `rt/stream_test`, checks reclamation after dropping both branches and confirms a surviving cancellation settles on source close and error. A parked Promise awaiter can still remain until loop shutdown. |
-| A-PROMISE-GCC-AWAIT (`include/uos/rt/stream.hpp`) | FIXED. `teeCancel` also converted the typed state into an owning base pointer inside its await. Use a named Task. | This commit | Existing combined cancellation and reason cases in `rt/stream_test`. The GCC 12 rule is checked by inspection. |
-| A-FETCH-CALLBACK-INPUT (`include/uos/rt/fetch.hpp`) | FIXED. A reference-taking coroutine passes the constructor constraint, but the erased by-value parameters end before the Task starts. Forward references to owned argument storage through the erasure. | This commit | `rt/fetch_test`, a callback uses both borrowed inputs after a microtask. |
-| A-FETCH-ABORT-BODY-CYCLE (`src/rt/fetch.cpp`) | FIXED. An unread HWM-zero wrapper could never reach a callback that broke its strong controller backedge. The abort listener now promotes a weak wrapper link, and wrapper destruction removes the listener. | This commit | `rt/fetch_test`, drops an unread response while its signal survives and checks both streams expire. |
-| A-FETCH-ABORT-TRANSPORT (`src/rt/fetch.cpp`) | FIXED. `sendThrough` could reject on abort while a replaced transport's virtual coroutine remained suspended on an rt Promise. Give its child Task the transport owner before calling `abortable`. The front end still rejects immediately. | This commit | `rt/fetch_test`, replaces the transport, aborts the fetch and resumes the child separately. |
-| A-FETCH-REENTRANT-FUNCTION (`src/rt/fetch.cpp`) | FIXED. Argument evaluation permitted callback invocation before the callable owner was copied. Snapshot the owner before invocation. | This commit | `rt/fetch_test`, a synchronous callback replaces the global function and reads its capture. The baseline depends on argument evaluation order. |
-| A-FETCH-CALLBACK-INPUT (`src/rt/fetch.cpp`) | FIXED. The old wrapper pinned only the function. The returned Task also retains the original request arguments through completion. | This commit | `rt/fetch_test`, same borrowed-input regression as the header site. |
-| A-MOCK-HANDLER-OWNER (`src/rt/fetch.cpp`) | FIXED. `send` recorded a request handle but returned the handler's bare Task. Neither its closure nor the actual argument slot had to survive. Preserve both in the returned Task. | This commit | `rt/fetch_test`, destroys the mock before awaiting a capturing, reference-taking handler. |
-| A-FETCH-UPLOAD-STRANDED (`src/rt/fetch_transport.cpp`) | FIXED. The integrated writer still parks on a stream Promise which socket close cannot wake. The active upload registers a one-shot close hook with a weak writer link. It releases the reader on connection close, keeping the original abort reason when applicable and discarding the synthetic reader-release rejection. The writer removes the hook on exit so pooled connections retain no upload state. | This commit | `rt/fetch_transport_test`, production transport against loopback. Separately exercises EOF before headers and an early 413 while the upload read is parked. |
-| A-FETCH-RESPONSE-STRANDED (`src/rt/fetch_transport.cpp`) | FIXED. The integrated parser still had a silent return for an aborted read when the pump owned a connection. Preserve the successful explicit-cancel return when the connection slot has been cleared. Otherwise reject with the recorded upload reason, the existing timeout, or the existing closed-socket error. | This commit | `rt/fetch_transport_test`, 200 headers arrive, then a parked response read rejects with the original upload reason. |
-| A-FETCH-NET-GCC-AWAIT (`src/rt/fetch_transport_net.cpp`) | FIXED as a portability rule. The inline Asio descriptors are non-owning and the request frame or TLS flush frame already pins the bytes. Name the five buffer descriptors before awaiting. | This commit | Existing plain and TLS fixtures in `rt/fetch_transport_test`. The GCC 12 expression-shape check is static. |
-| A-WEBSOCKET-CONTEXT (`src/rt/websocket.cpp`) | FIXED. An external WebSocket owner could retain the Asio socket after its service was destroyed, even after close delivery. Detach the native state during registry shutdown and remember its buffered count. | This commit | `rt/websocket_lifetime_test`, destroys the loop before an open and an already closed WebSocket. |
-| A-WEBSOCKET-EMIT-OWNER (`src/rt/websocket.cpp`) | FIXED. A snapshot retains listener functions but not the receiver needed to remove a later once registration. Public emit pins shared WebSocket and server receivers for that dispatch. | This commit | `rt/websocket_lifetime_test`, first listener releases the only handle before once removal. |
-| A-WEBSOCKET-UPGRADE-OWNER (`src/rt/websocket.cpp`) | FIXED. `completeUpgrade` reused server options and client tracking after calling injected hooks. Pin the server across the whole call, including the factory before any event is emitted. | This commit | `rt/websocket_lifetime_test`, factory drops the last server handle before it uses the supplied options and completes the upgrade. |
-| A-WEBSOCKET-WRITE-BUFFER (`src/rt/websocket_internal.hpp`) | FIXED. The pending entry owned the only copy of native plaintext or TLS ciphertext. `onWritten` now takes back the completion's owned bytes when the queue is still active. | This commit | `rt/websocket_lifetime_test`, forced backpressure, partial writes and cancellation. |
-| A-WEBSOCKET-CONTEXT (`src/rt/websocket_internal.hpp`) | FIXED. Both `State::socket` and `State::sender` retained the same loop-bound transport. Registry shutdown now releases both without emitting close. | This commit | Same retained-handle regression. |
-| A-WEBSOCKET-WRITE-BUFFER (`src/rt/websocket_socket.cpp`) | FIXED. `destroy` and `shutdown` clear the write queue before Asio releases its operation. Move the byte storage into the completion handler on the would-block path. | This commit | `rt/websocket_lifetime_test`. Linux's reactor cancels the wait before a userspace buffer read, so ordinary ASan cannot deterministically diagnose the baseline contract violation. |
+| A-ABORT-OWNER (`src/rt/abort.cpp`) | FIXED. `AbortController::abort` passed its member slot by reference into `signalAbort`. A listener could destroy that slot before the next once listener and final cleanup. Dispatch now owns the original signal. | `0176c8e8` | `rt/abort_test`, a listener destroys the only controller. |
+| A-LOOP-TEARDOWN-OWNER (`src/rt/async.cpp`) | FIXED. Frame destructors could post under the ambient loop after the dying loop's run scope ended. Run destruction under the dying loop and discard work submitted to it during shutdown, including dispatch that would otherwise run inline. | `427e2763` | `rt/async_test`, a destroyed frame queues a microtask while another loop is in scope. Baseline leaks the job into that loop. |
+| A-PROMISE-REACTION-CYCLE (`src/rt/async.cpp`) | LEFT. The void `all` reaction still captures its own pending source. The intrusive list releases the cycle at scoped shutdown, which never runs for the process loop. Moving the owner to a queued delivery requires the coordinated change below. | `6a998c23` | Static owner trace through `all`, `react` and `settle`. |
+| A-PROMISE-GCC-AWAIT (`include/uos/rt/async.hpp`) | FIXED. `awaitOwned` and `awaitState` implicitly constructed an owning base pointer in the await full-expression. Create the Task first. | `6567a6c8` | Existing Promise await and turn-count cases in `rt/async_test`. The GCC 12 rule is checked by inspection. |
+| A-PROMISE-CALLBACK-INPUT (`include/uos/rt/async.hpp`) | FIXED. The reaction was the last owner of the outcome passed by reference to a Task-returning callback. Its child now owns both the callable and the outcome through completion. Value and Promise callbacks use the same settlement path as before. | `22222e39` | `rt/async_test`, a pending sibling reads the value after early rejection, and `then` and `catch_` read rejection reasons after suspension. |
+| A-PROMISE-REACTION-CYCLE (`include/uos/rt/async.hpp`) | LEFT. Typed adoption, callback registration and combinators have the same backedge. Tuple `all` additionally retains all input Promises in each reaction. A change at one site is insufficient to establish ownership of the combinators. | `6a998c23` | Static owner trace. Existing `rt/async_test` settles inputs or runs under a scoped loop. |
+| A-GENERATOR-STEP-OWNER (`include/uos/rt/async.hpp`) | FIXED. `requestStep` eagerly enqueues the result, but the generator body deliberately keeps only a weak link. Keep the core in the returned Task so either step can still settle after the last generator handle is dropped. | `4b03b177` | `rt/async_test`, checks `next` and a queued `return_` before a timer. The baseline failure is liveness. |
+| A-GENERATOR-GCC-AWAIT (`include/uos/rt/async.hpp`) | FIXED. `delegateTo` and `forAwait` materialized owning yielded arguments in await expressions. Name the Tasks. The same review found that `runGenerator` erased its Yield argument by value. Forward the frame's own Yield instead so reference-taking bodies can use it after suspension. | `3848b5f1` | Existing delegation and iteration tests plus a borrowed Yield regression in `rt/async_test`. GCC 12 expression shapes were checked by inspection. |
+| A-PROCESS-SIGNAL-CONTEXT (`src/rt/process_loop.cpp`) | FIXED. The static signal set could retain the first scoped Asio context past destruction. An Asio service for each loop now owns that loop's listeners and destroys its signal set at shutdown. | `1cfb9d83` | `rt/process_test`, leaves an armed registration at teardown, checks the default action, then removes the identity in a new loop. |
+| A-STREAM-GCC-AWAIT (`include/uos/rt/stream.hpp`) | FIXED. `runAsync` and `iterateStream` now name the Tasks before awaiting. The async erasure forwards a reference to the argument owned by `runAsync`. | `448ad930` | `rt/stream_test`, a pull Task borrows its controller across suspension. Existing stream iteration covers named yields. |
+| A-PROMISE-REACTION-CYCLE (`include/uos/rt/stream.hpp`) | LEFT. Stream start, pull, cancel and tee-closed reactions still capture their own source Promise. The weak tee change removes the source-stream retention without redesigning these registrations. | `6a998c23` | Static owner trace. `rt/stream_test` checks the separate abandoned-tee defect. |
+| A-STREAM-CANCEL-OWNER (`include/uos/rt/stream.hpp`) | FIXED. `cancelStreamInto` read the reader's stream slot after the synchronous cancel algorithm could empty it through `releaseLock`. Take an owning copy before closing the stream or invoking the callback. | `f9eb14af` | `rt/stream_test`, cancel releases the reader while a read is pending. |
+| A-STREAM-TEE-READ-CYCLE (`include/uos/rt/stream.hpp`) | FIXED. `teeRead` held the reader and its source across an await on that source's own request. Let the branch algorithms own the tee, and use a weak link while waiting. The async algorithm wrapper already owns the cancellation callable across its await, so an active cancellation still owns the tee. The original weak fix passed the follow-up cancel replay without a separate cancellation owner. | `5a54034d` and `04dc8168` | `rt/stream_test`, checks reclamation after dropping both branches and confirms a surviving cancellation settles on source close and error. A parked Promise awaiter can still remain until loop shutdown. |
+| A-PROMISE-GCC-AWAIT (`include/uos/rt/stream.hpp`) | FIXED. `teeCancel` also converted the typed state into an owning base pointer inside its await. Use a named Task. | `6567a6c8` | Existing combined cancellation and reason cases in `rt/stream_test`. The GCC 12 rule is checked by inspection. |
+| A-FETCH-CALLBACK-INPUT (`include/uos/rt/fetch.hpp`) | FIXED. A reference-taking coroutine passes the constructor constraint, but the erased by-value parameters end before the Task starts. Forward references to owned argument storage through the erasure. | `d0420556` | `rt/fetch_test`, a callback uses both borrowed inputs after a microtask. |
+| A-FETCH-ABORT-BODY-CYCLE (`src/rt/fetch.cpp`) | FIXED. An unread HWM-zero wrapper could never reach a callback that broke its strong controller backedge. The abort listener now promotes a weak wrapper link, and wrapper destruction removes the listener. | `cac9928f` | `rt/fetch_test`, drops an unread response while its signal survives and checks both streams expire. |
+| A-FETCH-ABORT-TRANSPORT (`src/rt/fetch.cpp`) | FIXED. `sendThrough` could reject on abort while a replaced transport's virtual coroutine remained suspended on an rt Promise. Give its child Task the transport owner before calling `abortable`. The front end still rejects immediately. | `8e6b2404` | `rt/fetch_test`, replaces the transport, aborts the fetch and resumes the child separately. |
+| A-FETCH-REENTRANT-FUNCTION (`src/rt/fetch.cpp`) | FIXED. Argument evaluation permitted callback invocation before the callable owner was copied. Snapshot the owner before invocation. | `d0420556` | `rt/fetch_test`, a synchronous callback replaces the global function and reads its capture. The baseline depends on argument evaluation order. |
+| A-FETCH-CALLBACK-INPUT (`src/rt/fetch.cpp`) | FIXED. The old wrapper pinned only the function. The returned Task also retains the original request arguments through completion. | `d0420556` | `rt/fetch_test`, same borrowed-input regression as the header site. |
+| A-MOCK-HANDLER-OWNER (`src/rt/fetch.cpp`) | FIXED. `send` recorded a request handle but returned the handler's bare Task. Neither its closure nor the actual argument slot had to survive. Preserve both in the returned Task. | `f6c9c315` | `rt/fetch_test`, destroys the mock before awaiting a capturing, reference-taking handler. |
+| A-FETCH-UPLOAD-STRANDED (`src/rt/fetch_transport.cpp`) | FIXED. The integrated writer still parks on a stream Promise which socket close cannot wake. The active upload registers a one-shot close hook with a weak writer link. It releases the reader on connection close, keeping the original abort reason when applicable and discarding the synthetic reader-release rejection. The writer removes the hook on exit so pooled connections retain no upload state. | `52d6f720` | `rt/fetch_transport_test`, production transport against loopback. Separately exercises EOF before headers and an early 413 while the upload read is parked. |
+| A-FETCH-RESPONSE-STRANDED (`src/rt/fetch_transport.cpp`) | FIXED. The integrated parser still had a silent return for an aborted read when the pump owned a connection. Preserve the successful explicit-cancel return when the connection slot has been cleared. Otherwise reject with the recorded upload reason, the existing timeout, or the existing closed-socket error. | `d61ed783` | `rt/fetch_transport_test`, 200 headers arrive, then a parked response read rejects with the original upload reason. |
+| A-FETCH-NET-GCC-AWAIT (`src/rt/fetch_transport_net.cpp`) | FIXED as a portability rule. The inline Asio descriptors are non-owning and the request frame or TLS flush frame already pins the bytes. Name the five buffer descriptors before awaiting. | `d77b297a` | Existing plain and TLS fixtures in `rt/fetch_transport_test`. The GCC 12 expression-shape check is static. |
+| A-WEBSOCKET-CONTEXT (`src/rt/websocket.cpp`) | FIXED. An external WebSocket owner could retain the Asio socket after its service was destroyed, even after close delivery. Detach the native state during registry shutdown and remember its buffered count. | `dbe4beac` | `rt/websocket_lifetime_test`, destroys the loop before an open and an already closed WebSocket. |
+| A-WEBSOCKET-EMIT-OWNER (`src/rt/websocket.cpp`) | FIXED. A snapshot retains listener functions but not the receiver needed to remove a later once registration. Public emit pins shared WebSocket and server receivers for that dispatch. | `c37174cb` | `rt/websocket_lifetime_test`, first listener releases the only handle before once removal. |
+| A-WEBSOCKET-UPGRADE-OWNER (`src/rt/websocket.cpp`) | FIXED. `completeUpgrade` reused server options and client tracking after calling injected hooks. Pin the server across the whole call, including the factory before any event is emitted. | `c8e672ba` | `rt/websocket_lifetime_test`, factory drops the last server handle before it uses the supplied options and completes the upgrade. |
+| A-WEBSOCKET-WRITE-BUFFER (`src/rt/websocket_internal.hpp`) | FIXED. The pending entry owned the only copy of native plaintext or TLS ciphertext. `onWritten` now takes back the completion's owned bytes when the queue is still active. | `4bec40c0` | `rt/websocket_lifetime_test`, forced backpressure, partial writes and cancellation. |
+| A-WEBSOCKET-CONTEXT (`src/rt/websocket_internal.hpp`) | FIXED. Both `State::socket` and `State::sender` retained the same loop-bound transport. Registry shutdown now releases both without emitting close. | `dbe4beac` | Same retained-handle regression. |
+| A-WEBSOCKET-WRITE-BUFFER (`src/rt/websocket_socket.cpp`) | FIXED. `destroy` and `shutdown` clear the write queue before Asio releases its operation. Move the byte storage into the completion handler on the would-block path. | `4bec40c0` | `rt/websocket_lifetime_test`. Linux's reactor cancels the wait before a userspace buffer read, so ordinary ASan cannot deterministically diagnose the baseline contract violation. |
 
 ### Deferred Promise reaction design
 
@@ -185,7 +185,7 @@ bash "$scratch/run-baseline.sh"
 | --- | --- |
 | Abort dispatch after the last controller is destroyed | ASan heap-use-after-free |
 | Cancellation after a callback releases the active reader | UBSan null member call |
-| Pending generator next and return | Both steps can remain pending, caught by the liveness assertion |
+| Pending generator next and return | The step liveness assertion failed |
 | Promise callback borrowing a settled outcome | ASan heap-use-after-free |
 | Loop teardown under an ambient loop | The queued job reaches the outer loop, caught by assertions |
 | Process signal set retained across loops | ASan heap-use-after-free |
@@ -225,24 +225,76 @@ simplification are excluded from the final gate results.
 
 ### Final gates
 
-Official shard receipts are pending.
+All five ordinary `ci-build.sh` runs used candidate
+`8f972f3e6d25c06b74616e9aa606642fc957e323`, tree
+`bc89c308a6b4b7a05f6c8d047fcc1ba295de11f8`. The input digest before and after
+each gate was `9cac5c2b3b25ac9ba6378f75f736cc9abfd928c46407da6e1ebbd136078b62df`.
+Every run compiled or reused all 369 canonical production objects.
 
-`python3 -B cpp/gateway/tools/links.py --check` resolved all 450 registered
-binaries. `git diff --check 72242018..HEAD` passed. No new test binary or link
-registry entry was needed.
+```bash
+bash "$scratch/run-official.sh" release 8f972f3e6d25c06b74616e9aa606642fc957e323 1
+bash "$scratch/run-official.sh" asan 8f972f3e6d25c06b74616e9aa606642fc957e323 1 2 3 4
+python3 -B "$scratch/verify-final.py" 8f972f3e6d25c06b74616e9aa606642fc957e323
+```
+
+Release used two workers, sanitizer shard 1 used three, and the remaining
+sanitizer shards used four. The first release and sanitizer runs overlapped.
+Each command below exited 0. The times include rebuilds from the existing
+object cache.
+
+| Gate | Passing binaries | Passing cases | Compile (s) | Link and test (s) | Driver wall (s) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Release 1/4 | 113/113 | 1,337/1,337 | 1,959.829 | 57.250 | 2,017.602 |
+| ASan 1/4 | 113/113 | 1,337/1,337 | 1,778.034 | 114.588 | 1,893.144 |
+| ASan 2/4 | 113/113 | 1,246/1,246 | 380.109 | 35.509 | 416.146 |
+| ASan 3/4 | 112/112 | 1,446/1,446 | 338.682 | 38.337 | 377.548 |
+| ASan 4/4 | 112/112 | 1,106/1,106 | 311.700 | 99.808 | 412.021 |
+| **Sanitizer total** | **450/450** | **5,135/5,135** | | | |
+
+The sanitizer selections partitioned the full 450-binary registry. All 450
+run logs recorded the namespace boundary and showed zero ASan, UBSan or LSan
+diagnostics. The hashes below identify the recorded receipts in `$scratch/final`.
+
+| Receipt | SHA-256 |
+| --- | --- |
+| `release-1.json` | `cceccee15374a3cd27a923246afa19c5a3c7871af5994c68326d5fcda2b97962` |
+| `asan-1.json` | `281a3fe6a4706b3b5f2aff304e63d221a8711d5efcf4fb02443e18b92f7d8619` |
+| `asan-2.json` | `81a31754e5ce0c5559270d134a371a447aa6022f2a3346d3970ef584122c9926` |
+| `asan-3.json` | `ba99a5d1120b2bbd7c2c9819ad9318c6db2bba02388a34fc50f7e5c86dc9b385` |
+| `asan-4.json` | `f660a4667ecd77e97cc597006f366545e765148b6e5c9bbc1ffd7b4295b57459` |
+
+The exact candidate also passed all 10 focused runtime binaries and 158/158
+cases in each profile. Release took 90.653 s and sanitizers took 138.120 s.
+These focused checks used the receipt directory for the isolated worktree.
+
+```bash
+bash "$scratch/run-gate.sh" "$config" 1 "$scratch/focus" "$scratch/focus-build" \
+  python3 -B "$scratch/focused.py" "$config" \
+  rt/abort rt/async rt/stream rt/http rt/process rt/fetch rt/fetch_connection rt/fetch_transport rt/websocket_lifetime rt/websocket
+```
+
+`PYTHONDONTWRITEBYTECODE=1 python3 cpp/gateway/tools/links.py --check` resolved all
+450 registered binaries. `git diff --check aae39d0e..HEAD` passed. The final
+report commit adds receipts and findings text to the tested candidate.
 
 No confirmed out-of-area lifetime defects were found in the caller paths
 reviewed for these changes.
 
 A GitHub push dry run returned `fatal: unable to get password from user`.
-This checkout has no authenticated GitHub CLI session. The local commits and
-this PR body are the handoff for the job's branch publisher.
+The local commits and this PR body are the handoff for the job's branch
+publisher.
 
 ## Summary
 
-Fixed the runtime lifetime bugs that could crash a request or leave an upload,
-response read or socket stuck after cancellation or shutdown. The fixes keep
-the affected callbacks, bodies and buffers alive for the operations that use
-them, and release that ownership when those operations end. The broader pending
-Promise reaction and awaiter cycles need a coordinated ownership change and
-remain deferred. Final suite verification is in progress.
+Fixed 26 audited lifetime sites that could crash the gateway, leave requests
+hanging, or keep resources alive after cancellation. Callbacks and socket
+writes now keep their inputs alive through completion, and closing a connection
+wakes parked uploads and response reads.
+
+All 450 sanitizer binaries passed on Linux ARM64, covering 5,135 cases. The
+full release shard passed 113 binaries, and the link check passed. The three
+remaining audit rows cover one pending-Promise retention issue that needs an
+ownership change across the Promise and stream code.
+
+The commits are ready for the PR handoff. GitHub write access was unavailable
+in this checkout.
