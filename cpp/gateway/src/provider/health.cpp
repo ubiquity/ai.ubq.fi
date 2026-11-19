@@ -155,10 +155,12 @@ namespace uos::provider::health {
                                            const std::optional<double>& status, const std::function<double()>& now,
                                            const std::optional<std::string>& providerRequestId, const std::optional<ClaudeCodeAccountBinding>& binding) {
       const std::string queueKey = provider + ":" + identity;
-      const auto found = providerTransitionQueues().find(queueKey);
-      const ProviderTransition* current = found == providerTransitionQueues().end() ? nullptr : &found->second;
       const std::optional<std::string> normalizedRequestId = normalizedProviderRequestId(providerRequestId);
-      if (current && current->event == event && current->status == status && (current->providerRequestId || !normalizedRequestId)) return current->tail;
+      auto& queues = providerTransitionQueues();
+      if (const auto found = queues.find(queueKey); found != queues.end()) {
+        const ProviderTransition& current = found->second;
+        if (current.event == event && current.status == status && (current.providerRequestId || !normalizedRequestId)) return current.tail;
+      }
       double observedAtMs = 0;
       try {
         observedAtMs = rt::Math::trunc(now ? now() : rt::dateNow());
@@ -169,14 +171,16 @@ namespace uos::provider::health {
       // Reserve the transition synchronously, before getKv() or any other await.
       // Identical cold-burst observations share this promise, while a different
       // event or the first available correlation ID is appended in arrival order.
-      const rt::Promise<void> previous = current ? current->tail : rt::Promise<void>::resolve();
+      // The injected clock can reenter and change the queue.
+      const auto latest = queues.find(queueKey);
+      const rt::Promise<void> previous = latest != queues.end() ? latest->second.tail : rt::Promise<void>::resolve();
       const rt::Promise<void> tail = previous.catch_([](const rt::Reason&) {}).then([provider, identity, event, status, observedAtMs, normalizedRequestId, binding]() {
         return persistProviderHealth(provider, identity, event, status, observedAtMs, normalizedRequestId, binding);
       });
-      providerTransitionQueues().insert_or_assign(queueKey, ProviderTransition{.event = event, .status = status, .providerRequestId = normalizedRequestId, .tail = tail});
+      queues.insert_or_assign(queueKey, ProviderTransition{.event = event, .status = status, .providerRequestId = normalizedRequestId, .tail = tail});
       (void)tail.finally_([queueKey, tail]() {
-        auto& queues = providerTransitionQueues();
-        if (const auto entry = queues.find(queueKey); entry != queues.end() && entry->second.tail == tail) queues.erase(entry);
+        auto& transitions = providerTransitionQueues();
+        if (const auto entry = transitions.find(queueKey); entry != transitions.end() && entry->second.tail == tail) transitions.erase(entry);
       });
       return tail;
     }

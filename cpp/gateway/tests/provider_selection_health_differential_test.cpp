@@ -548,6 +548,29 @@ ASYNC_TEST("health: transitions, throttling, correlation ids and views over the 
   kv::setKvForTest(nullptr);
 }
 
+ASYNC_TEST("health: a reentrant clock can clear a pending transition") {
+  kv::setKvForTest(memoryKv());
+  health::resetProviderHealthThrottleForTest();
+  const auto cleanup = rt::scopeExit([] {
+    health::resetProviderHealthThrottleForTest();
+    kv::setKvForTest(nullptr);
+  });
+  const auto first = health::recordCodexProviderHealth("reentrant", "success", 200, clockAt(1000));
+  EXPECT(first.pending());
+  const auto second = health::recordCodexProviderHealth("reentrant", "auth_invalid", 401, [] {
+    health::resetProviderHealthThrottleForTest();
+    return 2000.0;
+  });
+  co_await first.wait();
+  co_await second.wait();
+
+  auto reading = health::getCodexProviderHealth("reentrant", clockAt(2000));
+  const auto view = co_await std::move(reading);
+  EXPECT_EQ(view.state, std::string("invalid"));
+  EXPECT_EQ(view.last_success_at_ms, std::optional<double>(1000));
+  EXPECT_EQ(view.last_401_at_ms, std::optional<double>(2000));
+}
+
 ASYNC_TEST("health: without a KV a record resolves and every view is unknown") {
   kv::setKvForTest(nullptr);
   health::resetProviderHealthThrottleForTest();
