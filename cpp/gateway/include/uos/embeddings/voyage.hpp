@@ -5,11 +5,12 @@
 #include "uos/rt/abort.hpp"
 #include "uos/rt/json.hpp"
 #include "uos/upstream_wire.hpp"
+#include <memory>
 #include <utility>
 
 namespace uos::embeddings::voyage {
   struct EmbeddingsCacheWriteResult { bool isNew; };
-  rt::Task<EmbeddingsCacheWriteResult> writeEmbeddingsCacheEntryBestEffort(rt::Kv& kv, std::string cacheProfileKey, std::string hash,
+  rt::Task<EmbeddingsCacheWriteResult> writeEmbeddingsCacheEntryBestEffort(std::shared_ptr<rt::Kv> kv, std::string cacheProfileKey, std::string hash,
                                                                        std::vector<double> embedding, double createdAtMs, double deadlineMs);
   std::string resolveEmbeddingsJobTokenSeed(const std::string& jobId, const std::optional<std::string>& authToken,
                                            const openai_telemetry::UsageContext* usageContext = nullptr);

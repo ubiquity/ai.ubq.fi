@@ -32,7 +32,9 @@ namespace uos::provider::claude_code_usage_refresh {
     const auto quota = co_await quotaRead.wait();
     if (quota && quota->usage && claudeCodeUsageIsFresh(quota, nowMs)) co_return ClaudeCodeUsageRefreshFresh{*quota->usage};
     const rt::KvKey key{"uos_ai", "claude_code_usage", "v1", "lease", binding.account_id, binding.account_cohort_id};
-    const auto entry = co_await kv->get(key, {.consistency = rt::KvConsistencyLevel::strong});
+    const rt::KvGetOptions readOptions{.consistency = rt::KvConsistencyLevel::strong};
+    auto reading = kv->get(key, readOptions);
+    const auto entry = co_await std::move(reading);
     const auto lease = rt::storedJsonView(entry.value);
     if (entry.value.truthy() && rt::toNumber(rt::get(lease, "until_ms")) > nowMs) co_return ClaudeCodeUsageRefreshBusy{};
     const std::string owner = rt::crypto::randomUUID();
@@ -72,7 +74,9 @@ namespace uos::provider::claude_code_usage_refresh {
       co_return ClaudeCodeUsageRefreshChanged{};
     };
     auto cleanup = [kv, key, owner]() -> rt::Task<void> {
-      const auto current = co_await kv->get(key, {.consistency = rt::KvConsistencyLevel::strong});
+      const rt::KvGetOptions cleanupReadOptions{.consistency = rt::KvConsistencyLevel::strong};
+      auto checking = kv->get(key, cleanupReadOptions);
+      const auto current = co_await std::move(checking);
       if (rt::getString(rt::storedJsonView(current.value), "owner") == owner) {
         auto deletion = kv->atomic(); deletion->check(current).delete_(key); co_await deletion->commit();
       }

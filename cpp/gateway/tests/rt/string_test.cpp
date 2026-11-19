@@ -3781,9 +3781,13 @@ TEST("slice substring substr charAt charCodeAt codePointAt at") {
     ROW_EQ(index, rt::slice(text, row.index), row.slice);
     ROW_EQ(index, rt::substring(text, row.index), row.substring);
     ROW_EQ(index, rt::substr(text, row.index), row.substr);
-    ROW_EQ(index, rt::charAt(text, row.index), row.charAt);
+    const std::string unit = rt::charAt(text, row.index);
+    ROW_EQ(index, unit, row.charAt);
     ROW_TRUE(index, sameNumber(rt::charCodeAt(text, row.index), row.charCodeAt));
-    ROW_EQ(index, rt::codePointAt(text, row.index), row.codePointAt);
+    const std::string suffix = unit.empty() ? std::string{} : rt::slice(text, row.index);
+    const auto points = rt::codePoints(suffix);
+    const auto first = points.begin();
+    ROW_EQ(index, first == points.end() ? std::nullopt : std::optional(*first), row.codePointAt);
     ROW_EQ(index, rt::at(text, row.index), row.at);
     ++index;
   }
@@ -3820,6 +3824,25 @@ TEST("indexOf lastIndexOf includes startsWith endsWith") {
   }
 }
 
+TEST("fixed ASCII matches survive malformed surrounding bytes") {
+  constexpr std::string_view token = "input_";
+  std::size_t index = 0;
+  for (const MalformedRow& row : MALFORMED) {
+    const std::string prefixed = std::string(token).append(row.bytes);
+    const std::string suffixed = std::string(row.bytes).append(token);
+    const std::string surrounded = std::string(suffixed).append(row.bytes);
+    ROW_TRUE(index, rt::startsWith(prefixed, token));
+    ROW_TRUE(index, !rt::startsWith(suffixed, token));
+    ROW_TRUE(index, rt::endsWith(suffixed, token));
+    ROW_TRUE(index, !rt::endsWith(prefixed, token));
+    ROW_TRUE(index, rt::includes(surrounded, token));
+    ROW_TRUE(index, !rt::includes(row.bytes, token));
+    ROW_EQ(index, rt::indexOf(surrounded, token), row.length);
+    ROW_EQ(index, rt::lastIndexOf(surrounded, token), row.length);
+    ++index;
+  }
+}
+
 TEST("padStart padEnd repeat") {
   std::size_t index = 0;
   for (const PadRow& row : PAD) {
@@ -3841,7 +3864,9 @@ TEST("trim trimStart trimEnd and the whitespace set") {
   std::size_t index = 0;
   for (const TrimRow& row : TRIM) {
     ROW_EQ(index, rt::trim(row.input), row.trim);
-    ROW_EQ(index, rt::trimStart(row.input), row.trimStart);
+    const auto points = rt::codePoints(row.input);
+    const auto first = std::find_if(points.begin(), points.end(), [](std::uint32_t point) { return !rt::isJsWhitespace(point); });
+    ROW_EQ(index, rt::canonicalWtf8(std::string_view(first.text().data(), row.input.end())), row.trimStart);
     ROW_EQ(index, rt::trimEnd(row.input), row.trimEnd);
     ++index;
   }
@@ -3934,7 +3959,7 @@ TEST("localeCompare order of the whole verified repertoire") {
   std::stable_sort(characters.begin(), characters.end(), [](const std::string& a, const std::string& b) { return rt::localeCompare(a, b) < 0; });
   std::uint32_t digest = 2166136261u;
   for (std::size_t index = 0; index < characters.size(); ++index) {
-    const std::uint32_t value = *rt::codePointAt(characters[index], 0);
+    const std::uint32_t value = *rt::codePoints(characters[index]).begin();
     const bool tie = index > 0 && rt::localeCompare(characters[index - 1], characters[index]) == 0;
     const char bytes[4] = {static_cast<char>(value & 255), static_cast<char>((value >> 8) & 255), static_cast<char>((value >> 16) & 255), static_cast<char>(tie ? 1 : 0)};
     fnv(digest, std::string_view(bytes, 4));
@@ -4024,6 +4049,9 @@ TEST("arbitrary bytes read with the WHATWG replacement rule") {
     ROW_EQ(index, rt::length(row.bytes), row.length);
     ROW_EQ(index, rt::fromUtf16(rt::toUtf16(row.bytes)), row.decoded);
     ROW_EQ(index, rt::isWtf8(row.bytes), row.bytes == row.decoded);
+    const std::string padded = std::string("\xC2\xA0").append(row.bytes).append(" \t");
+    ROW_EQ(index, rt::trim(padded), row.decoded);
+    ROW_EQ(index, rt::trimEnd(padded), std::string("\xC2\xA0").append(row.decoded));
     ++index;
   }
 }
@@ -4057,6 +4085,7 @@ TEST("WTF-8 storage convention (docs/rt/text.md)") {
   EXPECT(rt::isWtf8(split));
   EXPECT(!rt::isCanonicalWtf8(split));
   EXPECT_EQ(rt::canonicalWtf8(split), std::string(pair));
+  EXPECT_EQ(rt::trim(std::string(" ").append(split).append("\t")), pair);
   EXPECT_EQ(rt::length(split), 2);
   EXPECT(rt::toUtf16(split) == u"\xD83D\xDE00");
   EXPECT_EQ(rt::compare(split, pair), 0);

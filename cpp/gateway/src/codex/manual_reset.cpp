@@ -85,7 +85,10 @@ namespace uos::codex::manual_reset {
       if (deadlines.empty()) fail(409, "codex_quota_identity_unavailable", "A current quota window is required before using a reset.");
       return rt::Math::max(exhausted.empty() ? std::span<const double>(deadlines) : std::span<const double>(exhausted));
     }
-    rt::Task<rt::KvEntryMaybe<>> readEntry(std::shared_ptr<rt::Kv> kv, rt::KvKey key) { return kv->get(std::move(key), {.consistency = rt::KvConsistencyLevel::strong}); }
+    rt::Task<rt::KvEntryMaybe<>> readEntry(std::shared_ptr<rt::Kv> kv, rt::KvKey key) {
+      auto read = kv->get(std::move(key), {.consistency = rt::KvConsistencyLevel::strong});
+      return rt::detail::keepAlive(std::move(kv), std::move(read));
+    }
     rt::Task<rt::KvEntryMaybe<>> readManualDailyBudget(std::shared_ptr<rt::Kv> kv, std::string hash, double now) {
       rt::Promise reading(readEntry(kv, banked_reset::codexResetAccountDailyKey(hash, day(now)))); const auto budget = co_await reading.wait();
       const auto value = rt::storedJsonView(budget.value);

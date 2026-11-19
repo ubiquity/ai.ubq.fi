@@ -89,7 +89,9 @@ namespace {
       json::array ids;
       for (const auto& account : parsed->accounts) ids.push_back(json::value(account.account_id));
       json::object material{{"v", AUTH_POOL_IDENTITY_FINGERPRINT_VERSION}, {"ordered_account_ids", std::move(ids)}};
-      auto hash = co_await utils::sha256Hex(canonicalJson(material));
+      auto text = canonicalJson(material);
+      auto hashing = utils::sha256Hex(std::move(text));
+      auto hash = co_await std::move(hashing);
       fingerprint = "sha256:" + hash;
     }
     co_return CodexAuthPoolBinding{count, parsed && parsed->accounts.size() == 2, std::move(fingerprint)};
@@ -115,7 +117,9 @@ namespace {
     json::object material{{"version", FINGERPRINT_VERSION}, {"provider", provider}, {"telemetry_provider", telemetryProvider}, {"topology_kind", topologyKind},
       {"model", model.id}, {"probe_profile", cm::PROMPT_CACHE_SCOPE_PROBE_PROFILE}, {"catalog_entry", model.ambiguous ? "ambiguous" : "unique"},
       {"codex_cache_qualification", qualification}, {"codex_prompt_cache_capability", capabilityInput}};
-    auto hash = co_await utils::sha256Hex(canonicalJson(material));
+    auto text = canonicalJson(material);
+    auto hashing = utils::sha256Hex(std::move(text));
+    auto hash = co_await std::move(hashing);
     co_return "sha256:" + hash;
   }
   rt::Task<rt::KvEntryMaybe<>> readScopeEntry(std::shared_ptr<rt::Kv> store, rt::KvKey key) {
@@ -201,8 +205,12 @@ rt::Task<PromptCacheScopeTargetInventory> derivePromptCacheScopeTargetInventory(
   json::object inventoryMaterial{{"version", FINGERPRINT_VERSION}, {"probe_profile", cm::PROMPT_CACHE_SCOPE_PROBE_PROFILE},
     {"metered_fallback_roster", json::value_from(diagnostic)}, {"targets", std::move(inventoryTargets)}};
   json::object bindingMaterial{{"version", FINGERPRINT_VERSION}, {"targets", std::move(bindingTargets)}};
-  const auto inventoryHash = co_await utils::sha256Hex(canonicalJson(inventoryMaterial));
-  const auto bindingHash = co_await utils::sha256Hex(canonicalJson(bindingMaterial));
+  auto inventoryText = canonicalJson(inventoryMaterial);
+  auto inventoryHashing = utils::sha256Hex(std::move(inventoryText));
+  const auto inventoryHash = co_await std::move(inventoryHashing);
+  auto bindingText = canonicalJson(bindingMaterial);
+  auto bindingHashing = utils::sha256Hex(std::move(bindingText));
+  const auto bindingHash = co_await std::move(bindingHashing);
   co_return PromptCacheScopeTargetInventory{"ready", "ready", std::move(targets), diagnostic, "sha256:" + inventoryHash, "sha256:" + bindingHash};
 }
 /**

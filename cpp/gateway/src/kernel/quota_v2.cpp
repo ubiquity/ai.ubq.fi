@@ -108,7 +108,9 @@ namespace uos::kernel::quota_v2 {
       if (scope == "repo" && !repo) co_return std::nullopt;
       const std::optional<KernelQuotaPolicyV2> policy = normalizeKernelQuotaPolicyV2(kernelQuotaValue(entry.value), scope, owner, repo);
       if (!policy) co_return std::nullopt;
-      const rt::KvEntryMaybe<> windowEntry = co_await kv->get(kernelScopedWindowKey(scope, owner, repo), STRONG);
+      auto windowKey = kernelScopedWindowKey(scope, owner, repo);
+      auto reading = kv->get(std::move(windowKey), STRONG);
+      const rt::KvEntryMaybe<> windowEntry = co_await std::move(reading);
       const KernelQuotaWindowV2 window =
         windowForEffectivePolicy(normalizeKernelQuotaWindowV2(kernelQuotaValue(windowEntry.value), scope, owner, repo), scope, owner, repo, policy->window_ms, rt::dateNow())
           .window;

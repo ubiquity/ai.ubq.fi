@@ -119,30 +119,29 @@ namespace {
     }
     return total;
   }
-  std::optional<std::string> imageFileMediaType(const rt::File& file) {
-    const auto declared = rt::toLowerCase(rt::trim(file.type()));
+  std::optional<std::string> imageFileMediaType(const rt::FormFile& file) {
+    const auto declared = rt::toLowerCase(rt::trim(file.mediaType));
     if (!declared.empty() && declared != "application/octet-stream") return normalizeImageMediaType(declared);
-    if (!file.name()) throw rt::TypeError("undefined is not an object (evaluating 'file.name.trim')");
-    const auto normalizedName = rt::toLowerCase(rt::trim(*file.name()));
+    if (!file.filename) throw rt::TypeError("undefined is not an object (evaluating 'file.name.trim')");
+    const auto normalizedName = rt::toLowerCase(rt::trim(*file.filename));
     for (const auto& [extension, mediaType] : IMAGE_MEDIA_TYPE_BY_EXTENSION) if (rt::endsWith(normalizedName, extension)) return std::string(mediaType);
     return std::nullopt;
   }
-  rt::Task<std::string> fileDataUrl(rt::File file, std::string mediaType) {
-    rt::Promise<rt::Bytes> pending(file.arrayBuffer()); const auto bytes = co_await pending.wait();
-    co_return "data:" + mediaType + ";base64," + utils::bytesToBase64(bytes);
+  std::string fileDataUrl(const rt::FormFile& file, const std::string& mediaType) {
+    return "data:" + mediaType + ";base64," + utils::bytesToBase64(file.bytes);
   }
-  json::value multipartValue(const rt::FormData::Value& value) {
+  json::value multipartValue(const rt::FormValue& value) {
     if (const auto* string = std::get_if<std::string>(&value)) return json::value(*string);
     return json::object{};
   }
-  json::value parseMultipartInteger(const rt::FormData::Value& value) {
+  json::value parseMultipartInteger(const rt::FormValue& value) {
     if (const auto* string = std::get_if<std::string>(&value)) {
       const auto normalized = rt::trim(*string); static const rt::Regex pattern(R"(^(?:0|[1-9]\d*)$)", "u");
       if (pattern.test(normalized)) return rt::makeNumber(rt::stringToNumber(normalized));
     }
     return multipartValue(value);
   }
-  json::value parseMultipartNumber(const rt::FormData::Value& value) {
+  json::value parseMultipartNumber(const rt::FormValue& value) {
     if (const auto* string = std::get_if<std::string>(&value)) {
       const auto normalized = rt::trim(*string); static const rt::Regex pattern(R"(^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$)", "u");
       if (pattern.test(normalized)) { const auto parsed = rt::stringToNumber(normalized); if (rt::Number::isFinite(parsed)) return rt::makeNumber(parsed); }
@@ -152,7 +151,7 @@ namespace {
   bool exceedsUnicodeCodePointLimit(const std::string& value, double limit) {
     double count = 0; for ([[maybe_unused]] const auto cp : rt::codePoints(value)) if (++count > limit) return true; return false;
   }
-  json::value parseMultipartBoolean(const rt::FormData::Value& value) {
+  json::value parseMultipartBoolean(const rt::FormValue& value) {
     if (const auto* string = std::get_if<std::string>(&value)) {
       const auto normalized = rt::trim(*string); if (normalized == "true") return true; if (normalized == "false") return false;
     }
@@ -230,62 +229,67 @@ namespace {
     }
     co_return std::nullopt;
   }
-  rt::Task<std::optional<rt::FormData>> readImageEditMultipartForm(rt::Request req, std::shared_ptr<rt::Bytes> bytes) {
-    try {
-      rt::RequestInit init; init.method = req.method(); init.headers = req.headers(); init.body = *bytes;
-      const rt::Request parsed(req.url(), init); rt::Promise<rt::FormData> pending(parsed.formData()); const auto form = co_await pending.wait(); co_return form;
-    } catch (...) {} co_return std::nullopt;
-  }
-  std::optional<ImageRequestFailure> collectImageEditFields(const rt::FormData& form, json::object& body) {
-    std::optional<std::string> unsupportedField;
-    for (const auto& key : form.keys()) if (!IMAGE_EDIT_MULTIPART_REQUEST_KEYS.has(key)) { unsupportedField = key; break; }
-    if (unsupportedField && !unsupportedField->empty()) return imageRequestError("Unsupported image edit field: " + *unsupportedField + ".", *unsupportedField);
+  std::optional<ImageRequestFailure> collectImageEditFields(const rt::FormParts& form, json::object& body) {
+    for (const auto& [key, value] : form) {
+      if (IMAGE_EDIT_MULTIPART_REQUEST_KEYS.has(key)) continue;
+      if (!key.empty()) return imageRequestError("Unsupported image edit field: " + key + ".", key);
+      break;
+    }
     for (const auto key : {"model", "prompt", "size", "quality", "background", "output_format", "input_fidelity", "response_format", "user"}) {
-      const auto value = form.get(key); if (!value) continue;
+      const auto* value = rt::findFormPart(form, key); if (!value) continue;
       if (!std::holds_alternative<std::string>(*value)) return imageRequestError(std::string(key) + " must be a string.", key);
       rt::objectSet(body, key, json::value(std::get<std::string>(*value)));
     }
-    if (const auto stream = form.get("stream")) rt::objectSet(body, "stream", parseMultipartBoolean(*stream));
-    for (const auto key : {"n", "partial_images"}) if (const auto value = form.get(key)) rt::objectSet(body, key, parseMultipartInteger(*value));
-    if (const auto value = form.get("output_compression")) rt::objectSet(body, "output_compression", parseMultipartNumber(*value));
+    if (const auto* stream = rt::findFormPart(form, "stream")) rt::objectSet(body, "stream", parseMultipartBoolean(*stream));
+    for (const auto key : {"n", "partial_images"}) if (const auto* value = rt::findFormPart(form, key)) rt::objectSet(body, key, parseMultipartInteger(*value));
+    if (const auto* value = rt::findFormPart(form, "output_compression")) rt::objectSet(body, "output_compression", parseMultipartNumber(*value));
     return std::nullopt;
   }
-  struct ImageEditFiles { std::vector<rt::File> imageFiles; std::optional<rt::File> maskFile; };
-  std::variant<ImageEditFiles, ImageRequestFailure> selectImageEditFiles(const rt::FormData& form) {
-    std::vector<rt::FormData::Value> imageEntries;
-    for (const auto& [name, entry] : form.entries()) if (name == "image" || name == "image[]") imageEntries.push_back(entry);
-    const auto masks = form.getAll("mask");
-    if (imageEntries.empty() || static_cast<double>(imageEntries.size()) > IMAGE_MAX_EDIT_INPUTS) return imageRequestError("image must contain from 1 to 16 files.", "image");
-    for (const auto& entry : imageEntries) if (!std::holds_alternative<rt::File>(entry)) return imageRequestError("Each multipart image entry must be a file.", "image");
-    if (masks.size() > 1 || (masks.size() == 1 && !std::holds_alternative<rt::File>(masks[0]))) return imageRequestError("mask must be one image file.", "mask");
-    ImageEditFiles result; for (const auto& entry : imageEntries) result.imageFiles.push_back(std::get<rt::File>(entry));
-    if (!masks.empty()) result.maskFile = std::get<rt::File>(masks[0]);
+  struct ImageEditFiles { std::vector<const rt::FormFile*> imageFiles; const rt::FormFile* maskFile = nullptr; };
+  std::variant<ImageEditFiles, ImageRequestFailure> selectImageEditFiles(const rt::FormParts& form) {
+    ImageEditFiles result;
+    std::size_t maskCount = 0;
+    for (const auto& [name, value] : form) {
+      if (name == "image" || name == "image[]") {
+        if (static_cast<double>(result.imageFiles.size()) == IMAGE_MAX_EDIT_INPUTS)
+          return imageRequestError("image must contain from 1 to 16 files.", "image");
+        result.imageFiles.push_back(std::get_if<rt::FormFile>(&value));
+      } else if (name == "mask") {
+        ++maskCount;
+        result.maskFile = std::get_if<rt::FormFile>(&value);
+      }
+    }
+    if (result.imageFiles.empty()) return imageRequestError("image must contain from 1 to 16 files.", "image");
+    if (std::ranges::find(result.imageFiles, nullptr) != result.imageFiles.end()) return imageRequestError("Each multipart image entry must be a file.", "image");
+    if (maskCount > 1 || (maskCount == 1 && !result.maskFile)) return imageRequestError("mask must be one image file.", "mask");
     return result;
   }
   using ImageEditMask = std::variant<std::optional<std::string>, ImageRequestFailure>;
-  ImageEditMask validateImageEditMask(const std::optional<rt::File>& maskFile) {
+  ImageEditMask validateImageEditMask(const rt::FormFile* maskFile) {
     if (!maskFile) return std::optional<std::string>();
     const auto mediaType = imageFileMediaType(*maskFile);
-    if (maskFile->size() == 0 || maskFile->size() >= IMAGE_MAX_MASK_FILE_BYTES || mediaType != "image/png") return imageRequestError("The multipart mask must be a non-empty PNG file smaller than 50 MiB.", "mask");
+    if (maskFile->bytes.empty() || static_cast<double>(maskFile->bytes.size()) >= IMAGE_MAX_MASK_FILE_BYTES || mediaType != "image/png") return imageRequestError("The multipart mask must be a non-empty PNG file smaller than 50 MiB.", "mask");
     return mediaType;
   }
-  rt::Task<ParsedImageRequest> finalizeImageEditBody(rt::FormData form, json::object body, double count) {
-    const auto selection = selectImageEditFiles(form); if (const auto* failure = std::get_if<ImageRequestFailure>(&selection)) co_return *failure;
+  ParsedImageRequest finalizeImageEditBody(const rt::FormParts& form, json::object body, double count) {
+    const auto selection = selectImageEditFiles(form); if (const auto* failure = std::get_if<ImageRequestFailure>(&selection)) return *failure;
     const auto& selected = std::get<ImageEditFiles>(selection); const auto& imageFiles = selected.imageFiles; const auto& maskFile = selected.maskFile;
-    for (const auto& file : imageFiles) if (file.size() == 0 || file.size() >= IMAGE_MAX_FILE_BYTES) co_return imageRequestError("Each multipart image file must be non-empty and smaller than 50 MiB.", "image");
-    std::vector<std::pair<rt::File, std::string>> imageInputs;
-    for (const auto& file : imageFiles) if (const auto mediaType = imageFileMediaType(file)) imageInputs.emplace_back(file, *mediaType);
-    if (imageInputs.size() != imageFiles.size()) co_return imageRequestError("Each multipart image must be a PNG, JPEG, or WebP file.", "image");
-    const auto mask = validateImageEditMask(maskFile); if (const auto* failure = std::get_if<ImageRequestFailure>(&mask)) co_return *failure;
+    for (const auto* file : imageFiles) if (file->bytes.empty() || static_cast<double>(file->bytes.size()) >= IMAGE_MAX_FILE_BYTES)
+      return imageRequestError("Each multipart image file must be non-empty and smaller than 50 MiB.", "image");
+    std::vector<std::pair<const rt::FormFile*, std::string>> imageInputs;
+    for (const auto* file : imageFiles) if (const auto mediaType = imageFileMediaType(*file)) imageInputs.emplace_back(file, *mediaType);
+    if (imageInputs.size() != imageFiles.size()) return imageRequestError("Each multipart image must be a PNG, JPEG, or WebP file.", "image");
+    const auto mask = validateImageEditMask(maskFile); if (const auto* failure = std::get_if<ImageRequestFailure>(&mask)) return *failure;
     const auto& maskMediaType = std::get<std::optional<std::string>>(mask);
-    double totalInputBytes = maskFile ? maskFile->size() : 0; for (const auto& file : imageFiles) totalInputBytes += file.size();
-    if (totalInputBytes > IMAGE_MAX_MULTIPART_INPUT_BYTES) co_return imageRequestError("Multipart image files must total no more than 50 MiB.", "image");
-    if (totalInputBytes > rt::Math::floor(IMAGE_MAX_FANOUT_INPUT_BYTES / count)) co_return imageRequestError("n and multipart image inputs exceed the 50 MiB request work limit.", "n");
+    double totalInputBytes = maskFile ? static_cast<double>(maskFile->bytes.size()) : 0;
+    for (const auto* file : imageFiles) totalInputBytes += static_cast<double>(file->bytes.size());
+    if (totalInputBytes > IMAGE_MAX_MULTIPART_INPUT_BYTES) return imageRequestError("Multipart image files must total no more than 50 MiB.", "image");
+    if (totalInputBytes > rt::Math::floor(IMAGE_MAX_FANOUT_INPUT_BYTES / count)) return imageRequestError("n and multipart image inputs exceed the 50 MiB request work limit.", "n");
     json::array images;
-    for (const auto& [file, mediaType] : imageInputs) { auto task = fileDataUrl(file, mediaType); rt::Promise<std::string> pending(std::move(task)); const auto url = co_await pending.wait(); images.push_back(json::object{{"image_url", url}}); }
+    for (const auto& [file, mediaType] : imageInputs) images.push_back(json::object{{"image_url", fileDataUrl(*file, mediaType)}});
     rt::objectSet(body, "images", images);
-    if (maskFile && maskMediaType) { auto task = fileDataUrl(*maskFile, *maskMediaType); rt::Promise<std::string> pending(std::move(task)); const auto url = co_await pending.wait(); rt::objectSet(body, "mask", json::object{{"image_url", url}}); }
-    co_return ParsedImageRequestOk{body, count, totalInputBytes};
+    if (maskFile && maskMediaType) rt::objectSet(body, "mask", json::object{{"image_url", fileDataUrl(*maskFile, *maskMediaType)}});
+    return ParsedImageRequestOk{std::move(body), count, totalInputBytes};
   }
   rt::Task<ParsedImageRequest> parseMultipartImageEdit(rt::Request req) {
     if (const auto length = req.headers().get("content-length")) {
@@ -301,15 +305,20 @@ namespace {
     auto readTask = bounded_response_body::readBoundedResponseBody(source, options); rt::Promise<bounded_response_body::BoundedResponseBody> readPending(std::move(readTask));
     auto bounded = co_await readPending.wait(); bytes = std::make_shared<rt::Bytes>(std::move(bounded.bytes));
     if (!bounded.complete || static_cast<double>(bytes->size()) > IMAGE_MAX_MULTIPART_BODY_BYTES) co_return imageRequestError("Multipart image edits must be no larger than 64 MiB.", "image");
-    auto formTask = readImageEditMultipartForm(req, bytes); rt::Promise<std::optional<rt::FormData>> formPending(std::move(formTask)); const auto form = co_await formPending.wait();
-    if (!form) co_return imageRequestError("Image edits must include valid multipart form data.");
+    rt::FormParts form;
+    try {
+      const rt::InboundFormDecoder decoder(req.headers().get("content-type").value_or(""));
+      form = decoder.decode(*bytes);
+    } catch (...) {
+      co_return imageRequestError("Image edits must include valid multipart form data.");
+    }
     captured = request::captureRawBodyOnce(req, bytes); json::object body;
-    if (const auto failure = collectImageEditFields(*form, body)) co_return *failure;
+    if (const auto failure = collectImageEditFields(form, body)) co_return *failure;
     auto sanitizedBody = withoutNullImageOptions(body); const auto validation = validateImageScalarOptions(sanitizedBody, "edits", true);
     if (const auto* failure = std::get_if<ImageRequestFailure>(&validation)) co_return *failure;
     // GPT Image responses are always base64. The validated multipart compatibility field has no Responses-tool equivalent.
-    rt::objectDelete(sanitizedBody, "response_format"); auto task = finalizeImageEditBody(*form, sanitizedBody, std::get<double>(validation));
-    rt::Promise<ParsedImageRequest> pending(std::move(task)); const auto result = co_await pending.wait(); co_return result;
+    rt::objectDelete(sanitizedBody, "response_format");
+    co_return finalizeImageEditBody(form, std::move(sanitizedBody), std::get<double>(validation));
   }
   const rt::OrderedSet<std::string>& imageJsonAllowedKeys(const ImageRouteKind& kind) { return kind == "edits" ? IMAGE_EDIT_JSON_REQUEST_KEYS : IMAGE_GENERATION_REQUEST_KEYS; }
   std::optional<ImageRequestFailure> normalizeImageEditReferences(json::object& body, bool isMultipart) {

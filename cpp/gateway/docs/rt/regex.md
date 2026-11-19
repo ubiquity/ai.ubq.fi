@@ -1,17 +1,16 @@
-# uos::rt regex: ECMAScript regular expressions
+# ECMAScript regular expressions
 
-Header `uos/rt/regex.hpp`; sources `src/rt/regex*.cpp`. Oracle: Bun 1.4.0 (JavaScriptCore,
-Unicode 17). `rt::Regex` is a backtracking engine with JavaScriptCore's syntax, error messages,
-matching semantics and `String.prototype` algorithms, so the TypeScript's regex lines translate one
-for one. Subjects, captures and replacements are `std::string` in WTF-8 (docs/rt/text.md).
-`std::regex` and Boost.Regex stay forbidden.
+`rt::Regex` uses QuickJS-ng libregexp 0.18.0 for compilation and matching. The C++ adapter keeps `lastIndex`,
+capture and replacement behavior, and UTF-16 and byte offsets. Subjects, captures and replacements use WTF-8
+in `std::string`. [API](../../include/uos/rt/regex.hpp) · [Text](text.md) ·
+[Engine provenance](../../third_party/quickjs-libregexp/PROVENANCE.md)
 
 ## TypeScript to C++
 
 | TypeScript                                                             | C++                                                                                                                               |
 | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | `const RE = /a(b)/i;` (module level or literal in a function)          | `static const rt::Regex RE("a(b)", "i");` (see "State" for `g`/`y`)                                                               |
-| `new RegExp(source, flags)`                                            | `rt::Regex re(source, flags);` throws `rt::SyntaxError` with JSC's text                                                           |
+| `new RegExp(source, flags)`                                            | `rt::Regex re(source, flags);` throws `rt::SyntaxError` on invalid patterns or flags                                              |
 | `re.test(s)`                                                           | `re.test(s)`                                                                                                                      |
 | `re.exec(s)` / `s.match(re)` without `g`                               | `re.exec(s)` / `rt::match(s, re)` -> `std::optional<rt::RegexMatch>` (nullopt = `null`)                                           |
 | `m[0]`, `m[1]`, `m.index`, `m.groups?.name`, `m.input`                 | `m->str()`, `(*m)[1]` (`std::optional<std::string>`), `m->index`, `m->group("name")`, `m->input`                                  |
@@ -96,71 +95,26 @@ replacements support `$$ $& $` $' $n $nn $<name>` with JSC's rules (`$0`, `$00`,
 Output is canonical WTF-8: lone surrogates that end up adjacent (removing `x` from `"\uD83Dx\uDE00"`)
 join into one four-byte sequence, exactly like the JS string.
 
-## Errors
+## Syntax and errors
 
-- Invalid pattern or flags: `rt::SyntaxError`, message byte-identical to JSC
-  (`"Invalid regular expression: nothing to repeat"`, `"Invalid flags supplied to RegExp
-constructor."`), including JSC's error precedence (illegal backreferences are reported after
-  the rest of the pattern, as YarrParser does).
-- `matchAll`/`replaceAll` with a non-global regex: `rt::TypeError` with JSC's message.
-- Calling `rt::match` with a `g` regex, `rt::matchGlobal` without `g`, or `rt::split` on a regex
-  with capture groups throws `std::logic_error`: these are translation bugs (JS returns a different
-  type there), pick the right function.
+- Flags `d g i m s u v y` are supported. `u` and `v` are mutually exclusive. The `v` flag enables Unicode set operations
+  and properties of strings. For example, `[a--b]` with `v` matches `a`. Stored regular expressions retain their source
+  and flags through both typed-value codecs.
+- Invalid patterns or flags raise `rt::SyntaxError`. Pattern diagnostics come from libregexp.
+- `matchAll` and `replaceAll` raise `rt::TypeError` for a non-global regex. The C++ API raises `std::logic_error` when
+  a caller passes a global regex to `rt::match`, passes a non-global regex to `rt::matchGlobal`, or calls `rt::split`
+  on a pattern with capture groups. Use `rt::splitWithCaptures` for that result shape.
+- Patterns above 64 KiB and parser stack exhaustion raise `rt::RangeError`. The 255th explicit capture group raises
+  `rt::SyntaxError`. The parser stack guard allows at most 128 KiB below its entry frame and leaves 32 KiB above the
+  thread stack base. The engine allocator caps individual requests at 72 MiB.
+- Each matching operation has a 2.5-second monotonic deadline and a bound on interruption checks. Execution
+  exhaustion raises `rt::RangeError`. [Observed syntax differences and limits](../DEVIATIONS-FROM-BUN.md#regular-expressions-with-quickjs-ng-libregexp-0180)
 
-## Supported syntax
+## Performance
 
-Everything JavaScriptCore accepts with flags `d g i m s u y`, with its semantics:
-
-- Characters: literals, `\t \n \v \f \r \0`, `\cX`, `\xHH`, `\uHHHH` (surrogate pairs join under
-  `u`), `\u{...}` (under `u`), identity escapes (any character without `u`; syntax characters, `/`,
-  `-` in classes and every non-ASCII character with `u`), Annex B legacy octal and `\8` `\9`.
-- Classes: `[...]`, `[^...]`, ranges, `\d \D \w \W \s \S` (inside and outside classes), `.` with
-  and without `s`, `[\b]`, Annex B ranges with class escapes (`[\w-.]`) without `u`.
-- Unicode property escapes under `u`, all of them: every General_Category value and alias,
-  the 53 binary properties (`Alphabetic`, `Emoji`, `ID_Start`, `White_Space`, ... and their short
-  names), `Script=`/`sc=` and `Script_Extensions=`/`scx=` with every script name and code, and
-  JSC's extensions `gc=Any`, `gc=ASCII`, `gc=Assigned`. Data is Unicode 17, probed from JSC.
-- Anchors `^ $` with and without `m`, `\b \B` (with `iu`, U+017F and U+212A are word characters).
-- Quantifiers `* + ? {n} {n,} {n,m}` greedy and lazy, counts up to 2^64 - 2 (JSC's limits and
-  messages), quantified lookaheads without `u` (Annex B).
-- Groups: capturing, non-capturing, named (`(?<name>...)`, any ID_Start/ID_Continue name, `\u`
-  escapes in names), duplicate names in different alternatives, modifiers `(?ims-ims:...)`.
-- Backreferences `\1`..`\N` and `\k<name>` (forward and backward, inside lookbehind, case-insensitive),
-  with Annex B fallback to octal/identity when illegal and no `u`.
-- Lookahead and lookbehind, positive and negative, with captures.
-- `i`: JSC's canonicalization, simple case folding under `u`, toUpperCase-based otherwise
-  (tables probed from JSC, e.g. `/\u212A/i` does not match `k`, `/\u212A/iu` does).
-- Matching rules: empty-check of quantified groups, capture reset per iteration, `lastIndex`
-  advance by code point under `u`, code-unit matching without `u` (`.` and classes see surrogate
-  halves; a `u` search never starts inside a pair).
-
-## Unsupported and limits
-
-- The `v` flag (`unicodeSets`): construction throws `rt::SyntaxError("Invalid regular expression:
-rt::Regex does not support the v flag")`. No pattern in the inventory uses it; properties of
-  strings (`\p{RGI_Emoji}`) would need emoji sequence data the engine does not carry.
-- Nesting: more than 500 nested groups throws `rt::RangeError("Out of memory: Invalid regular
-expression: too many nested disjunctions")`, JSC's text; JSC's own limit is stack dependent
-  (about 30500 in Bun). Construction recurses once per level and needs under 1 MiB of stack at the
-  limit, even unoptimized. More than 32768 capture groups throws JSC's "too many captures".
-- Backtracking is unbounded in time, like JSC (patterns such as `(a+)+b` are exponential in both).
-  Backtracking state is bounded at about 3 million entries (72 MiB); past it the search reports no
-  match, which is what JSC does when its own backtracking memory runs out (at a similar but not
-  identical size, only for inputs of a million characters or more: `/^(?:a|b)*$/` gives up between
-  1 and 2 million in both).
-
-## Performance notes
-
-- Construct once: `static const` (or `static`) for literals, as JSC caches literals. Compiling is
-  a parse plus a small bytecode emit. Matching keeps captures, registers and backtracking state in
-  inline buffers (heap only when a pattern has many groups or backtracks deeply) and allocates
-  nothing else except the results it returns.
-- ASCII subjects are matched in place; a non-ASCII subject is converted to UTF-16 once per call.
-  Iterate with `matchAll`, `replace`, `split` or `matchGlobal` (one conversion for all matches)
-  rather than an `exec` loop when the subject is long and non-ASCII (each `exec` converts it again).
-- Literal prefixes are searched with `std::string_view::find`; other patterns skip positions
-  whose first code unit cannot start a match; a leading `^` without `m` tries position 0 only;
-  runs of single-character atoms (`\s+`, `[a-f0-9]{64}`) backtrack without per-step frames.
+Compile literals once in `static const` objects, or `static` where the caller needs mutable `lastIndex`. ASCII
+subjects are matched in place. A non-ASCII subject is converted to UTF-16 once per operation. On a long non-ASCII
+subject, `matchAll`, `replace`, `split` and `matchGlobal` can scan multiple matches with one conversion.
 
 ## Appendix: pattern inventory
 
@@ -179,8 +133,7 @@ Dynamic `RegExp` constructions, also in the vectors with their concrete patterns
 - `src/harmony/tools/backend.ts:147`: `patternToRegExp(glob)`, a `^...$` built from `[^/]*`,
   `.*`, `(?:.*/)?`, `[^/]` and escaped literals (test).
 - `src/kv-conversion/typed-value.ts:133`, `src/kv-conversion/profile-json.ts:100`: stored RegExp
-  values rebuilt from `source` and `flags` (any pattern: everything except `v` round-trips through
-  `source()`, `flags()` and `toString()`).
+  values rebuilt from `source` and `flags`. The round trip includes `v` and preserves the typed graph bytes.
 
 Literals (pattern, methods, sites):
 

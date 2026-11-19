@@ -7,6 +7,7 @@ import math
 from pathlib import Path
 import re
 import statistics
+import subprocess
 import sys
 import time
 
@@ -82,6 +83,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("--oracle", type=Path, required=True, help="Detached worktree prepared by conformance/oracle.sh")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--case", action="append", default=[])
     parser.add_argument("--samples", type=int, default=7)
@@ -91,6 +93,9 @@ def main():
     if not 1 <= args.samples <= 100 or not 0 <= args.warmups <= 100:
         raise RuntimeError("Invalid sample or warmup bounds")
     workspace = Path(__file__).resolve().parents[4]
+    oracle_root = args.oracle.resolve(strict=True)
+    pin_helper = workspace / "cpp/gateway/conformance/oracle.sh"
+    oracle_revision = subprocess.check_output(["bash", pin_helper, "--check", oracle_root], text=True).strip()
     binary = args.binary.resolve()
     if workspace / ".data" not in binary.parents or not binary.is_file():
         raise RuntimeError("Native binary must exist in this worktree's .data")
@@ -102,12 +107,12 @@ def main():
     for name in ("h", "t", "w"):
         (scratch / name).mkdir(parents=True)
     manifest = args.manifest.resolve()
-    oracle = Path(__file__).with_name("oracle.mjs")
+    oracle = oracle_root / "cpp/gateway/bench/regex/oracle.mjs"
     sources = [Path(__file__).resolve(), oracle, Path(__file__).with_name("regex_bench.cpp"), manifest,
-               workspace / "src/codex/supervisor-secret.ts", workspace / "cpp/gateway/tools/build_support.py"] + source_inputs(workspace)
+               oracle_root / "src/codex/supervisor-secret.ts", workspace / "cpp/gateway/tools/build_support.py"] + source_inputs(workspace)
     inputs = {str(path): digest(path) for path in sources}
     identity = {"native_binary": str(binary), "native_sha256": digest(binary), "bun_path": "/usr/local/bin/bun",
-                "bun_sha256": digest(Path("/usr/local/bin/bun")), "inputs_sha256": inputs,
+                "bun_sha256": digest(Path("/usr/local/bin/bun")), "oracle_revision": oracle_revision, "inputs_sha256": inputs,
                 "samples": args.samples, "warmups": args.warmups, "p95_method": "nearest rank; seven samples yields maximum",
                 "rss_scope": "whole child maximum resident set including startup, fixture load and runtime", "before": snapshot()}
     compiled_sources = [Path(__file__).with_name("regex_bench.cpp")] + source_inputs(workspace)

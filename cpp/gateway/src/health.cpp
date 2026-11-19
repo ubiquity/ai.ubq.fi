@@ -308,13 +308,20 @@ namespace uos::health {
       const auto meteredCredentials = metered_quota::readMeteredAccountCredentials();
       const auto progress = std::make_shared<HealthProbeProgress>();
       if (!meteredCredentials) progress->metered_quota = nullptr;
-      const auto timer = std::make_shared<rt::Timeout>();
-      auto timeout = rt::newPromise<json::object>([controller, progress, timer](rt::Resolve<json::object> resolve, rt::Reject) {
-        *timer = rt::setTimeout([controller, progress, resolve] { controller.abort(rt::makeReason(rt::DOMException("Active upstream health probe timed out.", "TimeoutError"))); resolve(timeoutProbe(*progress)); }, activeUpstreamHealthTimeoutMs);
-      });
+      const auto timeout = rt::withResolvers<json::object>();
+      rt::Timeout timer;
+      try {
+        timer = rt::setTimeout([controller, progress, resolve = timeout.resolve] { controller.abort(rt::makeReason(rt::DOMException("Active upstream health probe timed out.", "TimeoutError"))); resolve(timeoutProbe(*progress)); }, activeUpstreamHealthTimeoutMs);
+      } catch (...) {
+        timeout.reject(std::current_exception());
+      }
       auto task = probeUpstream(controller.signal(), meteredCredentials, progress);
-      std::vector<rt::Promise<json::object>> racers; racers.emplace_back(std::move(task)); racers.push_back(timeout);
-      auto pending = rt::race(std::move(racers)).finally_([timer] { if (*timer) rt::clearTimeout(*timer); upstreamProbeInFlight = std::nullopt; });
+      std::vector<rt::Promise<json::object>> racers; racers.emplace_back(std::move(task)); racers.push_back(timeout.promise);
+      auto pending = rt::race(std::move(racers)).finally_([timer, reject = timeout.reject] {
+        if (timer) rt::clearTimeout(timer);
+        reject();
+        upstreamProbeInFlight = std::nullopt;
+      });
       upstreamProbeInFlight = pending;
       const auto result = co_await pending.wait(); co_return result;
     }

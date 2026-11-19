@@ -534,11 +534,16 @@ namespace uos::codex::auth_refresh {
     }
     const rt::AbortSignal abortSignal = *signal;
     const auto listenerSlot = std::make_shared<rt::EventListener>();
+    const auto cleanup = rt::scopeExit([&] { abortSignal.removeEventListener("abort", *listenerSlot); });
     const std::weak_ptr<rt::EventListener> listenerHandle = listenerSlot;
+    const std::weak_ptr<rt::detail::AbortSignalState> weakSignal = abortSignal.state();
     rt::Promise<T> abortion = rt::newPromise<T>([&](auto, rt::Reject reject) {
-      *listenerSlot = rt::EventListener([abortSignal, listenerHandle, reject]() {
-        if (const std::shared_ptr<rt::EventListener> listener = listenerHandle.lock()) abortSignal.removeEventListener("abort", *listener);
-        reject(abortReasonAsError(abortSignal.reason()));
+      *listenerSlot = rt::EventListener([weakSignal, listenerHandle, reject]() {
+        const auto state = weakSignal.lock();
+        if (!state) return;
+        const rt::AbortSignal active(state);
+        if (const auto listener = listenerHandle.lock()) active.removeEventListener("abort", *listener);
+        reject(abortReasonAsError(active.reason()));
       });
       abortSignal.addEventListener("abort", *listenerSlot, rt::AddEventListenerOptions{.once = true});
       (void)promise.finally_([abortSignal, listenerSlot] { abortSignal.removeEventListener("abort", *listenerSlot); }).catch_(rt::ignoreRejection);

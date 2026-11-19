@@ -8,6 +8,7 @@
 #include "uos/rt/stream.hpp"
 #include "uos/rt/test_async.hpp"
 #include "uos/rt/text_codec.hpp"
+#include "helpers/live_allocations.hpp"
 
 #include <cstdint>
 #include <exception>
@@ -96,6 +97,25 @@ ASYNC_TEST("bounded response body recognizes EOF exactly at the byte limit") {
   EXPECT_EQ(result.complete, true);
   EXPECT_EQ(result.bytes.size(), static_cast<std::size_t>(BOUNDED_RESPONSE_BODY_MAX_BYTES));
   EXPECT_EQ(*cancellations, 0);
+}
+
+ASYNC_TEST("completed bounded response reads release chunks on the running loop") {
+  const auto readBody = []() -> rt::Task<void> {
+    rt::UnderlyingSource<rt::ByteChunk> source;
+    source.start = [](Controller controller) {
+      controller.enqueue(rt::ByteChunk(64 * 1024, 'x'));
+      controller.close();
+    };
+    const rt::Response response(rt::BodyInit(rt::ByteStream(std::move(source))));
+    ReadBoundedResponseBodyOptions options;
+    options.timeoutMs = 10;
+    auto read = readBoundedResponseBody(response, options);
+    const auto result = co_await std::move(read);
+    EXPECT(result.complete);
+    EXPECT_EQ(result.bytes.size(), 64u * 1024u);
+  };
+  auto checking = uos::tests::helpers::expectStableLiveAllocations(readBody, 32, 20);
+  co_await std::move(checking);
 }
 
 ASYNC_TEST("bounded response body truncates and cancels oversized bodies") {

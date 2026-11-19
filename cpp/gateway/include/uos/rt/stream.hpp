@@ -46,7 +46,7 @@ namespace uos::rt {
       SourceAlgorithm(F&& callable) {
         using R = std::invoke_result_t<std::decay_t<F>&, A>;
         if constexpr (std::is_void_v<R>) sync_ = std::make_shared<const std::function<void(A)>>(std::forward<F>(callable));
-        else async_ = std::make_shared<const std::function<Task<void>(A)>>(std::forward<F>(callable));
+        else async_ = std::make_shared<const std::function<Task<void>(A&&)>>(std::forward<F>(callable));
       }
       explicit operator bool() const noexcept { return sync_ || async_; }
       // `Promise.resolve(algorithm(argument))`; a synchronous throw rejects
@@ -69,9 +69,12 @@ namespace uos::rt {
       }
 
     private:
-      static Task<void> runAsync(std::shared_ptr<const std::function<Task<void>(A)>> function, A argument) { co_await (*function)(std::move(argument)); }
+      static Task<void> runAsync(std::shared_ptr<const std::function<Task<void>(A&&)>> function, A argument) {
+        auto handling = (*function)(std::move(argument));
+        co_await std::move(handling);
+      }
       std::shared_ptr<const std::function<void(A)>> sync_;
-      std::shared_ptr<const std::function<Task<void>(A)>> async_;
+      std::shared_ptr<const std::function<Task<void>(A&&)>> async_;
     };
 
     enum class StreamError : std::uint8_t {
@@ -235,7 +238,7 @@ namespace uos::rt {
     }
 
     // ReadableStreamCancel: `out` settles one turn after the cancel algorithm's promise.
-    template <class T> void cancelStreamInto(const std::shared_ptr<StreamState<T>>& stream, Reason reason, const std::shared_ptr<PromiseState<void>>& out) {
+    template <class T> void cancelStreamInto(std::shared_ptr<StreamState<T>> stream, Reason reason, const std::shared_ptr<PromiseState<void>>& out) {
       stream->disturbed = true;
       using Status = typename StreamState<T>::Status;
       if (stream->status == Status::closed) {
@@ -457,14 +460,19 @@ namespace uos::rt {
 
     template <class T> void teePull(const std::shared_ptr<TeeState<T>>& tee);
 
-    template <class T> Task<void> teeRead(std::shared_ptr<TeeState<T>> tee) {
+    template <class T> Task<void> teeRead(std::weak_ptr<TeeState<T>> weak) {
       ReadableStreamReadResult<T> result;
       bool failed = false;
       try {
-        result = co_await readFrom(tee->reader);
+        Task<ReadableStreamReadResult<T>> reading;
+        if (auto tee = weak.lock()) reading = readFrom(tee->reader);
+        else co_return;
+        result = co_await std::move(reading);
       } catch (...) {
         failed = true;
       }
+      auto tee = weak.lock();
+      if (!tee) co_return;
       if (failed) {
         tee->reading = false;
         co_return;
@@ -499,7 +507,7 @@ namespace uos::rt {
         return;
       }
       tee->reading = true;
-      start(currentLoop(), teeRead(tee));
+      start(currentLoop(), teeRead<T>(tee));
     }
 
     template <class T> Task<void> teeCancel(std::shared_ptr<TeeState<T>> tee, bool first, Reason reason) {
@@ -513,7 +521,8 @@ namespace uos::rt {
       if (tee->canceled1 && tee->canceled2) adopt(tee->cancelPromise, cancelStream(tee->source, makeReason(TeeCancelReason(tee->reason1, tee->reason2))));
       auto cancelPromise = tee->cancelPromise;
       tee.reset();
-      co_await awaitSettled(cancelPromise);
+      auto cancelled = awaitSettled(cancelPromise);
+      co_await std::move(cancelled);
       if (cancelPromise->status == PromiseCore::Status::rejected) rethrow(cancelPromise->error);
     }
 
@@ -537,7 +546,8 @@ namespace uos::rt {
         }
         bool returning = false;
         try {
-          co_await yield(std::move(*step->value));
+          auto yielding = yield(std::move(*step->value));
+          co_await std::move(yielding);
         } catch (const GeneratorReturn&) {
           returning = true;
         }

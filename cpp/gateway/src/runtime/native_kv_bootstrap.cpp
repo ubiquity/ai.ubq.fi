@@ -7,7 +7,6 @@
 #include "uos/rt/process.hpp"
 #include "uos/rt/regex.hpp"
 #include "uos/rt/string.hpp"
-#include "uos/rt/url.hpp"
 #include <algorithm>
 #include <array>
 #include <exception>
@@ -20,14 +19,8 @@ namespace uos::runtime::native_kv_bootstrap {
   using storage::native_addon::NativeKvArtifactBinding;
 
   namespace {
-    // `fileURLToPath(new URL("../../", import.meta.url))` with the URL of
-    // src/runtime/native-kv-bootstrap.ts: this port is compiled from
-    // cpp/gateway/src/runtime/native_kv_bootstrap.cpp of the same checkout.
     const std::string& REPOSITORY_ROOT() {
-      static const std::string root = [] {
-        const rt::URL module = rt::pathToFileURL(rt::path::resolve(rt::path::dirname(__FILE__), "../../../../src/runtime/native-kv-bootstrap.ts"));
-        return rt::fileURLToPath(rt::URL("../../", module));
-      }();
+      static const std::string root = rt::path::resolve(rt::path::dirname(__FILE__), "../../../..");
       return root;
     }
 
@@ -96,7 +89,7 @@ namespace uos::runtime::native_kv_bootstrap {
     if (rt::process::arch != "arm64" || !(rt::process::platform == "linux" || rt::process::platform == "darwin"))
       throw rt::JsError("Native KV development platform is unsupported");
     const std::string data = rt::path::join(root, ".data");
-    const std::string inputs = rt::path::join(root, "tools", "native-kv", rt::process::platform == "darwin" ? "inputs-darwin-arm64.json" : "inputs.json");
+    const std::string inputs = rt::path::join(root, "cpp/gateway/packaging/native-kv", rt::process::platform == "darwin" ? "inputs-darwin-arm64.json" : "inputs.json");
     return NativeKvDevelopmentPaths{root, data, rt::path::join(data, BINDING_FILE), inputs};
   }
 

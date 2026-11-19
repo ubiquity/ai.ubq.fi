@@ -776,7 +776,8 @@ namespace uos::provider::anthropic_responses {
       bounded_response_body::ReadBoundedResponseBodyOptions readOptions;
       readOptions.signal = options.signal;
       const rt::Response cloned = response.clone();
-      const bounded_response_body::BoundedResponseBody body = co_await bounded_response_body::readBoundedResponseBody(cloned, std::move(readOptions));
+      auto reading = bounded_response_body::readBoundedResponseBody(cloned, std::move(readOptions));
+      const bounded_response_body::BoundedResponseBody body = co_await std::move(reading);
       if (options.signal && options.signal->aborted()) rt::rethrow(abortError(*options.signal));
       if (!body.complete) co_return response;
       json::value value;
@@ -854,7 +855,8 @@ namespace uos::provider::anthropic_responses {
 
   rt::Task<rt::Response> normalizeAnthropicResponsesResponse(rt::Response response, AnthropicResponsesOptions options) {
     if (!response.ok()) {
-      rt::Response normalized = co_await normalizeMessagesHttpError(response, options);
+      auto normalizing = normalizeMessagesHttpError(response, options);
+      rt::Response normalized = co_await std::move(normalizing);
       co_return normalized;
     }
     rt::Headers headers(response.headers());
@@ -877,7 +879,8 @@ namespace uos::provider::anthropic_responses {
     readOptions.signal = options.signal;
     readOptions.maxBytes = MAX_RESPONSES_SSE_EVENT_BYTES;
     readOptions.timeoutMs = inference_deadline::BUFFERED_INFERENCE_DEADLINE_MS;
-    const bounded_response_body::BoundedResponseBody body = co_await bounded_response_body::readBoundedResponseBody(response, std::move(readOptions));
+    auto reading = bounded_response_body::readBoundedResponseBody(response, std::move(readOptions));
+    const bounded_response_body::BoundedResponseBody body = co_await std::move(reading);
     if (options.signal && options.signal->aborted()) rt::rethrow(abortError(*options.signal));
     if (!body.complete) throw ResponsesStreamError("Anthropic Messages body was incomplete or exceeded its bound.", {.cause = nullptr, .kind = "read_error"});
     json::value message;

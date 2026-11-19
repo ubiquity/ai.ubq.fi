@@ -19,9 +19,21 @@ namespace uos::inference_admission {
       double queuedAtMs = 0;
       std::optional<rt::AbortSignal> callerSignal;
       std::optional<rt::AbortSignal> waitSignal;
-      std::optional<rt::EventListener> onWaitAbort;
+      rt::EventListener onWaitAbort;
+      std::weak_ptr<rt::detail::TimerState> timeout;
       bool settled = false;
       std::optional<rt::Resolve<InferenceAdmissionResult>> resolve;
+
+      void stopWaiting() {
+        if (waitSignal) waitSignal->removeEventListener("abort", onWaitAbort);
+        waitSignal.reset();
+        onWaitAbort = {};
+        // Clear the exact timer without invoking the global clearTimeout hook.
+        rt::clearInterval(rt::Timeout(timeout.lock()));
+        timeout.reset();
+      }
+
+      ~Waiter() { stopWaiting(); }
     };
 
     double elapsedMs(double since) { return rt::Math::max(0, rt::Math::round(rt::performanceNow() - since)); }
@@ -53,9 +65,7 @@ namespace uos::inference_admission {
       std::vector<Principal> turnOrder;
 
       void detachWaiter(const std::shared_ptr<Waiter>& waiter) {
-        if (waiter->waitSignal && waiter->onWaitAbort) waiter->waitSignal->removeEventListener("abort", *waiter->onWaitAbort);
-        waiter->waitSignal.reset();
-        waiter->onWaitAbort.reset();
+        waiter->stopWaiting();
         const auto found = waitingByPrincipal.find(waiter->principal);
         if (found == waitingByPrincipal.end()) return;
         std::vector<std::shared_ptr<Waiter>>& queue = found->second;
@@ -159,9 +169,10 @@ namespace uos::inference_admission {
           const double queuedAtMs = rt::performanceNow();
           // One signal covers both ways a wait can end without a permit: the caller
           // went away, or the finite queue wait expired.
+          const rt::AbortController deadline;
           std::vector<rt::AbortSignal> sources;
           if (callerSignal) sources.push_back(*callerSignal);
-          sources.push_back(rt::AbortSignal::timeout(maxQueueWaitMs));
+          sources.push_back(deadline.signal());
           const rt::AbortSignal waitSignal = rt::AbortSignal::any(sources);
           auto waiter = std::make_shared<Waiter>();
           waiter->principal = principal;
@@ -169,13 +180,23 @@ namespace uos::inference_admission {
           waiter->callerSignal = callerSignal;
           waiter->waitSignal = waitSignal;
           waiter->resolve = resolve;
-          const rt::EventListener onWaitAbort([self, waiter, callerSignal, queuedAtMs] {
-            if (callerSignal && callerSignal->aborted()) self->settleWaiter(waiter, InferenceAdmissionCallerAborted{.waitedMs = elapsedMs(queuedAtMs)});
-            else self->settleWaiter(waiter, InferenceAdmissionLocalOverload{.cause = "queue_wait_timeout", .waitedMs = elapsedMs(queuedAtMs)});
+          const rt::EventListener onWaitAbort([owner = std::weak_ptr(self), queued = std::weak_ptr(waiter)] {
+            const auto controller = owner.lock();
+            const auto live = queued.lock();
+            if (!controller || !live) return;
+            const double waitedMs = elapsedMs(live->queuedAtMs);
+            if (live->callerSignal && live->callerSignal->aborted()) controller->settleWaiter(live, InferenceAdmissionCallerAborted{.waitedMs = waitedMs});
+            else controller->settleWaiter(live, InferenceAdmissionLocalOverload{.cause = "queue_wait_timeout", .waitedMs = waitedMs});
           });
           waiter->onWaitAbort = onWaitAbort;
+          auto cleanup = rt::scopeExit([waiter] { waiter->stopWaiting(); });
           waitSignal.addEventListener("abort", onWaitAbort);
+          // The loop owns the pending wait until settlement or teardown. Keep
+          // the combined signal so abort still runs after caller listeners.
+          auto timer = rt::detail::createExactTimer([self, deadline] { (void)self; deadline.abort(); }, maxQueueWaitMs);
+          waiter->timeout = timer.unref().handle();
           enqueueWaiter(waiter);
+          cleanup.release();
           if (waitSignal.aborted()) onWaitAbort();
         });
       }

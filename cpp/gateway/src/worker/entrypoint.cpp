@@ -51,8 +51,15 @@ namespace uos::worker::entrypoint {
       double size = 0;
       std::string text;
       const rt::AbortSignal signal = request.signal();
-      const rt::EventListener cancel([reader, signal] { rt::spawn(reader.cancel(signal.reason()), rt::ignoreRejection); });
-      request.signal().addEventListener("abort", cancel, {.once = true});
+      const std::weak_ptr<rt::detail::AbortSignalState> weakSignal = signal.state();
+      const rt::EventListener cancel([reader, weakSignal] {
+        if (auto live = weakSignal.lock()) {
+          const rt::AbortSignal aborted(std::move(live));
+          rt::spawn(reader.cancel(aborted.reason()), rt::ignoreRejection);
+        }
+      });
+      auto removeCancel = rt::scopeExit([&] { signal.removeEventListener("abort", cancel); });
+      signal.addEventListener("abort", cancel, {.once = true});
       rt::Reason failure;
       json::object result;
       try {
@@ -76,7 +83,8 @@ namespace uos::worker::entrypoint {
       } catch (...) {
         failure = std::current_exception();
       }
-      request.signal().removeEventListener("abort", cancel);
+      signal.removeEventListener("abort", cancel);
+      removeCancel.release();
       reader.releaseLock();
       if (failure) {
         try {
@@ -97,41 +105,54 @@ namespace uos::worker::entrypoint {
       return out;
     }
 
-    // The closure state of one delivered response (`deliverResponse`'s locals).
-    struct Delivery {
-      UpstreamResult upstream;
-      rt::Request request;
-      rt::AbortController abort;
-      rt::EventListener abortFromRequest;
-      std::shared_ptr<DeliveryOutbox> outbox;
-      BoundaryLifetime lifetime;
-      std::optional<BoundaryDelivery> delivery;
-      bool bodyDone = false;
-      std::optional<rt::Promise<void>> completed;
-      std::optional<rt::ReadableStreamDefaultReader<rt::ByteChunk>> reader;
-      rt::EventListener signalCancellation;
+    struct RequestAbortBridge {
+      rt::AbortSignal signal;
+      rt::EventListener listener;
+
+      RequestAbortBridge(rt::AbortSignal source, rt::EventListener forwarding) : signal(std::move(source)), listener(std::move(forwarding)) {}
+      ~RequestAbortBridge() { remove(); }
+      void remove() const { signal.removeEventListener("abort", listener); }
     };
 
-    rt::Promise<void> finish(const std::shared_ptr<Delivery>& state, DeliveryOutcome outcome) {
+    // The host receipt only needs the durable outbox and the shared settlement latch.
+    struct DeliverySettlement {
+      std::shared_ptr<RequestAbortBridge> bridge;
+      std::shared_ptr<DeliveryOutbox> outbox;
+      std::optional<rt::Promise<void>> completed;
+    };
+
+    struct Delivery {
+      UpstreamResult upstream;
+      rt::AbortController abort;
+      std::shared_ptr<DeliverySettlement> settlement;
+      BoundaryLifetime lifetime;
+      bool externalReceipt;
+      bool bodyDone = false;
+      std::optional<rt::ReadableStreamDefaultReader<rt::ByteChunk>> reader;
+      rt::EventListener signalCancellation;
+
+      Delivery(UpstreamResult response, rt::AbortController controller, std::shared_ptr<DeliverySettlement> receipt, BoundaryLifetime host, bool hasExternalReceipt)
+        : upstream(std::move(response)), abort(std::move(controller)), settlement(std::move(receipt)), lifetime(std::move(host)), externalReceipt(hasExternalReceipt) {}
+
+      ~Delivery() { releaseCancellation(); }
+
+      void releaseCancellation() {
+        abort.signal().removeEventListener("abort", signalCancellation);
+        signalCancellation = rt::EventListener();
+      }
+    };
+
+    rt::Promise<void> finish(const std::shared_ptr<DeliverySettlement>& state, DeliveryOutcome outcome) {
       if (!state->completed) {
-        const rt::Request request = state->request;
-        const rt::EventListener abortFromRequest = state->abortFromRequest;
-        state->completed =
-          rt::Promise<void>(state->outbox->delivery(std::move(outcome))).finally_([request, abortFromRequest] { request.signal().removeEventListener("abort", abortFromRequest); });
+        state->completed = rt::Promise<void>(state->outbox->delivery(std::move(outcome))).finally_([bridge = state->bridge] { bridge->remove(); });
       }
       return *state->completed;
-    }
-
-    // `abort.signal.removeEventListener("abort", signalCancellation)`; the
-    // listener also holds this state, so the reference is dropped with it.
-    void releaseCancellation(const std::shared_ptr<Delivery>& state) {
-      state->abort.signal().removeEventListener("abort", state->signalCancellation);
-      state->signalCancellation = rt::EventListener();
     }
 
     rt::Task<void> cancelDelivery(std::shared_ptr<Delivery> state, rt::Reason reason) {
       if (state->bodyDone) co_return;
       state->bodyDone = true;
+      state->releaseCancellation();
       state->abort.abort(reason);
       rt::Reason failure;
       try {
@@ -145,7 +166,7 @@ namespace uos::worker::entrypoint {
       } catch (...) {
         failure = std::current_exception();
       }
-      rt::Promise<void> finishing = finish(state, "interrupted");
+      rt::Promise<void> finishing = finish(state->settlement, "interrupted");
       co_await finishing.wait();
       if (failure) std::rethrow_exception(failure);
     }
@@ -157,9 +178,9 @@ namespace uos::worker::entrypoint {
         rt::ReadableStreamReadResult<rt::ByteChunk> chunk = co_await std::move(reading);
         if (chunk.done) {
           state->bodyDone = true;
-          releaseCancellation(state);
-          if (!state->delivery) {
-            rt::Promise<void> finishing = finish(state, state->abort.signal().aborted() ? "interrupted" : "unobserved");
+          state->releaseCancellation();
+          if (!state->externalReceipt) {
+            rt::Promise<void> finishing = finish(state->settlement, state->abort.signal().aborted() ? "interrupted" : "unobserved");
             co_await finishing.wait();
           }
           controller.close();
@@ -171,35 +192,26 @@ namespace uos::worker::entrypoint {
       }
       if (failure) {
         state->bodyDone = true;
-        releaseCancellation(state);
-        rt::Promise<void> finishing = finish(state, "interrupted");
+        state->releaseCancellation();
+        rt::Promise<void> finishing = finish(state->settlement, "interrupted");
         co_await finishing.wait();
         controller.error(failure);
       }
     }
 
-    rt::Response deliverResponse(UpstreamResult upstream, const std::string& requestId, rt::Request request, rt::AbortController abort, rt::EventListener abortFromRequest,
+    rt::Response deliverResponse(UpstreamResult upstream, const std::string& requestId, rt::AbortController abort, std::shared_ptr<RequestAbortBridge> bridge,
                                  std::shared_ptr<DeliveryOutbox> outbox, BoundaryLifetime lifetime, std::optional<BoundaryDelivery> delivery) {
-      auto state = std::make_shared<Delivery>(Delivery{
-        .upstream = std::move(upstream),
-        .request = std::move(request),
-        .abort = std::move(abort),
-        .abortFromRequest = std::move(abortFromRequest),
-        .outbox = std::move(outbox),
-        .lifetime = std::move(lifetime),
-        .delivery = std::move(delivery),
-        .bodyDone = false,
-        .completed = std::nullopt,
-        .reader = std::nullopt,
-        .signalCancellation = rt::EventListener(),
-      });
-      if (state->delivery) {
-        state->lifetime.waitUntil(state->delivery->completed.then([state](DeliveryOutcome outcome) { return finish(state, std::move(outcome)); }));
+      const auto settlement = std::make_shared<DeliverySettlement>(DeliverySettlement{std::move(bridge), std::move(outbox), std::nullopt});
+      auto state = std::make_shared<Delivery>(std::move(upstream), std::move(abort), settlement, std::move(lifetime), delivery.has_value());
+      if (delivery) {
+        state->lifetime.waitUntil(delivery->completed.then([settlement](DeliveryOutcome outcome) { return finish(settlement, std::move(outcome)); }));
       }
       if (const std::optional<rt::ByteStream> body = state->upstream.response.body()) state->reader = body->getReader();
-      state->signalCancellation = rt::EventListener([state] {
-        state->lifetime.waitUntil(rt::Promise<void>(cancelDelivery(state, state->abort.signal().reason())));
-        state->signalCancellation = rt::EventListener();
+      const std::weak_ptr<Delivery> weak = state;
+      state->signalCancellation = rt::EventListener([weak] {
+        if (auto live = weak.lock()) {
+          live->lifetime.waitUntil(rt::Promise<void>(cancelDelivery(live, live->abort.signal().reason())));
+        }
       });
       state->abort.signal().addEventListener("abort", state->signalCancellation, {.once = true});
       std::optional<rt::ByteStream> responseBody;
@@ -211,8 +223,8 @@ namespace uos::worker::entrypoint {
       }
       if (!state->reader) {
         state->bodyDone = true;
-        releaseCancellation(state);
-        if (!state->delivery) state->lifetime.waitUntil(finish(state, "unobserved"));
+        state->releaseCancellation();
+        if (!state->externalReceipt) state->lifetime.waitUntil(finish(settlement, "unobserved"));
       }
       if (state->abort.signal().aborted()) state->lifetime.waitUntil(rt::Promise<void>(cancelDelivery(state, state->abort.signal().reason())));
       rt::Headers headers(state->upstream.response.headers());
@@ -228,9 +240,8 @@ namespace uos::worker::entrypoint {
       bool intent = false;
     };
 
-    rt::Task<rt::Response> refuseRequest(rt::Reason error, rt::Request request, rt::AbortController abort, rt::EventListener abortFromRequest,
-                                         std::optional<AdmissionHandle> handle, std::shared_ptr<DispatchState> dispatchState, std::shared_ptr<AuthorityOperations> authority) {
-      request.signal().removeEventListener("abort", abortFromRequest);
+    rt::Task<rt::Response> refuseRequest(rt::Reason error, rt::AbortController abort, std::optional<AdmissionHandle> handle, std::shared_ptr<DispatchState> dispatchState,
+                                         std::shared_ptr<AuthorityOperations> authority) {
       try {
         if (handle && !dispatchState->intent) {
           rt::Task<void> cancelling = authority->cancelUndispatched(*handle);
@@ -277,15 +288,20 @@ namespace uos::worker::entrypoint {
       std::optional<AdmissionHandle> handle;
       const auto dispatchState = std::make_shared<DispatchState>();
       const rt::AbortController abort;
-      const rt::EventListener abortFromRequest([abort, request] { abort.abort(request.signal().reason()); });
-      request.signal().addEventListener("abort", abortFromRequest, {.once = true});
-      if (request.signal().aborted()) abortFromRequest();
+      const rt::AbortSignal requestSignal = request.signal();
+      const std::weak_ptr<rt::detail::AbortSignalState> weakSignal = requestSignal.state();
+      const rt::EventListener abortFromRequest([abort, weakSignal] {
+        if (auto live = weakSignal.lock()) abort.abort(rt::AbortSignal(std::move(live)).reason());
+      });
+      const auto bridge = std::make_shared<RequestAbortBridge>(requestSignal, abortFromRequest);
+      requestSignal.addEventListener("abort", abortFromRequest, {.once = true});
+      if (requestSignal.aborted()) abortFromRequest();
       rt::Reason failure;
       try {
         rt::Task<std::optional<BoundaryPrincipal>> authenticating = dependencies->authenticate(request);
         const std::optional<BoundaryPrincipal> principal = co_await std::move(authenticating);
         if (!principal) {
-          request.signal().removeEventListener("abort", abortFromRequest);
+          bridge->remove();
           co_return errorResponse("invalid_api_key", 401);
         }
         rt::Task<json::object> reading = readBoundedJson(request);
@@ -332,11 +348,12 @@ namespace uos::worker::entrypoint {
         rt::Promise<void> terminal = upstream.terminal.then([outbox, dispatchedAttempt](TerminalEvidence evidence) { return outbox->terminal(dispatchedAttempt, std::move(evidence)); });
         // Persist terminal observation through the actual request lifetime, even on client abort.
         lifetime.waitUntil(terminal);
-        co_return deliverResponse(upstream, requestId, request, abort, abortFromRequest, outbox, lifetime, delivery);
+        co_return deliverResponse(upstream, requestId, abort, bridge, outbox, lifetime, delivery);
       } catch (...) {
         failure = std::current_exception();
       }
-      rt::Task<rt::Response> refusing = refuseRequest(failure, request, abort, abortFromRequest, handle, dispatchState, dependencies->authority);
+      bridge->remove();
+      rt::Task<rt::Response> refusing = refuseRequest(failure, abort, handle, dispatchState, dependencies->authority);
       rt::Response refused = co_await std::move(refusing);
       co_return refused;
     }

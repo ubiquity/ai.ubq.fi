@@ -25,6 +25,7 @@
 #include <array>
 #include <cstdint>
 #include <exception>
+#include <memory>
 #include <span>
 #include <string_view>
 #include <utility>
@@ -385,8 +386,9 @@ namespace uos::codex::dispatch {
       material = rt::concat(material, promptCacheKey);
       rt::Promise<std::string> hashing(::uos::utils::sha256Hex(std::move(material)));
       const std::string digest = co_await hashing.wait();
-      const double variantBits = rt::bitOr(rt::bitAnd(rt::parseInt(rt::charAt(digest, 16), 16), 0b0011), 0b1000);
-      const std::string variant = rt::numberToString(variantBits, 16);
+      const char digit = digest[16];
+      const int nibble = digit <= '9' ? digit - '0' : digit - 'a' + 10;
+      const char variant = "0123456789abcdef"[(nibble & 0b0011) | 0b1000];
       co_return rt::slice(digest, 0, 8) + "-" + rt::slice(digest, 8, 12) + "-8" + rt::slice(digest, 13, 16) + "-" + variant + rt::slice(digest, 17, 20) + "-" +
         rt::slice(digest, 20, 32);
     }
@@ -616,24 +618,22 @@ namespace uos::codex::dispatch {
       co_await sleeping.wait();
       co_return;
     }
+    const rt::AbortSignal abortSignal = *signal;
     rt::EventListener onAbort;
-    rt::Reason failure;
-    try {
-      const rt::AbortSignal abortSignal = *signal;
-      rt::Promise<void> aborted = rt::newPromise<void>([&onAbort, abortSignal](auto, rt::Reject reject) {
-        onAbort = rt::EventListener([abortSignal, reject] { reject(auth_refresh::abortReasonAsError(retryAbortReason(&abortSignal))); });
-        abortSignal.addEventListener("abort", onAbort, rt::AddEventListenerOptions{.once = true});
-        if (abortSignal.aborted()) onAbort();
-      });
-      rt::Promise<void> sleeping(sleep(milliseconds));
-      std::vector<rt::Promise<void>> racers{sleeping, aborted};
-      rt::Promise<void> raced = rt::race(std::move(racers));
-      co_await raced.wait();
-    } catch (...) {
-      failure = std::current_exception();
-    }
-    signal->removeEventListener("abort", onAbort);
-    if (failure) std::rethrow_exception(failure);
+    const auto cleanup = rt::scopeExit([&] { abortSignal.removeEventListener("abort", onAbort); });
+    rt::Promise<void> aborted = rt::newPromise<void>([&onAbort, abortSignal](auto, rt::Reject reject) {
+      onAbort = rt::EventListener([abortSignal, reject] { reject(auth_refresh::abortReasonAsError(retryAbortReason(&abortSignal))); });
+      abortSignal.addEventListener("abort", onAbort, rt::AddEventListenerOptions{.once = true});
+      if (abortSignal.aborted()) onAbort();
+    });
+    // The sleeper can finish after the abort race rejects. Call it from the owner
+    // that will stay with the child even if the waiting frame is destroyed.
+    auto sleeper = std::make_shared<decltype(sleep)>(std::move(sleep));
+    auto sleepTask = (*sleeper)(milliseconds);
+    rt::Promise<void> sleeping(rt::detail::keepAlive(std::move(sleeper), std::move(sleepTask)));
+    std::vector<rt::Promise<void>> racers{sleeping, aborted};
+    rt::Promise<void> raced = rt::race(std::move(racers));
+    co_await raced.wait();
   }
 
   rt::Task<void> awaitPendingCodexProbeTransitions() {

@@ -103,9 +103,8 @@ namespace {
   json::array ids(const json::array& rows) { json::array result; for (const auto& row : rows) result.push_back(*rt::get(row, "id")); return result; }
 #include "codex_models_whitelist_vectors.inc"
 }
-// Port of callable catalog/admin cases and original static source/asset drift guards.
+// Catalog and admin behavior with browser asset drift guards.
 // Real handler/index ingress covers the picker gate and rejected-optional-snapshot authentication assertion.
-// Static TS handler/source checks below remain source-artifact assertions, not C++ ingress proof.
 #include "uos/admin/codex.hpp"
 #include "uos/catalog/types.hpp"
 #include "uos/codex/auth.hpp"
@@ -155,7 +154,7 @@ namespace {
     rt::GlobalFetchOverride reject{rt::Fetch([](rt::RequestInfo,rt::RequestInit)->rt::Response{throw rt::JsError("Provider discovery requires an explicit local fixture");})};
     PickerFixture(){uos::config::config.codexAuthJsonB64.clear();reset();uos::kv::setKvForTest(kv);uos::provider::capacity_events::setProviderCapacitySampleTriggerForTest([](const auto&){});}
     static void reset(){uos::codex::auth::resetCodexAuthCacheForTest();uos::runtime_config::resetRuntimeConfigCacheForTest();selection::resetProviderSelectionCacheForTest();orouter::resetOpenRouterModelsCacheForTest();metered::resetMeteredModelsCacheForTest();surplus::resetSurplusModelsCacheForTest();uos::provider::claude_code_models::resetClaudeCodeModelsCacheForTest();uos::provider::health::resetProviderHealthThrottleForTest();}
-    ~PickerFixture(){uos::kv::setKvForTest(nullptr);reset();metered::setMeteredModelsFetchForTest({});uos::provider::capacity_events::setProviderCapacitySampleTriggerForTest({});uos::config::config.codexAuthJsonB64=auth;}
+    ~PickerFixture(){uos::kv::setKvForTest(nullptr);reset();metered::setMeteredModelsFetchForTest({});orouter::setOpenRouterModelsFetchForTest({});uos::provider::capacity_events::setProviderCapacitySampleTriggerForTest({});uos::config::config.codexAuthJsonB64=auth;}
   };
   rt::Request post(const std::string& body){rt::RequestInit init;init.method="POST";init.body=body;return rt::Request("https://ai.ubq.fi/admin/models/whitelist",init);}
   rt::Request versionRequest(const std::string& version="0.203.0"){return rt::Request("https://ai.ubq.fi/v1/models?client_version="+version);}
@@ -253,9 +252,62 @@ ASYNC_TEST("the model picker route is registered and stays behind admin auth") {
   EXPECT_EQ(unknown.status(), 404);
 }
 
-TEST("the public and admin catalogs are built by one shared unfiltered snapshot") {
-  const auto openaiSource=asset("src/models/catalog.ts");const auto publicHandler=capture(openaiSource,R"re(export const handlePublicModelCatalog = async \(\): Promise<Response> => \{([\s\S]*?)\n\};)re");EXPECT(!publicHandler.empty());EXPECT(matches(publicHandler,R"re(const \[catalog, selection\] = await Promise\.all\(\[buildModelCatalogSnapshot\(\), loadProviderSelectionCached\(\)\]\);)re"));EXPECT(matches(publicHandler,R"re(const selected = filterCatalogEntriesByProviderSelection\(catalog\.models, selection\);)re"));EXPECT(matches(publicHandler,R"re(filterWhitelistedModelMap\(\s*selected,\s*catalogWhitelist\s*\))re","s"));EXPECT(!matches(publicHandler,"openRouterEntries|openRouterIds"));EXPECT(matches(publicHandler,R"re(sources: selectedCatalogSources\(catalog\.sources, selection\))re"));
-  const auto adminHandler=capture(asset("src/admin/codex.ts"),R"re(export const handleAdminModelsCatalogGet = async \(([\s\S]*?)\n\};)re");EXPECT(!adminHandler.empty());EXPECT(matches(adminHandler,R"re(const buildCatalog = dependencies\.buildCatalog \?\? buildModelCatalogSnapshot;)re"));EXPECT(matches(adminHandler,R"re(models: catalog\.models)re"));EXPECT(!matches(adminHandler,"filterWhitelisted"));EXPECT(!matches(adminHandler,"filterCatalogEntriesByProviderSelection"));
+ASYNC_TEST("the public and admin catalogs render one shared snapshot with different filters") {
+  int enrichmentFetches = 0;
+  int surplusFetches = 0;
+  PickerFixture fixture;
+  T2IngressScope ingress(fixture.kv);
+  rt::env::set("DEEPSEEK_API_KEY", "fixture-deepseek-key");
+  fixture.kv->put(uos::codex::auth::CODEX_MODELS_KV_KEY, rt::jsonParse(R"({"source":"fixture","updated_at_ms":1,"models":[{"slug":"catalog-visible"},{"slug":"catalog-hidden"}]})"));
+  fixture.kv->put(w::CODEX_MODELS_WHITELIST_KV_KEY, json::object{{"model_ids", json::array{"catalog-visible", "deepseek-v4-flash"}}, {"updated_at_ms", 2}});
+  fixture.kv->put(selection::PROVIDER_SELECTION_KV_KEY, json::object{{"provider_ids", json::array{"codex"}}, {"updated_at_ms", 3}});
+
+  const json::array enrichmentRows{json::object{{"id", "openai/catalog-visible"}}};
+  auto warmEnrichment = enrich(enrichmentRows);
+  co_await std::move(warmEnrichment);
+  ASSERT(orouter::openRouterModelsSnapshot());
+  orouter::setOpenRouterModelsFetchForTest(rt::Fetch([&](rt::RequestInfo, rt::RequestInit) {
+    ++enrichmentFetches;
+    return rt::Response::json(json::object{{"data", enrichmentRows}});
+  }));
+  rt::GlobalFetchOverride paidDiscovery(rt::Fetch([&](rt::RequestInfo input, rt::RequestInit) {
+    if (requestUrl(input).find("surplusintelligence.ai/v1/models") == std::string::npos) {
+      throw rt::JsError("Unexpected catalog fixture request");
+    }
+    ++surplusFetches;
+    return rt::Response::json(json::object{{"data", json::array{}}});
+  }));
+  AWAIT(snapshot, catalog::buildModelCatalogSnapshot());
+  ASSERT(rowById(snapshot, "catalog-hidden"));
+  ASSERT(rowById(snapshot, "deepseek-v4-flash"));
+  EXPECT_EQ(surplusFetches, 1);
+
+  AWAIT(adminResponse, admin::handleAdminModelsCatalogGet());
+  EXPECT_EQ(adminResponse.status(), 200);
+  AWAIT(adminBody, adminResponse.json());
+  const auto expected = json::value_from(snapshot);
+  const auto& adminData = adminBody.at("data");
+  EXPECT(rt::deepEqual(adminData.at("models"), expected.at("models")));
+  EXPECT(rt::deepEqual(adminData.at("sources"), expected.at("sources")));
+  EXPECT(rt::deepEqual(adminData.at("whitelist").at("model_ids"), json::array{"catalog-visible", "deepseek-v4-flash"}));
+  EXPECT_EQ(rt::getBool(adminData, "filter_active"), true);
+
+  AWAIT(publicResponse, catalog::handlePublicModelCatalog());
+  EXPECT_EQ(publicResponse.status(), 200);
+  AWAIT(publicBody, publicResponse.json());
+  EXPECT(rt::deepEqual(jsonFields(publicBody.at("data").as_array(), "id"), json::array{"catalog-visible"}));
+  const auto* adminVisible = jsonRow(adminData.at("models").as_array(), "catalog-visible");
+  ASSERT(adminVisible);
+  EXPECT(rt::deepEqual(publicBody.at("data").as_array()[0], *adminVisible));
+  EXPECT_EQ(rt::getBool(publicBody.at("sources").at("deepseek"), "disabled"), true);
+
+  const rt::Request publicRoute("https://ai.ubq.fi/uos/models/catalog");
+  AWAIT(routedResponse, uos::handler::index::handler(publicRoute));
+  EXPECT_EQ(routedResponse.status(), 200);
+  AWAIT(routedBody, routedResponse.json());
+  EXPECT(rt::deepEqual(routedBody, publicBody));
+  EXPECT_EQ(enrichmentFetches, 0);
+  EXPECT_EQ(surplusFetches, 1);
 }
 TEST("the Models tab renders checkbox tools instead of a free-text whitelist") {
   const auto html=asset("static/admin.html");const auto script=asset("static/admin.js");const auto models=asset("static/models.js");EXPECT(matches(html,R"re(id="models-whitelist-list" data-model-picker)re"));EXPECT(!matches(html,"models-whitelist-input"));EXPECT(!matches(script,"modelsWhitelistInput"));
@@ -286,7 +338,35 @@ ASYNC_TEST("admin metadata refresh forces every upstream and reports what is cac
   dependencies.refreshSurplus=[&calls](auto options){calls.push_back(options.force.value_or(false)?"surplus:force":"surplus:plain");surplus::SurplusModelsSnapshot snapshot{{surplus::SurplusModel{.id="gpt-5.6-sol",.created=0,.owned_by="OpenAI",.supported_endpoint_types={"openai-response"}},surplus::SurplusModel{.id="hy3",.created=0,.owned_by="Tencent",.supported_endpoint_types={"openai-response"}},surplus::SurplusModel{.id="deepseek-v4.1-flash-1017",.created=0,.owned_by="DeepSeek",.supported_endpoint_types={"openai-response"}}},2};return rt::fulfilledTask(std::optional(snapshot));};
   AWAIT(response,admin::handleAdminModelsRefresh(dependencies));EXPECT_EQ(response.status(),200);EXPECT_EQ(response.headers().get("cache-control"),"no-store");AWAIT(body,response.json());rt::sort(calls,[](const auto& left,const auto& right){return rt::localeCompare(left,right);});EXPECT_EQ(calls,(std::vector<std::string>{"claude:force","lithos:force","openlux:force","openrouter","surplus:force"}));const auto expected=rt::jsonParse(R"({"openrouter":{"upstream_models":3,"updated_at_ms":1789000000000,"refreshed":true},"openlux":{"models":2,"updated_at_ms":1},"surplus":{"models":3,"updated_at_ms":2},"lithos":{"models":1,"updated_at_ms":4,"refreshed":true},"claude_code":{"models":1,"updated_at_ms":3,"status":"available","stale":false}})");EXPECT(rt::deepEqual(body.at("data"),expected));
 }
-TEST("admin metadata refresh is registered as an operator POST route") {EXPECT(matches(asset("src/handler/index.ts"),R"re(\{ methods: \["POST"\], path: "/admin/models/refresh", run: \(\) => handleAdminModelsRefresh\(\) \})re"));}
+ASYNC_TEST("admin metadata refresh is registered as an operator POST route") {
+  int refreshes = 0;
+  PickerFixture fixture;
+  T2IngressScope ingress(fixture.kv);
+  orouter::setOpenRouterModelsFetchForTest(rt::Fetch([&](rt::RequestInfo, rt::RequestInit) {
+    ++refreshes;
+    return rt::Response::json(json::object{{"data", json::array{json::object{{"id", "openai/catalog-visible"}}}}});
+  }));
+  const std::string url = "https://ai.ubq.fi/admin/models/refresh";
+  rt::RequestInit init;
+  init.method = "POST";
+  AWAIT(unauthenticated, uos::handler::index::handler(rt::Request(url, init)));
+  EXPECT_EQ(unauthenticated.status(), 401);
+
+  uos::config::config.adminTokens.insert("fixture-catalog-admin");
+  init.headers = rt::Headers{{"Authorization", "Bearer fixture-catalog-admin"}};
+  init.method = "GET";
+  AWAIT(wrongMethod, uos::handler::index::handler(rt::Request(url, init)));
+  EXPECT_EQ(wrongMethod.status(), 404);
+  EXPECT_EQ(refreshes, 0);
+
+  init.method = "POST";
+  AWAIT(authorized, uos::handler::index::handler(rt::Request(url, init)));
+  EXPECT_EQ(authorized.status(), 200);
+  EXPECT_EQ(authorized.headers().get("cache-control"), "no-store");
+  AWAIT(body, authorized.json());
+  EXPECT_EQ(rt::getNumber(body.at("data").at("openrouter"), "upstream_models"), 1);
+  EXPECT_EQ(refreshes, 1);
+}
 TEST("admin metadata refresh confirms before replacing a staged model selection") {const auto refresh=capture(asset("static/admin.js"),R"re(const refreshModelsMetadata = async \(\) => \{([\s\S]*?)\n\};)re");EXPECT(!refresh.empty());EXPECT(matches(refresh,R"re(if \(modelsHasUnsavedChanges\(\) && !globalThis\.confirm\("Discard the unsaved model selection and reload\?"\)\) return;\s+await loadModelsWhitelist\(\{ force: true \}\);)re"));}
 TEST("whitelist guard and filters match25 isolated Bun observations") {
   const auto bytes = rt::gzip::gunzipSync(rt::fromBase64(whitelistVectors)); const auto vectors = rt::jsonParse(rt::decodeUtf8(bytes));

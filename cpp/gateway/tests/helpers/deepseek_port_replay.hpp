@@ -12,6 +12,8 @@
 #include "uos/rt/base64.hpp"
 #include "uos/rt/env.hpp"
 #include "uos/rt/gzip.hpp"
+#include "uos/rt/json_document.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/number.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/rt/text_codec.hpp"
@@ -184,9 +186,9 @@ namespace uos::tests::helpers::deepseek_port_replay {
       }
     }
   }
-  inline bool registerReplay(std::string_view compressed) {
+  inline bool registerReplay(std::string_view compressed, std::size_t maxFixtureBytes = rt::limits::kJsonDocumentBytes) {
     const auto bytes = rt::gzip::gunzipSync(rt::fromBase64(compressed));
-    auto vectors = rt::jsonParse(rt::decodeUtf8(bytes));
+    auto vectors = rt::jsonParseWithLimit(rt::decodeUtf8(bytes), maxFixtureBytes);
     for (auto& row : vectors.as_array()) {
       auto name = rt::toString(rt::get(row, "name"));
       rt::test::registry().push_back({name + " [owned API parity]", [row = std::move(row)] {

@@ -30,16 +30,69 @@
 //   src/provider/cerebras_responses.cpp src/lib/jev_compaction/types.cpp src/lib/jev_compaction/request.cpp src/codex/responses_runners.cpp src/codex/responses_operations.cpp src/codex/responses_state.cpp
 // New module evidence only: serve.ts has no original direct unit registrations.
 #include "uos/serve.hpp"
+#include "uos/codex/reset_settings.hpp"
 #include "uos/config.hpp"
 #include "uos/kv.hpp"
 #include "uos/cache/prompt_analytics_queue.hpp"
 #include "tests/helpers/counting_kv.hpp"
 #include "uos/rt/console.hpp"
+#include "uos/rt/crypto.hpp"
 #include "uos/rt/fs.hpp"
+#include "uos/rt/json.hpp"
+#include "uos/rt/kv_js.hpp"
+#include "uos/rt/process.hpp"
 #include "uos/rt/test_async.hpp"
+#include "uos/storage/native_addon.hpp"
 namespace rt=uos::rt;
 namespace serve=uos::serve;
 namespace queue=uos::cache::prompt_analytics_queue;
+
+namespace {
+  void prepareStartupFixture(const std::string& directory) {
+    const auto nativeKv = rt::path::resolve(rt::path::dirname(__FILE__), "../packaging/native-kv");
+    const auto inputs = rt::path::join(nativeKv, rt::process::platform == "darwin" ? "inputs-darwin-arm64.json" : "inputs.json");
+    const auto manifest = rt::fs::readFileSync(inputs, "utf8");
+    const auto hash = [](std::string_view value) { return rt::crypto::createHash("sha256").update(value).digest("hex"); };
+    // The C++ loader verifies the binding and uses its already linked KV backend.
+    const std::string artifact = "serve startup test binding";
+    auto provenance = rt::jsonParse(manifest).as_object();
+    provenance["inputsSha256"] = hash(manifest);
+    provenance["build"] = uos::json::object{{"exitCode", 0}, {"logSha256", hash(artifact)}};
+    provenance.at("artifact").as_object()["sha256"] = hash(artifact);
+    const auto receipt = rt::jsonStringify(provenance);
+    rt::fs::writeFileSync(rt::path::join(directory, "native-kv.node"), artifact);
+    rt::fs::writeFileSync(rt::path::join(directory, "native-kv.provenance.json"), receipt);
+    const uos::storage::native_addon::NativeKvArtifactBinding binding{directory, hash(receipt), inputs};
+    uos::storage::native_addon::prepareNativeKvBackend(binding);
+  }
+
+  class DelayedMigrationStore final : public rt::ForwardingKv {
+  public:
+    explicit DelayedMigrationStore(std::shared_ptr<rt::Kv> store) : ForwardingKv(*store), owner(std::move(store)) {}
+
+    rt::Task<rt::KvEntryMaybe<>> get(rt::KvKey key, rt::KvGetOptions options) override {
+      const bool marker = rt::kvKeyStrictEquals(key, uos::codex::reset_settings::CODEX_RESET_USAGE_MIGRATION_KEY);
+      if (marker) co_await rt::sleep(1'000);
+      auto pending = owner->get(std::move(key), options);
+      auto entry = co_await std::move(pending);
+      if (marker) readFinished = true;
+      co_return entry;
+    }
+
+    void close() override {
+      ++closes;
+      readFinishedAtClose = readFinished;
+      owner->close();
+    }
+
+    int closes = 0;
+    bool readFinishedAtClose = false;
+
+  private:
+    std::shared_ptr<rt::Kv> owner;
+    bool readFinished = false;
+  };
+}
 
 TEST("serve module publishes inert application callables without invoking its guarded launcher") {
   EXPECT(static_cast<bool>(serve::application.fetch));
@@ -92,4 +145,25 @@ ASYNC_TEST("serve migration initializes only through its explicit callable and u
   const auto initialized=serve::initializeModule();co_await initialized.wait();
   EXPECT(!kv->commands.empty());
   EXPECT(!rt::fs::existsSync(".data"));
+}
+
+ASYNC_TEST("serve startup failure waits for its migration before closing KV") {
+  if (rt::process::arch != "arm64") co_return;
+  const auto directory = rt::fs::mkdtempSync(rt::path::join(rt::os::tmpdir(), "uos-serve-migration-"));
+  const auto remove = rt::scopeExit([directory] { rt::fs::rmSync(directory, {.recursive = true, .force = true}); });
+  prepareStartupFixture(directory);
+  const auto memory = std::make_shared<rt::MemoryKv>(rt::dateNow);
+  const rt::KvValue marker(true);
+  co_await memory->set(uos::codex::reset_settings::CODEX_RESET_USAGE_MIGRATION_KEY, marker);
+  const auto store = std::make_shared<DelayedMigrationStore>(memory);
+  uos::kv::setKvForTest(store);
+  const auto restore = rt::scopeExit([] { uos::kv::setKvForTest(nullptr); });
+  rt::console::Capture listenerLog({rt::console::Method::log});
+  listenerLog.setObserver([](const rt::console::Call&) { throw rt::JsError("controlled listener setup failure"); });
+  const serve::ServeStartupOptions loopback{"127.0.0.1", 0};
+  auto serving = serve::importMetaMain(loopback);
+  EXPECT_REJECTS_MESSAGE(std::move(serving), rt::JsError, "controlled listener setup failure");
+  EXPECT_EQ(listenerLog.calls().size(), 1u);
+  EXPECT_EQ(store->closes, 1);
+  EXPECT(store->readFinishedAtClose);
 }

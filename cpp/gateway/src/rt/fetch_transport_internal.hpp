@@ -1,11 +1,13 @@
 #pragma once
 // Internals of the HTTP/1.1 client transport (uos/rt/fetch_transport.hpp):
-// Bun's wire rules for the request head, the response head parser, body
-// framing, the chunked and content decoders, the connection (TCP, or TLS over
+// Bun's wire rules for the request head, the response parser, the content
+// decoders, the connection (TCP, or TLS over
 // OpenSSL memory BIOs) and the per-loop keep-alive pool.
+#include "uos/rt/async.hpp"
 #include "uos/rt/clock.hpp"
 #include "uos/rt/fetch_transport.hpp"
 #include "uos/rt/http.hpp"
+#include "third_party/llhttp/llhttp.h"
 
 #include <boost/asio/execution_context.hpp>
 #include <boost/asio/ip/tcp.hpp>
@@ -61,14 +63,20 @@ namespace uos::rt::detail::fetch {
   inline constexpr std::size_t kMaxResponseHead = 1572864;
   inline constexpr std::size_t kMaxResponseFields = 256;
 
+  enum class Framing : std::uint8_t { empty, length, chunked, close };
+  struct FramingRule {
+    Framing framing = Framing::empty;
+    std::uint64_t length = 0;
+    const char* error = nullptr;
+  };
+
   struct ResponseHead {
     int minorVersion = 1;
     int status = 0;
     // The reason phrase and the fields as raw bytes (field values trimmed).
     std::string reason;
     std::vector<std::pair<std::string, std::string>> fields;
-    // Every value of a field (case-insensitive name), in order.
-    std::vector<std::string> values(std::string_view lowercaseName) const;
+    FramingRule framing;
     // The values joined with ", ", std::nullopt without any.
     std::optional<std::string> field(std::string_view lowercaseName) const;
     // A Connection token (case-insensitive) is present.
@@ -81,29 +89,50 @@ namespace uos::rt::detail::fetch {
     // The head's length in bytes (complete only).
     std::size_t length = 0;
     ResponseHead head;
+    llhttp_errno_t error = HPE_OK;
+    const char* errorReason = nullptr;
   };
-  // Parses a response head the way Bun's parser (picohttpparser) accepts it:
-  // "HTTP/1.<digit>", spaces, a three-digit status, an optional reason; fields
-  // "name: value" with token names; CRLF or LF line ends; no control bytes but
-  // tab; at most kMaxResponseFields fields.
-  HeadParse parseResponseHead(std::string_view data);
 
-  // ---- response body ------------------------------------------------------------
+  // Stops at the end of the head and again at the end of the message. All
+  // byte counts are relative to the input passed to that call.
+  class ResponseParser {
+  public:
+    explicit ResponseParser(std::size_t maxFields = kMaxResponseFields);
+    ResponseParser(const ResponseParser&) = delete;
+    ResponseParser& operator=(const ResponseParser&) = delete;
 
-  enum class Framing : std::uint8_t { empty, length, chunked, close };
-  struct FramingRule {
-    Framing framing = Framing::empty;
-    std::uint64_t length = 0;
-    // Bun's error code when the head's framing fields are unusable.
-    std::optional<std::string> error;
+    llhttp_errno_t readHead(std::string_view input, std::size_t& consumed);
+    const ResponseHead& head() const { return head_; }
+    ResponseHead takeHead() { return std::move(head_); }
+    const char* errorReason() const { return llhttp_get_error_reason(&parser_); }
+    // Completes immediately if llhttp determines the response has no body.
+    llhttp_errno_t beginBody(bool headRequest = false);
+    bool needsEof() const { return llhttp_message_needs_eof(&parser_); }
+    bool keepsAlive() const { return !(parser_.flags & F_CONNECTION_CLOSE) && llhttp_should_keep_alive(&parser_); }
+    bool paused() const { return llhttp_get_errno(&parser_) == HPE_PAUSED; }
+    void reset();
+    llhttp_errno_t readBody(std::string_view input, std::size_t& consumed, ByteChunk* out = nullptr);
+    llhttp_errno_t readBody(std::string_view input, std::size_t& consumed, std::string& out);
+    llhttp_errno_t finish() { return llhttp_finish(&parser_); }
+
+  private:
+    static const llhttp_settings_t settings_;
+    llhttp_errno_t execute(std::string_view input, std::size_t& consumed);
+
+    llhttp_t parser_;
+    ResponseHead head_;
+    ByteChunk* bodyBytes_ = nullptr;
+    std::size_t bodyInputSize_ = 0;
+    std::string* body_ = nullptr;
+    std::size_t maxFields_;
+    bool firstHeadBytes_ = true;
+    bool startField_ = true;
   };
-  // HEAD and TRACE requests and 204/304 responses have no body; then
-  // Transfer-Encoding ending in a single "chunked", then Content-Length, then
-  // the body runs until the connection closes.
+
+  HeadParse parseResponseHead(std::string_view data, std::size_t maxBytes = kMaxResponseHead, std::size_t maxFields = kMaxResponseFields);
   FramingRule responseFraming(const std::string& method, const ResponseHead& head);
 
-  // Incremental chunked transfer decoding (sizes in any hex case with leading
-  // zeros, trailing spaces and extensions ignored, CRLF or LF, trailers skipped).
+  // Standalone entry point for decoding an already identified chunked body.
   class ChunkedDecoder {
   public:
     enum class Result : std::uint8_t { more, done, invalid };
@@ -112,9 +141,8 @@ namespace uos::rt::detail::fetch {
     Result decode(std::string_view input, std::size_t& offset, std::string& out);
 
   private:
-    enum class Step : std::uint8_t { size, data, dataEnd, trailer };
-    Step step_ = Step::size;
-    std::uint64_t remaining_ = 0;
+    ResponseParser parser_;
+    bool started_ = false;
   };
 
   // A Content-Encoding decoder. write() and finish() throw the FetchError Bun
@@ -175,6 +203,8 @@ namespace uos::rt::detail::fetch {
     double idleSince = 0;
 
     bool isOpen() const noexcept { return open_; }
+    // Installed only while the upload writer can be waiting on a stream read.
+    Job stopUpload;
     // Closes the socket: pending operations complete with operation_aborted.
     void close() noexcept;
     // Bun's fetch timeout: once `ms` pass without a read or a write, the

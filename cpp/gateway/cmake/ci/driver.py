@@ -172,34 +172,60 @@ def ninja_compile_rule(name, argv, description):
             "  depfile = $out.d", "  deps = gcc", "  description = " + description + " $in"]
 
 
-def write_ninja(build, sources, compiler, flags, vendors=()):
+def write_ninja(build, sources, compiler, flags, c_compiler, c_flags, vendors):
     # Ninja's depfiles track transitive headers; a failed rebuild removes stale output.
     lines = ["ninja_required_version = 1.10", *ninja_compile_rule("cxx", compiler + flags, "CXX")]
     json_sources = vendor_sources.simdjson_consumers(vendors)
+    vendor_headers = {}
+    for library in vendors:
+        headers = [ninja_escape(GATEWAY / path) for path in library.headers]
+        for source in (*library.consumers, *library.sources):
+            vendor_headers.setdefault(source, []).extend(headers)
     if json_sources:
         lines += ninja_compile_rule("selected_json", compiler + flags + vendor_sources.simdjson_flags(), "CXX")
+    includes = {library.name: vendor_sources.include_flags(library) for library in vendors}
+    vendor_c_options = {library.name: includes[library.name] + vendor_sources.c_dialect_flags(library.sources[0])
+                        for library in vendors}
+    include_consumers = {source: library for library in vendors if includes[library.name] for source in library.consumers}
+    for library in vendors:
+        if includes[library.name]:
+            lines += ninja_compile_rule("cxx_" + library.name, compiler + flags + includes[library.name], "CXX")
+        if vendor_c_options[library.name]:
+            lines += ninja_compile_rule("vendor_c_" + library.name, c_compiler + c_flags + vendor_c_options[library.name], "Vendor C")
     if vendors:
         archive = shutil.which("ar")
         if not archive:
             raise RuntimeError("ar is required for the selected vendors")
         lines += ninja_compile_rule("vendor_cxx", compiler + vendor_sources.vendor_flags(flags), "Vendor CXX")
+        lines += ninja_compile_rule("vendor_c", c_compiler + c_flags, "Vendor C")
         lines += ["rule vendor_archive", "  command = rm -f $out && " + shlex.quote(archive).replace("$", "$$") + " rcs $out $in"]
     for source in sources:
         target = object_path(build, source)
         target.parent.mkdir(parents=True, exist_ok=True)
         rule = "selected_json" if source in json_sources else "cxx"
-        dependency = " | " + ninja_escape(GATEWAY / vendor_sources.SIMDJSON_HEADER) if source in json_sources else ""
+        if library := include_consumers.get(source):
+            rule = "cxx_" + library.name
+        # -MMD omits system headers, including QCBOR's nested includes.
+        headers = vendor_headers.get(source)
+        dependency = " | " + " ".join(headers) if headers else ""
         lines.append("build " + ninja_escape(target) + ": " + rule + " " + ninja_escape(GATEWAY / source) + dependency)
     for library in vendors:
-        target = object_path(build, library.source)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        lines += ["build " + ninja_escape(target) + ": vendor_cxx " + ninja_escape(GATEWAY / library.source),
-                  "build " + ninja_escape(build / library.archive) + ": vendor_archive " + ninja_escape(target)]
+        members = []
+        for source in library.sources:
+            target = object_path(build, source)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            rule = "vendor_c" if source.endswith(".c") else "vendor_cxx"
+            if source.endswith(".c") and vendor_c_options[library.name]:
+                rule += "_" + library.name
+            members.append(ninja_escape(target))
+            headers = " | " + " ".join(vendor_headers[source])
+            lines.append("build " + members[-1] + ": " + rule + " " + ninja_escape(GATEWAY / source) + headers)
+        lines.append("build " + ninja_escape(build / library.archive) + ": vendor_archive " + " ".join(members))
     (build / "build.ninja").write_text("\n".join(lines) + "\n")
 
 
-def result(test, status, note="", **extra):
-    return dict(test=test, status=status, run=0, passed=0, failed=0, note=note, **extra)
+def result(test, status, note="", *, built=False, **extra):
+    return dict(test=test, status=status, built=built, run=0, passed=0, failed=0, note=note, **extra)
 
 
 def input_digest(vendors=()):
@@ -260,11 +286,37 @@ def run_test(selected, runtime, build, compiler, flags, libraries, environment, 
         controlled = output.count("UOS_CI_NETWORK ") == 1
         status = "TIMEOUT" if expired else "PASS" if code == 0 and controlled and complete and failed == 0 else "FAIL"
         row = result(test, status, "" if status == "PASS" else "exit %d; see run.log" % code,
-                     build_seconds=link_s, seconds=run_s, log=str(log_dir))
+                     built=True, build_seconds=link_s, seconds=run_s, log=str(log_dir))
         row.update(run=ran, passed=passed, failed=failed)
         return row
+    except Exception as error:
+        return result(test, "FAIL", str(error), built=True, build_seconds=link_s, log=str(log_dir))
     finally:
         # At most jobs binaries exist at once, including on small CI disks.
+        binary.unlink(missing_ok=True)
+
+
+def verify_sqlite(build, compiler, flags, libraries, environment, boundary):
+    source = Path(__file__).with_name("sqlite-version.cpp")
+    binary = build / "bin" / "sqlite-version"
+    try:
+        log = build / "sqlite-version-build.log"
+        command = compiler + flags + [str(source)] + libraries + ["-o", str(binary)]
+        code, _, _ = execute(command, log, cwd=build, environment=environment, timeout=60)
+        if code:
+            raise RuntimeError("SQLite version probe failed to build; see " + str(log))
+        log = build / "sqlite-version-run.log"
+        with tempfile.TemporaryDirectory(prefix="uos-ci-", dir="/tmp") as directory:
+            scratch = Path(directory)
+            command = boundary_command(boundary, scratch, build, binary.name, environment)
+            code, _, _ = execute(command, log, cwd=build, environment=environment, timeout=15)
+        for line in log.read_text().splitlines():
+            if line.startswith("sqlite3_libversion(): "):
+                announce(line)
+                if code == 0:
+                    return line.removeprefix("sqlite3_libversion(): ")
+        raise RuntimeError("SQLite version probe failed; see " + str(log))
+    finally:
         binary.unlink(missing_ok=True)
 
 
@@ -301,26 +353,44 @@ def main():
         parser.error("CXX compiler not found")
     compiler[0] = shutil.which(compiler[0])
     version = subprocess.check_output(compiler + ["--version"], text=True)
-    if "clang" not in version.lower():
+    c_compiler = shlex.split(os.environ.get("CC", "cc"))
+    if not c_compiler or not shutil.which(c_compiler[0]):
+        parser.error("CC compiler not found")
+    c_compiler[0] = shutil.which(c_compiler[0])
+    c_version = subprocess.check_output(c_compiler + ["--version"], text=True)
+    clang = "clang" in version.lower()
+    if not clang:
         major = int(subprocess.check_output(compiler + ["-dumpversion"], text=True).split(".")[0])
         if major < 14:
             parser.error("GCC >=14 required: GCC 12 has a known coroutine miscompile")
     if not shutil.which("ninja"):
         parser.error("Ninja is required")
-    packages = ["openssl", "sqlite3", "zlib", "icu-uc", "icu-i18n", "libbrotlidec", "libzstd"]
+    sqlite_prefix = Path(os.environ.get("UOS_CI_SQLITE_PREFIX", "/usr/local")).resolve()
+    sqlite_include = sqlite_prefix / "include"
+    sqlite_library = sqlite_prefix / "lib" / "libsqlite3.so"
+    if not (sqlite_include / "sqlite3.h").is_file() or not sqlite_library.is_file():
+        parser.error("prepare SQLite 3.54.0 at UOS_CI_SQLITE_PREFIX; see cpp/gateway/docs/CI.md")
+    packages = ["openssl", "zlib", "icu-uc", "icu-i18n", "libbrotlidec", "libzstd"]
     package_flags = shlex.split(subprocess.check_output(["pkg-config", "--cflags", "--libs"] + packages, text=True))
     flags = ["-std=c++20", "-Wall", "-Wextra", "-Wshadow", "-Wconversion", "-Werror",
              "-DBOOST_JSON_NO_LIB", "-DBOOST_CONTAINER_NO_LIB", "-DBOOST_SYSTEM_NO_LIB",
-             "-DUOS_GATEWAY_NATIVE_LIBRARIES=1", "-I" + str(GATEWAY / "include"), "-I" + str(GATEWAY)]
+             "-DUOS_GATEWAY_NATIVE_LIBRARIES=1", "-I" + str(GATEWAY / "include"), "-I" + str(GATEWAY), "-I" + str(sqlite_include)]
+    if clang:
+        # Some consumers include vendor headers relative to the gateway root.
+        flags.append("--system-header-prefix=third_party/")
     flags += CONFIGS[options.config] + [flag for flag in package_flags if flag.startswith(("-I", "-D"))]
     flags += shlex.split(os.environ.get("UOS_CI_CXXFLAGS", ""))
-    libraries = ["-lboost_json", "-lboost_container"] + [flag for flag in package_flags if not flag.startswith(("-I", "-D"))] + ["-pthread"]
+    c_flags = ["-std=c11"] + [flag for flag in CONFIGS[options.config] if not flag.startswith("-D")]
+    c_flags += vendor_sources.vendor_flags(shlex.split(os.environ.get("UOS_CI_CFLAGS", "")))
+    libraries = ["-lboost_json", "-lboost_container", str(sqlite_library)]
+    libraries += [flag for flag in package_flags if not flag.startswith(("-I", "-D"))] + ["-pthread"]
     if sys.platform.startswith("linux"):
-        libraries.append("-ldl")
+        # Use DT_RPATH so a distribution search path cannot override the pinned suite library.
+        libraries += ["-ldl", "-Wl,--disable-new-dtags", "-Xlinker", "-rpath", "-Xlinker", str(sqlite_library.parent)]
         if shutil.which("mold"):
             libraries += ["-fuse-ld=mold", "-Wl,--threads=1"]
     libraries += shlex.split(os.environ.get("UOS_CI_LDFLAGS", ""))
-    identity = hashlib.sha256(json.dumps([compiler, version, flags, libraries]).encode()).hexdigest()[:12]
+    identity = hashlib.sha256(json.dumps([compiler, version, flags, c_compiler, c_version, c_flags, libraries]).encode()).hexdigest()[:12]
     build_root = Path(os.environ.get("UOS_CI_BUILD_DIR", "/tmp/uos-gateway-build")).resolve()
     if build_root.is_relative_to(GATEWAY.parents[1]):
         parser.error("UOS_CI_BUILD_DIR must be outside the repository checkout")
@@ -361,10 +431,12 @@ def main():
     source_hash = input_digest(vendors)
     git_identity = subprocess.check_output(["git", "-C", str(GATEWAY), "rev-parse", "HEAD", "HEAD^{tree}"], text=True).splitlines()
     announce("Compiler: " + version.splitlines()[0])
+    announce("C compiler: " + c_version.splitlines()[0])
     announce("Build: %s; %d production sources (%d runtime), %d tests, jobs=%d" % (build, len(production), len(runtime), len(tests), jobs))
-    write_ninja(build, sorted(sources), compiler, flags, vendors)
+    write_ninja(build, sorted(sources), compiler, flags, c_compiler, c_flags, vendors)
     environment = clean_environment()
     boundary = find_boundary(build, environment)
+    sqlite_version = verify_sqlite(build, compiler, flags, libraries, environment, boundary)
     environment["NINJA_STATUS"] = "[%f/%t %es] "
     compile_started = time.monotonic()
     with (build / "compile.log").open("w") as log:
@@ -407,7 +479,8 @@ def main():
     after_hash = input_digest(vendors)
     vendor_archives = {library.archive: hashlib.sha256((build / library.archive).read_bytes()).hexdigest()
                        for library in vendors if (build / library.archive).is_file()}
-    receipt = dict(config=options.config, compiler=compiler, compiler_version=version, flags=flags,
+    receipt = dict(config=options.config, compiler=compiler, compiler_version=version, flags=flags, sqlite_version=sqlite_version,
+                   c_compiler=c_compiler, c_compiler_version=c_version, c_flags=c_flags,
                    libraries=libraries, vendor_archives=vendor_archives, source_sha256=source_hash, after_source_sha256=after_hash,
                    inputs_unchanged=source_hash == after_hash, git_commit=git_identity[0], git_tree=git_identity[1], selected=tests,
                    production_sources=len(production), runtime_sources=len(runtime),
@@ -431,6 +504,6 @@ if __name__ == "__main__":
         signal.signal(signum, interrupted)
     try:
         raise SystemExit(main())
-    except (OSError, subprocess.CalledProcessError, links.LinkError) as error:
+    except (OSError, RuntimeError, subprocess.CalledProcessError, links.LinkError) as error:
         print("ci-build: " + str(error), file=sys.stderr)
         raise SystemExit(2)

@@ -3,7 +3,11 @@
 #include "uos/rt/string.hpp"
 #include "uos/rt/text_codec.hpp"
 
+// Keep the upstream inline conversions outside the port's warning policy.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wsign-conversion"
 #include "third_party/simdutf/simdutf.h"
+#pragma GCC diagnostic pop
 
 #include <boost/algorithm/hex.hpp>
 #include <limits>

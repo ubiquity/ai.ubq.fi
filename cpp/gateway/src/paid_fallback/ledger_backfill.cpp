@@ -450,9 +450,13 @@ namespace uos::paid_fallback::ledger_backfill {
 
     rt::Task<bool> paidFallbackBackfillNeedsRun(std::shared_ptr<rt::Kv> kv) {
       const rt::KvGetOptions strong = strongRead();
-      const rt::Promise<rt::KvEntryMaybe<>> stateRead(kv->get(native_paid::paidFallbackBackfillStateV3Key(), strong));
-      const rt::Promise<rt::KvEntryMaybe<>> requestCursorRead(kv->get(native_paid::paidFallbackBackfillCursorV3Key(), strong));
-      const rt::Promise<rt::KvEntryMaybe<>> windowCursorRead(kv->get(native_paid::paidFallbackBackfillWindowCursorV3Key(), strong));
+      const auto read = [&kv, strong](rt::KvKey key) {
+        auto task = kv->get(std::move(key), strong);
+        return rt::detail::keepAlive(kv, std::move(task));
+      };
+      const rt::Promise<rt::KvEntryMaybe<>> stateRead(read(native_paid::paidFallbackBackfillStateV3Key()));
+      const rt::Promise<rt::KvEntryMaybe<>> requestCursorRead(read(native_paid::paidFallbackBackfillCursorV3Key()));
+      const rt::Promise<rt::KvEntryMaybe<>> windowCursorRead(read(native_paid::paidFallbackBackfillWindowCursorV3Key()));
       auto reads = rt::all(stateRead, requestCursorRead, windowCursorRead);
       auto readEntries = co_await reads.wait();
       auto& [stateEntry, requestCursorEntry, windowCursorEntry] = readEntries;

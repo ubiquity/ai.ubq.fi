@@ -134,7 +134,8 @@ namespace uos::auth::index {
       const std::string repo = payload.repo;
       const std::string stateId = payload.state_id;
 
-      const std::string cacheKey = co_await utils::sha256Base64Url(token + ":" + owner + "/" + repo);
+      std::string cacheInput = token + ":" + owner + "/" + repo;
+      const std::string cacheKey = co_await utils::sha256Base64Url(std::move(cacheInput));
       const auto cached = githubTokenCache().find(cacheKey);
       const double cachedUntil = cached == githubTokenCache().end() ? 0 : cached->second;
       if (cachedUntil > rt::dateNow()) {
@@ -192,7 +193,8 @@ namespace uos::auth::index {
       }
       const auto& state = std::get<kernel::quota_v2::KernelQuotaPolicyStateDecisionOk>(policyState);
       if (!state.has_policy) {
-        co_await kernel::policy_queue::recordKernelPolicyQueue(owner, repo, getRequestPath(req));
+        const std::string path = getRequestPath(req);
+        co_await kernel::policy_queue::recordKernelPolicyQueue(owner, repo, path);
       }
       ClientAuthMethod method = ClientAuthMethodGithubToken{.owner = owner, .repo = repo, .state_id = stateId, .limit_scope = state.limit_scope};
       co_return GitHubTokenAuthentication{.ok = true, .method = std::move(method), .response = std::nullopt};

@@ -367,6 +367,26 @@ ASYNC_TEST("an in-flight selection read cannot replace a cache primed by an admi
   const auto old = co_await inFlightRead.wait(); EXPECT_JSON(selectionJson(old), (json::object{{"provider_ids", json::array{"openlux"}}, {"updated_at_ms", 1'700'000'000'000.0}}), "original read result");
   AWAIT(current, sel::loadProviderSelectionCached()); EXPECT_JSON(selectionJson(current), expected, "stale read cannot overwrite save");
 }
+TEST("a new loop can load provider selection after the shared read was abandoned") {
+  const auto database = std::make_shared<DeferredSelectionKv>();
+  Fixture fixture(database);
+  {
+    rt::FakeClock clock;
+    rt::Loop first(clock);
+    const rt::LoopScope scope(first);
+    const rt::Promise<std::optional<sel::ProviderSelection>> pending(sel::loadProviderSelectionCached(1));
+    rt::blockOn(first, database->readStarted.promise.wait());
+    EXPECT(pending.pending());
+  }
+  const auto replacement = std::make_shared<SelectionKv>();
+  replacement->seedSelection({"cerebras"});
+  uos::kv::setKvForTest(replacement);
+  rt::FakeClock clock;
+  rt::Loop second(clock);
+  const auto selected = rt::blockOn(second, sel::loadProviderSelectionCached(2));
+  ASSERT(selected);
+  EXPECT_EQ(selected->provider_ids, std::vector<std::string>{"cerebras"});
+}
 ASYNC_TEST("admin provider picker reports the roster, catalog counts, and the saved selection") {
   const auto database = std::make_shared<SelectionKv>(); database->seedSelection({"surplus"}); Fixture fixture(database);
   const auto dependencies = fixtureDependencies(); AWAIT(response, admin::handleAdminProviderSelectionGet(dependencies));

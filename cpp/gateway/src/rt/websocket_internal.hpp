@@ -5,6 +5,7 @@
 #include "uos/rt/clock.hpp"
 #include "uos/rt/websocket.hpp"
 #include <boost/asio/generic/stream_protocol.hpp>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -45,6 +46,8 @@ namespace uos::rt::ws::detail {
   // The "<value>" of node:http's join rules for a header map built from raw
   // name/value pairs (see IncomingResponse::header).
   std::optional<std::string> joinedHeader(const std::vector<std::pair<std::string, std::string>>& rawHeaders, std::string_view name);
+  // RFC 6455 accept token for a generated or validated handshake key.
+  std::string handshakeAccept(std::string_view key);
 
   // A node:net Socket (allowHalfOpen false, so the socket ends its side when
   // the peer does and is destroyed once both sides are done) over a connected
@@ -122,7 +125,7 @@ namespace uos::rt::ws::detail {
     void handleEof();
     void queueRaw(Bytes data, std::size_t accounted, Callback callback);
     void flush();
-    void onWritten(const boost::system::error_code& error, std::size_t count);
+    void onWritten(const boost::system::error_code& error, std::size_t count, Bytes data);
     void finishEnd();
     void maybeDestroy();
     void emitCloseEvents(Reason error);
@@ -183,7 +186,7 @@ namespace uos::rt::ws::detail {
 
   private:
     enum class Step { getInfo, getPayloadLength16, getPayloadLength64, getMask, getData };
-    Bytes consume(std::size_t count);
+    BytesView consume(std::size_t count);
     void startLoop();
     void getInfo();
     void getPayloadLength16();
@@ -197,17 +200,15 @@ namespace uos::rt::ws::detail {
 
     std::int32_t maxPayload_;
     bool isServer_;
-    bool skipUTF8Validation_;
     Bytes buffer_;
     std::size_t bufferOffset_ = 0;
     std::uint64_t payloadLength_ = 0;
-    std::uint8_t mask_[4] = {0, 0, 0, 0};
+    std::array<std::uint8_t, 4> mask_{};
     int fragmented_ = 0;
     bool masked_ = false;
     bool fin_ = false;
     int opcode_ = 0;
     std::uint64_t totalPayloadLength_ = 0;
-    std::uint64_t messageLength_ = 0;
     std::vector<Bytes> fragments_;
     bool errored_ = false;
     bool loop_ = false;

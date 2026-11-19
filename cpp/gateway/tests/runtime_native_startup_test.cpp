@@ -5,7 +5,7 @@
 // (no native backend is prepared before the refusals; the last case prepares one), with
 // globalThis.fetch replaced the way the child replaces it. The fixture artifact is
 // synthetic: the TS copies the artifact the test preload prepared, while these cases
-// only need a verification chain that holds (real tools/native-kv/inputs.json,
+// only need a verification chain that holds (real packaging/native-kv/inputs.json,
 // generated provenance and artifact bytes).
 //
 // Not ported: opening, writing and reading the native KV after a successful startup
@@ -21,6 +21,7 @@
 #include "uos/rt/process.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/rt/test_async.hpp"
+#include "uos/rt/url.hpp"
 
 #include <unistd.h>
 
@@ -57,7 +58,7 @@ namespace {
   }
 
   struct Fixtures {
-    std::string root = rt::fs::realpathSync(rt::fs::mkdtempSync(rt::path::join(rt::os::tmpdir(), "uos-m21-native-startup-")));
+    std::string root = rt::fs::realpathSync(rt::fs::mkdtempSync(rt::path::join(rt::os::tmpdir(), "uos-m21-native-startup %?#-")));
     ~Fixtures() {
       rt::fs::RmOptions options;
       options.recursive = true;
@@ -77,9 +78,9 @@ namespace {
   SourceArtifact sourceArtifact(const std::string& base) {
     SourceArtifact source;
 #if defined(__APPLE__)
-    source.inputsManifest = rt::path::join(workspace(), "tools", "native-kv", "inputs-darwin-arm64.json");
+    source.inputsManifest = rt::path::join(workspace(), "cpp/gateway/packaging/native-kv", "inputs-darwin-arm64.json");
 #else
-    source.inputsManifest = rt::path::join(workspace(), "tools", "native-kv", "inputs.json");
+    source.inputsManifest = rt::path::join(workspace(), "cpp/gateway/packaging/native-kv", "inputs.json");
 #endif
     source.artifactDirectory = rt::path::join(base, "source");
     rt::fs::mkdirSync(source.artifactDirectory);
@@ -126,7 +127,7 @@ namespace {
     }
     rt::fs::MkdirOptions toolsOptions;
     toolsOptions.recursive = true;
-    rt::fs::mkdirSync(rt::path::join(root, "tools", "native-kv"), toolsOptions);
+    rt::fs::mkdirSync(rt::path::dirname(paths.inputs), toolsOptions);
     rt::fs::copyFileSync(source.inputsManifest, paths.inputs);
     json::object receipt;
     rt::objectDefine(receipt, "artifactDirectory", json::value(artifact));
@@ -256,6 +257,23 @@ namespace {
     EXPECT(!rt::fs::existsSync(rt::path::join(paths.data, "kv-bun.sqlite3")));
     EXPECT(!storage::native_addon::nativeKvBackendIsPrepared());
   }
+}
+
+TEST("native KV defaults resolve relative to the source checkout") {
+  const auto paths = nativeKvDevelopmentPaths();
+  EXPECT_EQ(paths.root, workspace());
+  EXPECT_EQ(paths.inputs, nativeKvDevelopmentPaths(workspace()).inputs);
+#if defined(__linux__) && defined(__aarch64__)
+  const Fixtures fixtures;
+  const SourceArtifact source = sourceArtifact(fixtures.root);
+  const auto verified = storage::native_addon::verifyNativeKvArtifact({
+      .artifactDirectory = rt::pathToFileURL(source.artifactDirectory),
+      .expectedProvenanceSha256 = source.expectedProvenanceSha256,
+      .inputsManifest = std::nullopt,
+  });
+  EXPECT_EQ(verified.path, rt::path::join(source.artifactDirectory, "native-kv.node"));
+  EXPECT_EQ(verified.inputsSha256, sha256(rt::fs::readFileSync(paths.inputs)));
+#endif
 }
 
 ASYNC_TEST("development startup refuses absent receipt without database or marker writes") { co_await refuses("absent receipt"); }

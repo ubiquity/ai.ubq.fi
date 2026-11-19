@@ -12,6 +12,7 @@
 #include "uos/rt/fetch.hpp"
 #include "uos/rt/http.hpp"
 #include "uos/rt/json.hpp"
+#include "uos/rt/number.hpp"
 #include "uos/rt/regex.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/rt/test_async.hpp"
@@ -560,7 +561,15 @@ TEST("parseJevResponse matches the recorded results and errors") {
 TEST("noulAnswer matches the recorded answers and errors") {
   for (const json::value& entry : section("noulAnswer")) {
     const json::object& vector = asObject(entry);
-    const json::value answers = rt::jsonParse(text(rt::get(vector, "answersJson")));
+    const std::string answersText = text(rt::get(vector, "answersJson"));
+    json::value answers;
+    if (answersText == R"({"a":{"noul":1e999}})") {
+      EXPECT_THROWS_MATCHING(jc::request::parseJevResponse(200, true, "{\"answers\":" + answersText + "}"), "Jev returned malformed JSON");
+      // Exercise the finite-number check with the value Bun's fixture parser produced.
+      answers = json::object{{"a", json::object{{"noul", rt::makeNumber(rt::Number::POSITIVE_INFINITY)}}}};
+    } else {
+      answers = rt::jsonParse(answersText);
+    }
     json::value actual;
     try {
       json::object value;
@@ -569,7 +578,7 @@ TEST("noulAnswer matches the recorded answers and errors") {
     } catch (const rt::JsError& error) {
       actual = errorJson(error);
     }
-    expectJson(actual, *rt::get(vector, "result"), "noulAnswer " + text(rt::get(vector, "answersJson")));
+    expectJson(actual, *rt::get(vector, "result"), "noulAnswer " + answersText);
   }
   for (const json::value& entry : section("noulAnswerNullish")) {
     const json::object& vector = asObject(entry);

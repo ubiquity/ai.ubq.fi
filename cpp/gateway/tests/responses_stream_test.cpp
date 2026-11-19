@@ -12,6 +12,7 @@
 #include "uos/rt/string.hpp"
 #include "uos/rt/test_async.hpp"
 #include "uos/rt/text_codec.hpp"
+#include "helpers/live_allocations.hpp"
 
 #include <cmath>
 #include <cstddef>
@@ -122,6 +123,29 @@ namespace {
       rt::setTimeout([reject, message] { reject(rt::makeReason(rt::JsError(message))); }, ms);
     });
   }
+}
+
+ASYNC_TEST("Responses inactivity waits release consumed chunks on the running loop") {
+  const auto readEvents = []() -> rt::Task<void> {
+    rt::UnderlyingSource<rt::ByteChunk> source;
+    source.start = [](Controller controller) {
+      controller.enqueue(bytes("data: {\"type\":\"response.output_text.delta\",\"delta\":\"a\"}\n\n"));
+      const std::string comment = ":" + std::string(64 * 1024, 'x') + "\n\n";
+      controller.enqueue(bytes(comment));
+      controller.enqueue(bytes("data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"));
+      controller.close();
+    };
+    const rt::ByteStream body(std::move(source));
+    ReadResponsesStreamOptions options;
+    options.firstEventTimeoutMs = 10;
+    options.inactivityTimeoutMs = 10;
+    const auto iterator = readResponsesStream(body, std::nullopt, options);
+    const auto events = co_await fromAsync(iterator);
+    ASSERT_EQ(events.size(), 2u);
+    EXPECT(events.back().terminal);
+  };
+  auto checking = uos::tests::helpers::expectStableLiveAllocations(readEvents, 32, 20);
+  co_await std::move(checking);
 }
 
 ASYNC_TEST("Responses SSE parser handles mixed separators, multiline data, and fragmented UTF-8") {

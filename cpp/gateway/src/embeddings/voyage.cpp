@@ -123,16 +123,21 @@ namespace uos::embeddings::voyage {
       const auto commit = co_await jsAwait(operation->commit());
       co_return CacheEvictionOutcome{commit.ok, false};
     }
-    rt::Task<EmbeddingsCacheEvictResult> evictOldestEmbeddingsCacheEntries(rt::Kv& kv, double count) {
-      const auto candidates = co_await jsAwait(listEmbeddingsCacheEvictionCandidates(kv, count));
+    rt::Task<EmbeddingsCacheEvictResult> evictOldestEmbeddingsCacheEntries(std::shared_ptr<rt::Kv> kv, double count) {
+      auto listing = listEmbeddingsCacheEvictionCandidates(*kv, count);
+      const auto candidates = co_await jsAwait(std::move(listing));
       if (candidates.empty()) co_return EmbeddingsCacheEvictResult{0, 0};
       std::vector<rt::Promise<rt::KvEntryMaybe<>>> pending;
-      for (const auto& candidate : candidates) pending.emplace_back(kv.get(embeddingsCacheIndexByHashKey(candidate.cacheProfileKey, candidate.hash)));
-      const auto byHashEntries = co_await rt::all(std::move(pending)).wait();
+      for (const auto& candidate : candidates) {
+        auto read = kv->get(embeddingsCacheIndexByHashKey(candidate.cacheProfileKey, candidate.hash));
+        pending.emplace_back(rt::detail::keepAlive(kv, std::move(read)));
+      }
+      auto reads = rt::all(std::move(pending));
+      const auto byHashEntries = co_await reads.wait();
       double evictedEmbeddings = 0;
       double deletedStaleIndexKeys = 0;
       for (std::size_t i = 0; i < candidates.size(); ++i) {
-        auto task = evictEmbeddingsCacheCandidate(kv, candidates[i], byHashEntries[i]);
+        auto task = evictEmbeddingsCacheCandidate(*kv, candidates[i], byHashEntries[i]);
         const auto outcome = co_await jsAwait(std::move(task));
         if (outcome.evicted) ++evictedEmbeddings;
         if (outcome.deletedStaleIndexKey) ++deletedStaleIndexKeys;
@@ -141,14 +146,15 @@ namespace uos::embeddings::voyage {
     }
   }
 
-  rt::Task<EmbeddingsCacheWriteResult> writeEmbeddingsCacheEntryBestEffort(rt::Kv& kv, std::string cacheProfileKey, std::string hash,
+  rt::Task<EmbeddingsCacheWriteResult> writeEmbeddingsCacheEntryBestEffort(std::shared_ptr<rt::Kv> kv, std::string cacheProfileKey, std::string hash,
                                                                        std::vector<double> embedding, double createdAtMs, double deadlineMs) {
     double evictBatch = ledger::EMBEDDINGS_CACHE_EVICT_BATCH;
     for (int attempt = 0; attempt <= ledger::EMBEDDINGS_CACHE_QUOTA_MAX_RETRIES; ++attempt) {
       if (rt::dateNow() >= deadlineMs) co_return EmbeddingsCacheWriteResult{false};
       rt::Reason error;
       try {
-        const auto result = co_await jsAwait(writeEmbeddingsCacheEntry(kv, cacheProfileKey, hash, embedding, createdAtMs));
+        auto writing = writeEmbeddingsCacheEntry(*kv, cacheProfileKey, hash, embedding, createdAtMs);
+        const auto result = co_await jsAwait(std::move(writing));
         co_return result;
       } catch (...) { error = std::current_exception(); }
       if (!isEmbeddingsCacheQuotaError(error)) {
@@ -158,7 +164,8 @@ namespace uos::embeddings::voyage {
       // Evict globally so a new profile cannot be starved by another profile's entries.
       rt::Reason evictError;
       try {
-        const auto evicted = co_await jsAwait(evictOldestEmbeddingsCacheEntries(kv, evictBatch));
+        auto evicting = evictOldestEmbeddingsCacheEntries(kv, evictBatch);
+        const auto evicted = co_await jsAwait(std::move(evicting));
         rt::console::warn("[ai.ubq.fi] embeddings_cache quota eviction requesting_profile=" + cacheProfileKey + " scope=global evicted=" +
           rt::numberToString(evicted.evicted_embeddings) + " stale_index_deleted=" + rt::numberToString(evicted.deleted_stale_index_keys) +
           " batch=" + rt::numberToString(evictBatch));
@@ -188,23 +195,29 @@ namespace uos::embeddings::voyage {
   }
   rt::Promise<bool> sleepUnlessAborted(double ms, rt::AbortSignal signal) {
     if (signal.aborted()) return rt::Promise<bool>::resolve(false);
-    struct State { rt::Timeout timeout; rt::EventListener onAbort; };
-    auto state = std::make_shared<State>();
-    return rt::newPromise<bool>([ms, signal, state](const rt::Resolve<bool>& resolve, const rt::Reject&) {
-      state->timeout = rt::setTimeout([signal, state, resolve] {
-        signal.removeEventListener("abort", state->onAbort);
+    struct State {
+      rt::AbortSignal signal;
+      rt::Timeout timeout;
+      rt::EventListener onAbort;
+
+      explicit State(rt::AbortSignal signal_) : signal(std::move(signal_)) {}
+      ~State() { signal.removeEventListener("abort", onAbort); }
+    };
+    auto state = std::make_shared<State>(std::move(signal));
+    return rt::newPromise<bool>([ms, state](const rt::Resolve<bool>& resolve, const rt::Reject&) {
+      state->timeout = rt::setTimeout([state, resolve] {
+        state->signal.removeEventListener("abort", state->onAbort);
         resolve(true);
       }, ms);
       const std::weak_ptr<State> weak = state;
-      state->onAbort = rt::EventListener([signal, weak, resolve] {
+      state->onAbort = rt::EventListener([weak, resolve] {
         if (const auto current = weak.lock()) {
           rt::clearTimeout(current->timeout);
-          signal.removeEventListener("abort", current->onAbort);
           resolve(false);
         }
       });
-      signal.addEventListener("abort", state->onAbort, {.once = true});
-      if (signal.aborted()) state->onAbort();
+      state->signal.addEventListener("abort", state->onAbort, {.once = true});
+      if (state->signal.aborted()) state->onAbort();
     });
   }
   double estimateTokens(const std::string& text) { return text.empty() ? 0 : rt::Math::ceil(static_cast<double>(rt::utf8ByteLength(text)) / 4); }

@@ -48,6 +48,7 @@
 #include "uos/rt/json.hpp"
 #include "uos/rt/kv_js.hpp"
 #include "uos/rt/test_async.hpp"
+#include "helpers/live_allocations.hpp"
 
 #include <memory>
 #include <string>
@@ -206,6 +207,16 @@ ASYNC_TEST("local development key provisioning bounds a pricing initializer that
 }
 ASYNC_TEST("local development key provisioning keeps a normal pricing initialization inside the deadline") {
   Fixture fixture; const auto kv = fixture.kv; local::setLocalDevelopmentPricingDeadlineMsForTest(1000); auto cleanup = rt::scopeExit([] { local::setLocalDevelopmentPricingDeadlineMsForTest(std::nullopt); }); AWAIT(status, ensure(kv)); EXPECT_EQ(status, "created"); AWAIT(record, kv->get(idKey())); EXPECT_EQ(record.value["paid_fallback_model_ids"], rt::KvValue(json::array{"gpt-6-astra"})); EXPECT_EQ(record.value["paid_fallback_pricing_checked_at_ms"], rt::KvValue(rt::dateNow()));
+}
+ASYNC_TEST("completed local provisioning releases the private abort promise") {
+  Fixture fixture;
+  const auto provision = []() -> rt::Task<void> {
+    const auto store = std::make_shared<rt::MemoryKv>(rt::dateNow);
+    const auto status = co_await ensure(store);
+    EXPECT_EQ(status, "created");
+  };
+  auto checking = uos::tests::helpers::expectStableLiveAllocations(provision, 64);
+  co_await std::move(checking);
 }
 ASYNC_TEST("local development key provisioning discards a cancelled pricing snapshot") {
   Fixture fixture; const auto kv = fixture.kv; const auto pending = rt::withResolvers<paid::InitializePaidFallbackPolicyResult>(); auto entered = std::make_shared<int>(0); rt::AbortController controller;

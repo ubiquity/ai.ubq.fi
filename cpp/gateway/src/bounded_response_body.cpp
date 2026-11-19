@@ -29,22 +29,27 @@ namespace uos::bounded_response_body {
     }
 
     rt::Task<ReadResult> abortableRead(rt::ReadableStreamDefaultReader<rt::ByteChunk> reader, rt::AbortSignal signal) {
-      rt::EventListener onAbort = [] {};
-      rt::Promise<ReadResult> aborted = rt::newPromise<ReadResult>([&onAbort, &signal](const rt::Resolve<ReadResult>&, const rt::Reject& reject) {
-        onAbort = rt::EventListener([reject, signal] { reject(abortError(signal.reason())); });
+      const auto aborted = rt::withResolvers<ReadResult>();
+      rt::EventListener onAbort;
+      try {
+        onAbort = rt::EventListener([reject = aborted.reject, signal] { reject(abortError(signal.reason())); });
         signal.addEventListener("abort", onAbort, {.once = true});
         if (signal.aborted()) onAbort();
-      });
+      } catch (...) {
+        aborted.reject(std::current_exception());
+      }
       std::optional<ReadResult> result;
       rt::Reason failure;
       try {
-        std::vector<rt::Promise<ReadResult>> racers{reader.readPromise(), aborted};
+        std::vector<rt::Promise<ReadResult>> racers{reader.readPromise(), aborted.promise};
         rt::Promise<ReadResult> race = rt::race(std::move(racers));
         result = co_await race.wait();
       } catch (...) {
         failure = std::current_exception();
       }
       signal.removeEventListener("abort", onAbort);
+      // The private latch can no longer abort the read. Release its race reaction.
+      aborted.resolve(ReadResult{.done = true, .value = std::nullopt});
       if (failure) {
         std::rethrow_exception(failure);
       }

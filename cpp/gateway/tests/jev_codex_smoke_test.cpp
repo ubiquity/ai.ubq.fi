@@ -54,6 +54,14 @@ smoke::ChatTool shellTool(){return {"shell",json::object{{"type","object"},{"pro
 TEST("jev-codex-smoke module links its explicit script callable without executing it"){
   auto volatile entry=&smoke::importMetaMain;EXPECT(entry!=nullptr);EXPECT(!rt::env::has("OPENROUTER_API_KEY"));EXPECT(!rt::env::has("CODEX_AUTH_JSON_B64"));EXPECT(!rt::fs::existsSync(".data"));
 }
+ASYNC_TEST("the smoke fake server releases its request handler after shutdown") {
+  auto fake = co_await smoke::FakeChatUpstream::start();
+  ASSERT(fake);
+  const std::weak_ptr observer = fake;
+  co_await fake->close();
+  fake.reset();
+  EXPECT(observer.expired());
+}
 TEST("jev-codex-smoke excerpts octal codepoints record views and adopted summary match Bun"){
   EXPECT_EQ(smoke::octalEscapes("A🦄é"),std::string(rt::getString(oracle(),"octal").value()));const json::array excerpts{smoke::safeExcerpt("abc\ndef",5),smoke::safeExcerpt("🦄xyz",2),smoke::safeExcerpt("abcdef",-1)};EXPECT_EQ(json::value(excerpts),*rt::get(oracle(),"excerpts"));const json::value nullValue=nullptr,arrayValue=json::array{},objectValue=json::object{{"value",7}};const json::array records{smoke::record(nullValue),smoke::record(arrayValue),smoke::record(objectValue)};EXPECT_EQ(json::value(records),*rt::get(oracle(),"records"));const json::array adopted{smoke::adoptedSummary("none"),smoke::adoptedSummary("before # fast-jev-compaction memory summary retained post-compaction probe after"),smoke::adoptedSummary("before # fast-jev-compaction memory summary retained")};EXPECT_EQ(json::value(adopted),*rt::get(oracle(),"adopted"));
 }

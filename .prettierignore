@@ -1,16 +1,17 @@
-# Prettier owns all supported first-party file types. TypeScript keeps 160 columns;
-# the former Deno-owned file types keep 120 columns through .prettierrc overrides.
-*.sh
+# Vendor, replay and integrity-bound bytes
+cpp/gateway/third_party/
+cpp/gateway/fuzz/corpus/
+cpp/gateway/PORT-MANIFEST.json
+cpp/gateway/runtime/legacy-codec/
+cpp/gateway/tests/fixtures/
+cpp/gateway/packaging/native-kv/inputs*.json
+cpp/gateway/packaging/native-kv/lock-derivation.json
+static/openapi.json
 
-# Retired generated runtime declarations must never become source inputs.
-.deno-types.d.ts
-
-# Vendored: openai/codex git submodule
-lib/
-
-# Dev scratch, generated output and immutable release copies
+# Scratch, generated output and immutable release copies
 node_modules/
 .bun-cache/
+.npm-cache/
 .tmp/
 .cleanup-evidence/
 .codex-worktrees/
@@ -20,16 +21,5 @@ node_modules/
 .sentinel/
 .diagnostics/
 logs/
-benchmark-runs/
-.git/
-
-# Generated benchmark output excluded by the previous formatter too.
-benchmarks/fixtures/
-benchmarks/provider-waterfall/results/
-benchmarks/provider-waterfall/cost/
-
-# Integrity-bound benchmark corpus fixture; its bytes are pinned in corpus-v1.manifest.json.
-benchmarks/provider-waterfall/fixtures/codex-tools-0.160.1.json
-
-# Vendored Rust dependencies retain their accepted upstream bytes.
-rust/vendor/
+build/
+cmake-build-*/

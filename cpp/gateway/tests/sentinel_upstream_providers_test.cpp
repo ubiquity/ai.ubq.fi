@@ -1004,7 +1004,7 @@ ASYNC_TEST("real handler replays the decrypted recorded Codex raw failure throug
 
 ASYNC_TEST("historical framing fixture replays through the real Surplus fetch without the unterminated suffix") {
   const CredentialIsolation isolation;
-  const std::string path = rt::path::join(rt::path::dirname(__FILE__), "../../../tests/fixtures/sentinel-historical-framing.json");
+  const std::string path = rt::path::join(rt::path::dirname(__FILE__), "fixtures/sentinel-historical-framing.json");
   const rt::Bytes fixtureBytes = rt::fs::readFileSync(path);
   const json::value fixture = rt::jsonParse(rt::decodeUtf8(fixtureBytes));
   EXPECT_EQ(rt::getNumber(fixture, "version"), std::optional<double>(1));

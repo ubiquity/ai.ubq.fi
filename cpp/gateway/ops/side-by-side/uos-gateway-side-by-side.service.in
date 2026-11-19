@@ -1,0 +1,47 @@
+# Render and verify using docs/SIDE-BY-SIDE.md. No boot target is supplied.
+[Unit]
+Description=Native gateway side-by-side observation
+AssertControlGroupController=v2
+AssertControlGroupController=cpu memory
+
+[Service]
+Type=exec
+User=@SHADOW_USER@
+Group=@SHADOW_GROUP@
+WorkingDirectory=@STATE_ROOT@
+UMask=0077
+# Start with an empty environment. The sealed package launcher eventually execs the gateway.
+ExecStart=/usr/bin/env -i DENO_TIMELINE=production HOME=@STATE_ROOT@/home CODEX_HOME=@STATE_ROOT@/home/.codex TMPDIR=@STATE_ROOT@/.data /bin/sh @PACKAGE_ROOT@/ops/launch-native.sh @STATE_ROOT@/launch.json
+Restart=no
+TimeoutStopSec=30s
+StandardOutput=journal
+StandardError=journal
+
+CPUWeight=25
+Nice=10
+MemoryAccounting=yes
+MemoryMax=512M
+MemorySwapMax=0
+
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+RestrictSUIDSGID=yes
+ReadOnlyPaths=@PACKAGE_ROOT@
+ReadWritePaths=@STATE_ROOT@/.data
+# ProtectHome may already hide this path. Also cover installs outside home.
+InaccessiblePaths=-@BUN_ROOT@
+
+# Requires effective cgroup BPF bind and IP filters on the target host.
+# The application also validates its own loopback listener before binding.
+RestrictAddressFamilies=AF_INET
+IPAddressDeny=any
+IPAddressAllow=127.0.0.1/32
+SocketBindDeny=any
+SocketBindAllow=ipv4:tcp:@NATIVE_PORT@

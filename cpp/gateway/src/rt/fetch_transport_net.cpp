@@ -51,6 +51,7 @@ namespace uos::rt::detail::fetch {
     open_ = false;
     boost::system::error_code ignored;
     socket_.close(ignored);
+    if (stopUpload) stopUpload();
   }
 
   void Connection::watchIdle(double ms) {
@@ -108,7 +109,8 @@ namespace uos::rt::detail::fetch {
       }
       boost::system::error_code error;
       auto token = asio::redirect_error(asio::use_awaitable, error);
-      const std::size_t count = co_await socket_.async_read_some(asio::buffer(readBuffer_), token);
+      const auto buffer = asio::buffer(readBuffer_);
+      const std::size_t count = co_await socket_.async_read_some(buffer, token);
       if (error || count == 0) {
         const ReadStatus status = statusOf(error, open_);
         result.aborted = status == ReadStatus::aborted;
@@ -148,7 +150,8 @@ namespace uos::rt::detail::fetch {
     if (!ssl_) {
       boost::system::error_code error;
       auto token = asio::redirect_error(asio::use_awaitable, error);
-      const std::size_t count = co_await socket_.async_read_some(asio::buffer(readBuffer_), token);
+      const auto buffer = asio::buffer(readBuffer_);
+      const std::size_t count = co_await socket_.async_read_some(buffer, token);
       if (!open_) co_return ReadStatus::aborted;
       if (error) co_return statusOf(error, open_);
       if (count == 0) co_return ReadStatus::eof;
@@ -175,7 +178,8 @@ namespace uos::rt::detail::fetch {
       if (received) co_return ReadStatus::data;
       boost::system::error_code error;
       auto token = asio::redirect_error(asio::use_awaitable, error);
-      const std::size_t count = co_await socket_.async_read_some(asio::buffer(readBuffer_), token);
+      const auto buffer = asio::buffer(readBuffer_);
+      const std::size_t count = co_await socket_.async_read_some(buffer, token);
       if (!open_) co_return ReadStatus::aborted;
       if (error) co_return statusOf(error, open_);
       if (count == 0) co_return ReadStatus::eof;
@@ -190,7 +194,8 @@ namespace uos::rt::detail::fetch {
     if (!ssl_) {
       boost::system::error_code error;
       auto token = asio::redirect_error(asio::use_awaitable, error);
-      co_await asio::async_write(socket_, asio::buffer(data, size), token);
+      const auto buffer = asio::buffer(data, size);
+      co_await asio::async_write(socket_, buffer, token);
       if (error || !open_) co_return false;
       touch();
       co_return true;
@@ -221,7 +226,8 @@ namespace uos::rt::detail::fetch {
       if (taken <= 0) co_return true;
       boost::system::error_code error;
       auto token = asio::redirect_error(asio::use_awaitable, error);
-      co_await asio::async_write(socket_, asio::buffer(cipher.data(), static_cast<std::size_t>(taken)), token);
+      const auto buffer = asio::buffer(cipher.data(), static_cast<std::size_t>(taken));
+      co_await asio::async_write(socket_, buffer, token);
       if (error) co_return false;
       touch();
     }

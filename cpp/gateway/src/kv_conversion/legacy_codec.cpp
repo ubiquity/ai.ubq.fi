@@ -13,8 +13,8 @@
 #include "uos/rt/stream.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/rt/text_codec.hpp"
-#include "uos/rt/url.hpp"
 #include <cmath>
+#include <filesystem>
 #include <optional>
 #include <tuple>
 #include <utility>
@@ -34,11 +34,6 @@ namespace uos::kv_conversion::legacy_codec {
 
   namespace {
     using TypedValue = typed_value::TypedValue;
-
-    // `import.meta.url` of src/kv-conversion/legacy-codec.ts. A C++ binary has no module file:
-    // it runs from the release root (ops/ai-ubq-fi.service WorkingDirectory), which holds the
-    // TypeScript sources and v8-helper.mjs that the pinned Deno binary executes.
-    rt::URL moduleUrl() { return rt::pathToFileURL(rt::path::resolve(runtime::paths::resourceRoot(), "src/kv-conversion/legacy-codec.ts")); }
 
     // `Buffer.from(value, "base64")` for the codec's reply, which the TS casts to string
     // unchecked: Bun takes strings, arrays and array-like objects and throws for the rest.
@@ -144,7 +139,7 @@ namespace uos::kv_conversion::legacy_codec {
       const std::string binarySha256 = co_await fileDigest(path);
       if (!rt::fs::lstatSync(path).isFile() || !SHA256.test(expectedSha256) || binarySha256 != expectedSha256)
         throw rt::JsError("Pinned legacy Deno binary does not match its SHA-256: expected " + expectedSha256 + ", observed " + binarySha256);
-      const std::string helper = rt::fileURLToPath(rt::URL("./v8-helper.mjs", moduleUrl()));
+      const std::string helper = (std::filesystem::path(runtime::paths::resourceRoot()) / "src/kv-conversion/v8-helper.mjs").native();
       const std::vector<std::pair<std::string, std::string>> environment{{"DENO_DIR", rt::path::join(cwd, ".deno-codec-cache")}};
       rt::process::SpawnOptions versionOptions;
       versionOptions.cwd = cwd;

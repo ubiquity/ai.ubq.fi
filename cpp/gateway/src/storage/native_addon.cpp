@@ -18,16 +18,10 @@ namespace uos::storage::native_addon {
 
     constexpr std::string_view SOURCE_COMMIT = "9fe65cc138ff56ca5bfe7a1bf8c53e832246f9d5";
 
-    // `import.meta.url` of src/storage/native-addon.ts: this port is compiled from
-    // cpp/gateway/src/storage/native_addon.cpp of the same checkout.
-    const rt::URL& moduleUrl() {
-      static const rt::URL url = rt::pathToFileURL(rt::path::resolve(rt::path::dirname(__FILE__), "../../../../src/storage/native-addon.ts"));
-      return url;
-    }
-
-    const rt::URL& INPUTS_MANIFEST() {
-      static const rt::URL url("../../tools/native-kv/inputs.json", moduleUrl());
-      return url;
+    const std::string& INPUTS_MANIFEST() {
+      static const std::string path = rt::path::resolve(rt::path::dirname(__FILE__), "../../packaging/native-kv",
+        rt::process::platform == "darwin" ? "inputs-darwin-arm64.json" : "inputs.json");
+      return path;
     }
 
     constexpr std::string_view PROVENANCE_FILE = "native-kv.provenance.json";
@@ -96,7 +90,7 @@ namespace uos::storage::native_addon {
     const rt::fs::Bytes provenanceBytes = readRegularFile(rt::path::join(directory, PROVENANCE_FILE));
     const std::string provenanceSha256 = sha256(provenanceBytes);
     if (provenanceSha256 != binding.expectedProvenanceSha256) throw rt::JsError("Native KV provenance hash does not match its release binding");
-    const rt::fs::Bytes inputsBytes = readRegularFile(pathOf(binding.inputsManifest ? *binding.inputsManifest : PathLike(INPUTS_MANIFEST())));
+    const rt::fs::Bytes inputsBytes = readRegularFile(binding.inputsManifest ? pathOf(*binding.inputsManifest) : INPUTS_MANIFEST());
     const json::value inputsValue = rt::jsonParse(rt::bufferToString(inputsBytes));
     const json::object& inputs = object(&inputsValue);
     const json::value provenanceValue = rt::jsonParse(rt::bufferToString(provenanceBytes));
@@ -163,7 +157,7 @@ namespace uos::storage::native_addon {
     NativeKvArtifactBinding artifact;
     artifact.artifactDirectory = rt::path::dirname(verified.path);
     artifact.expectedProvenanceSha256 = verified.provenanceSha256;
-    artifact.inputsManifest = rt::fs::realpathSync(pathOf(binding.inputsManifest ? *binding.inputsManifest : PathLike(INPUTS_MANIFEST())));
+    artifact.inputsManifest = rt::fs::realpathSync(binding.inputsManifest ? pathOf(*binding.inputsManifest) : INPUTS_MANIFEST());
     prepared() = Prepared{identity, std::move(artifact), exports};
   }
 

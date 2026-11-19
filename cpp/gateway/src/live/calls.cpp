@@ -15,6 +15,7 @@
 #include "uos/rt/ordered.hpp"
 #include "uos/rt/regex.hpp"
 #include "uos/rt/string.hpp"
+#include "uos/rt/text_codec.hpp"
 #include "uos/types.hpp"
 #include "uos/utils.hpp"
 
@@ -55,10 +56,10 @@ namespace uos::live::calls {
       if (!bounded.complete) co_return http::openaiError(400, "Live call creation body could not be read completely.", "invalid_request_error");
       co_return bounded.bytes;
     }
-    rt::Task<std::optional<std::string>> liveCallPartText(std::optional<rt::FormData::Value> value) {
-      if (!value) co_return std::nullopt;
-      if (const auto* text = std::get_if<std::string>(&*value)) co_return *text;
-      rt::Promise<std::string> pending(std::get<rt::File>(*value).text()); auto text = co_await pending.wait(); co_return text;
+    std::optional<std::string> liveCallPartText(const rt::FormValue* value) {
+      if (!value) return std::nullopt;
+      if (const auto* text = std::get_if<std::string>(value)) return *text;
+      return rt::decodeUtf8(std::get<rt::FormFile>(*value).bytes);
     }
     rt::Task<ParsedLiveCallCreate> parseLiveCallCreate(rt::Request req) {
       const auto contentType = req.headers().get("content-type").value_or(""); const auto mediaType = rt::toLowerCase(rt::trim(rt::split(contentType, ";").front()));
@@ -67,15 +68,16 @@ namespace uos::live::calls {
         co_return liveCallCreateError(400, "Live call creation requires multipart/form-data with a declared boundary.", "invalid_request_error");
       rt::Promise<ReadLiveCallBodyResult> pending(readLiveCallBody(req)); auto body = co_await pending.wait();
       if (const auto* response = std::get_if<rt::Response>(&body)) co_return *response;
-      std::optional<rt::FormData> form;
+      rt::FormParts form;
       try {
-        rt::RequestInit init; init.method = req.method(); init.headers = req.headers(); init.body = rt::BodyInit(std::get<rt::Bytes>(body));
-        rt::Request parsed(req.url(), init); rt::Promise<rt::FormData> parsedPending(parsed.formData()); form = co_await parsedPending.wait();
-      } catch (...) {}
-      if (!form) co_return liveCallCreateError(400, "Live call creation multipart body could not be parsed.", "invalid_request_error");
-      rt::Promise<std::optional<std::string>> sdpPending(liveCallPartText(form->get("sdp"))); const auto sdp = co_await sdpPending.wait();
+        const rt::InboundFormDecoder decoder(contentType);
+        form = decoder.decode(std::get<rt::Bytes>(body));
+      } catch (...) {
+        co_return liveCallCreateError(400, "Live call creation multipart body could not be parsed.", "invalid_request_error");
+      }
+      const auto sdp = liveCallPartText(rt::findFormPart(form, "sdp"));
       if (!sdp || sdp->empty()) co_return liveCallCreateError(400, "Live call creation requires a non-empty `sdp` part.", "invalid_request_error", "sdp");
-      rt::Promise<std::optional<std::string>> sessionPending(liveCallPartText(form->get("session"))); const auto sessionText = co_await sessionPending.wait();
+      const auto sessionText = liveCallPartText(rt::findFormPart(form, "session"));
       if (!sessionText) co_return liveCallCreateError(400, "Live call creation requires a `session` part.", "invalid_request_error", "session");
       std::optional<json::value> session;
       try { session = rt::jsonParse(*sessionText); } catch (...) {}

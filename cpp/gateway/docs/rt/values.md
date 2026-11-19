@@ -34,7 +34,7 @@ vectors in `tests/rt/{json,number,ordered,nullable}_test.cpp`.
    address); structural -> `rt::deepEqual` (numbers by `Object.is`). `x == null` ->
    `rt::isNullish(p)`. Never compare non-canonical JSON with boost `==`.
 5. **Depth.** `jsonParse` and the recursive helpers refuse nesting deeper than
-   `rt::kJsonMaxDepth` (10000) with `RangeError("Maximum call stack size exceeded.")`.
+   `rt::kJsonMaxDepth` (128) with `RangeError("Maximum call stack size exceeded.")`.
 6. **Errors** carry JavaScriptCore's text (`rt::SyntaxError`, `rt::RangeError`, `rt::TypeError`).
 
 ## JSON
@@ -114,11 +114,8 @@ nothing (JS calls the prototype setter). `objectDefine`/spread/`jsonParse` treat
 | TypeScript                                                                                 | C++                                                                                                                                                                                                                                      |
 | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `String(n)`, `` `${n}` ``, `n.toString()`                                                  | `rt::numberToString(n)` (never `std::to_string`/iostreams)                                                                                                                                                                               |
-| `n.toString(radix)`                                                                        | `rt::numberToString(n, radix)`                                                                                                                                                                                                           |
-| `n.toFixed(d)`                                                                             | `rt::toFixed(n, d)`                                                                                                                                                                                                                      |
 | `Number(s)`, `+s`                                                                          | `rt::stringToNumber(s)` ("" -> 0, hex/octal/binary, Infinity, StrWhiteSpace trimmed)                                                                                                                                                     |
 | `parseInt(s, r)`, `Number.parseInt`                                                        | `rt::parseInt(s, r)` (r already ToInt32; 0 = absent)                                                                                                                                                                                     |
-| `parseFloat(s)`                                                                            | `rt::parseFloat(s)`                                                                                                                                                                                                                      |
 | `Number.isInteger/isSafeInteger/isFinite/isNaN(n)`                                         | `rt::Number::isInteger(n)` ...                                                                                                                                                                                                           |
 | `Number.MAX_SAFE_INTEGER`, `EPSILON`, `MAX_VALUE`, `MIN_VALUE`, `POSITIVE_INFINITY`, `NaN` | `rt::Number::MAX_SAFE_INTEGER` ...                                                                                                                                                                                                       |
 | `Math.round/trunc/floor/ceil/sign/abs(x)`                                                  | `rt::Math::round(x)` ... (round: halves toward +Infinity, keeps -0)                                                                                                                                                                      |
@@ -187,7 +184,7 @@ Use `std::unordered_map`/`std::unordered_set` when iteration order is never obse
   are not modelled.
 - `obj.k = undefined; obj.k = 1` moves `k` to the end in C++ (undefined deletes the member);
   JS keeps `k` in place. `Object.keys` after `obj.k = undefined` lists `k` in JS only.
-- Documents nested deeper than 10000 levels: `RangeError` from `jsonParse` (JSC parses them,
+- Documents nested deeper than 128 levels: `RangeError` from `jsonParse` (JSC parses them,
   and fails only in JSON.stringify/structuredClone beyond about 40000 levels).
 - `JSON.stringify` of BigInt (TypeError), cycles, `toJSON` and functions has no json::value
   input; `Date` objects serialise through `toISOString` (text component).

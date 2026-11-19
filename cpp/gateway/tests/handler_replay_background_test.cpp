@@ -148,3 +148,30 @@ ASYNC_TEST("exception replay persistence is awaited and cleaned up without a bac
   EXPECT(persistenceSettled);
   EXPECT(fixture::zeroed(snapshot.body));
 }
+
+ASYNC_TEST("background exception replay keeps its suspended callback alive") {
+  fixture::Isolation isolation;
+  const auto resume = rt::withResolvers<void>();
+  auto capture = std::make_shared<std::string>("background replay callback");
+  const std::weak_ptr observer = capture;
+  std::optional<rt::Promise<void>> registered;
+  handler::terminal_route::PersistInferenceExceptionReplayOptions options;
+  options.waitUntil = [&registered](rt::Promise<void> pending) { registered = std::move(pending); };
+  options.persistSentinelReplay = [capture = std::move(capture), waiting = resume.promise](auto snapshot, auto)
+    -> rt::Task<sentinel::replay_observation::SentinelReplayPersistResult> {
+    co_await waiting.wait();
+    EXPECT_EQ(*capture, "background replay callback");
+    EXPECT(!fixture::zeroed(snapshot.body));
+    co_return sentinel::replay_observation::SentinelReplayPersistResultDisabled{.reason = "kv_unavailable"};
+  };
+  auto input = fixture::acceptedInput();
+  const auto reason = rt::makeReason(rt::JsError("controlled inference failure"));
+  auto scheduling = handler::terminal_route::persistInferenceExceptionReplay(input, reason, std::move(options));
+  co_await std::move(scheduling);
+  ASSERT(registered);
+  EXPECT(fixture::zeroed(input.body));
+  ASSERT(!observer.expired());
+  resume.resolve();
+  co_await registered->wait();
+  EXPECT(observer.expired());
+}

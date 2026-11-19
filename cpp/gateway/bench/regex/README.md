@@ -7,7 +7,10 @@ Run from the repository root after the shared build owner has admitted the selec
 ```sh
 python3 cpp/gateway/tools/build.py native release checkpoint --incremental --target uos_bench_regex --tests --jobs 1
 python3 cpp/gateway/bench/regex/make_fixtures.py .data/regex-fixtures.json
-python3 cpp/gateway/bench/regex/run.py --binary .data/cpp-gateway-native-release/uos_bench_regex --manifest .data/regex-fixtures.json --output .data/regex-before
+scratch=$(mktemp -d)
+bash cpp/gateway/conformance/oracle.sh "$scratch/oracle"
+python3 cpp/gateway/bench/regex/run.py --oracle "$scratch/oracle" \
+  --binary .data/cpp-gateway-native-release/uos_bench_regex --manifest .data/regex-fixtures.json --output .data/regex-before
 ```
 
 Each output directory must be new. Runs execute serially in fresh HOME, TMPDIR, and working directories inside a Linux user/network namespace, with an explicit credential-empty environment. Bun must report version 1.4.0 and runs with `--no-env-file --no-install`. Coordinate the measurement window with other performance work; record remaining compiler activity or host load as noise.

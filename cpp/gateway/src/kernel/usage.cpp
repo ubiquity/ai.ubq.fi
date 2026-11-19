@@ -274,11 +274,15 @@ namespace uos::kernel::usage {
       const std::shared_ptr<rt::Kv> kv = co_await opening.wait();
       if (!kv) co_return std::nullopt;
       const double nowMs = rt::dateNow();
-      const rt::KvEntryMaybe<> entry = co_await kv->get(kernelUsageKey(owner, repo));
+      auto key = kernelUsageKey(owner, repo);
+      auto reading = kv->get(std::move(key));
+      const rt::KvEntryMaybe<> entry = co_await std::move(reading);
       if (!entry.value.truthy()) co_return std::nullopt;
       KernelAuthUsageWithDaily usage{normalizeUsageRecord(entry.value, owner, repo, nowMs), std::nullopt};
       if (!rt::truthy(options.includeDaily)) co_return usage;
-      const rt::KvEntryMaybe<> dailyEntry = co_await kv->get(kernelUsageDailyKey(owner, repo));
+      auto dailyKey = kernelUsageDailyKey(owner, repo);
+      auto readingDaily = kv->get(std::move(dailyKey));
+      const rt::KvEntryMaybe<> dailyEntry = co_await std::move(readingDaily);
       const KernelAuthUsageDailyRecord dailyRecord = normalizeDailyUsageRecord(dailyEntry.value, owner, repo, nowMs);
       usage.daily_requests = buildDailySeries(dailyRecord, nowMs, options.dailyDays.value_or(DAILY_SERIES_DAYS));
       co_return usage;
@@ -298,11 +302,15 @@ namespace uos::kernel::usage {
       const std::shared_ptr<rt::Kv> kv = co_await opening.wait();
       if (!kv) co_return std::nullopt;
       const double nowMs = rt::dateNow();
-      const rt::KvEntryMaybe<> entry = co_await kv->get(kernelOrgUsageKey(owner));
+      auto key = kernelOrgUsageKey(owner);
+      auto reading = kv->get(std::move(key));
+      const rt::KvEntryMaybe<> entry = co_await std::move(reading);
       if (!entry.value.truthy()) co_return std::nullopt;
       KernelOrgUsageWithDaily usage{normalizeOrgUsageRecord(entry.value, owner, nowMs), std::nullopt};
       if (!rt::truthy(options.includeDaily)) co_return usage;
-      const rt::KvEntryMaybe<> dailyEntry = co_await kv->get(kernelOrgUsageDailyKey(owner));
+      auto dailyKey = kernelOrgUsageDailyKey(owner);
+      auto readingDaily = kv->get(std::move(dailyKey));
+      const rt::KvEntryMaybe<> dailyEntry = co_await std::move(readingDaily);
       const KernelOrgUsageDailyRecord dailyRecord = normalizeDailyOrgUsageRecord(dailyEntry.value, owner, nowMs);
       usage.daily_requests = buildDailySeries(dailyRecord, nowMs, options.dailyDays.value_or(DAILY_SERIES_DAYS));
       co_return usage;
@@ -329,7 +337,9 @@ namespace uos::kernel::usage {
         const std::string keyRepo = keyText(entry->key, 4);
         KernelAuthUsageWithDaily usage{normalizeUsageRecord(entry->value, keyOwner, keyRepo, nowMs), std::nullopt};
         if (rt::truthy(options.includeDaily)) {
-          const rt::KvEntryMaybe<> dailyEntry = co_await kv->get(kernelUsageDailyKey(usage.owner, usage.repo));
+          auto dailyKey = kernelUsageDailyKey(usage.owner, usage.repo);
+          auto readingDaily = kv->get(std::move(dailyKey));
+          const rt::KvEntryMaybe<> dailyEntry = co_await std::move(readingDaily);
           const KernelAuthUsageDailyRecord dailyRecord = normalizeDailyUsageRecord(dailyEntry.value, usage.owner, usage.repo, nowMs);
           usage.daily_requests = buildDailySeries(dailyRecord, nowMs, options.dailyDays.value_or(DAILY_SERIES_DAYS));
         }
@@ -363,7 +373,9 @@ namespace uos::kernel::usage {
         const std::string keyOwner = keyText(entry->key, 3);
         KernelOrgUsageWithDaily usage{normalizeOrgUsageRecord(entry->value, keyOwner, nowMs), std::nullopt};
         if (rt::truthy(options.includeDaily)) {
-          const rt::KvEntryMaybe<> dailyEntry = co_await kv->get(kernelOrgUsageDailyKey(usage.owner));
+          auto dailyKey = kernelOrgUsageDailyKey(usage.owner);
+          auto readingDaily = kv->get(std::move(dailyKey));
+          const rt::KvEntryMaybe<> dailyEntry = co_await std::move(readingDaily);
           const KernelOrgUsageDailyRecord dailyRecord = normalizeDailyOrgUsageRecord(dailyEntry.value, usage.owner, nowMs);
           usage.daily_requests = buildDailySeries(dailyRecord, nowMs, options.dailyDays.value_or(DAILY_SERIES_DAYS));
         }

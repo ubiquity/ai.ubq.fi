@@ -129,10 +129,44 @@ namespace {
   public:
     bool failSet = false;
     bool failCommit = false;
+    std::optional<rt::KvKey> rejectRead;
     explicit FaultKv(std::shared_ptr<rt::Kv> innerStore) : rt::ForwardingKv(*innerStore), owned_(std::move(innerStore)) {}
+    rt::Task<rt::KvEntryMaybe<>> get(rt::KvKey key, rt::KvGetOptions options) override {
+      if (rejectRead && key == *rejectRead) throw rt::JsError("controlled admin read failure");
+      auto pending = owned_->get(std::move(key), options);
+      auto result = co_await std::move(pending);
+      co_return result;
+    }
     rt::Task<rt::KvCommitResult> set(rt::KvKey key, rt::KvValue value, rt::KvSetOptions options = {}) override { if (failSet) throw rt::JsError("catalog store is unavailable"); auto task = owned_->set(key, value, options); const auto result = co_await std::move(task); co_return result; }
     std::unique_ptr<rt::AtomicOperation> atomic() override { if (!failCommit) return owned_->atomic(); return std::make_unique<rt::GenericAtomicOperation>([](auto, auto) -> rt::Task<rt::KvCommitResult> { throw rt::JsError("models commit exploded"); co_return rt::KvCommitResult{}; }); }
   };
+}
+ASYNC_TEST("catalog callbacks survive a failed whitelist or provider selection read") {
+  Fixture fixture;
+  for (const bool selection : {false, true}) {
+    const auto store = std::make_shared<FaultKv>(h::kvStub());
+    store->rejectRead = selection ? uos::provider::selection::PROVIDER_SELECTION_KV_KEY
+                                  : uos::models::codex_models_whitelist::CODEX_MODELS_WHITELIST_KV_KEY;
+    uos::kv::setKvForTest(store);
+    const auto resume = rt::withResolvers<void>();
+    const auto done = rt::withResolvers<void>();
+    auto capture = std::make_shared<std::string>("admin catalog callback");
+    const std::weak_ptr observer = capture;
+    a::CatalogDependencies dependencies;
+    dependencies.buildCatalog = [capture = std::move(capture), waiting = resume.promise, finish = done.resolve]()
+      -> rt::Task<uos::models::catalog::ModelCatalogSnapshot> {
+      co_await waiting.wait();
+      EXPECT_EQ(*capture, "admin catalog callback");
+      finish();
+      co_return catalogFixture();
+    };
+    auto pending = selection ? a::handleAdminProviderSelectionGet(std::move(dependencies)) : a::handleAdminModelsCatalogGet(std::move(dependencies));
+    EXPECT_REJECTS_MESSAGE(std::move(pending), rt::JsError, "controlled admin read failure");
+    ASSERT(!observer.expired());
+    resume.resolve();
+    co_await done.promise.wait();
+    EXPECT(observer.expired());
+  }
 }
 ASYNC_TEST("prompt-cache scope admin trigger requires a current-release Stage 0 baseline before any outbound work") {
   scopeHarness::HarnessScope fixture; scopeHarness::seed(); std::size_t calls = 0; rt::Fetch fetcher([&calls](rt::RequestInfo, rt::RequestInit) -> rt::Response { ++calls; throw rt::JsError("the Stage0 gate must run before upstream work"); }); const rt::GlobalFetchOverride fetch(fetcher); AWAIT(response, a::handleAdminCodexCacheScopeExperiment(rawPost("/admin/providers/codex/cache-scope-experiment", ""))); EXPECT_EQ(response.status(), 503); AWAIT(body, payloadOf(response)); EXPECT_EQ(rt::getString(body, "code"), "prompt_cache_scope_experiment_unavailable"); EXPECT_EQ(calls, 0u);
@@ -222,6 +256,35 @@ ASYNC_TEST("admin models refresh performs keyless Surplus discovery") {
   dependencies.refreshLithos = [](auto) { return rt::fulfilledTask(std::optional<uos::provider::lithos_models::LithosModelsSnapshot>{}); };
   dependencies.refreshClaude = [](auto) { return rt::fulfilledTask(std::optional<uos::provider::claude_code_models::ClaudeCodeModelsSnapshot>{}); };
   AWAIT(response, a::handleAdminModelsRefresh(dependencies)); EXPECT_EQ(response.status(), 200); EXPECT_EQ(calls, 1u); AWAIT(body, response.json()); EXPECT_EQ(rt::getNumber(body.at("data").at("surplus"), "models"), 1);
+}
+ASYNC_TEST("a refresh callback can finish after a different provider rejects") {
+  Fixture fixture;
+  const auto resume = rt::withResolvers<void>();
+  const auto done = rt::withResolvers<void>();
+  auto capture = std::make_shared<std::string>("admin refresh callback");
+  const std::weak_ptr observer = capture;
+  a::ModelsRefreshDependencies dependencies;
+  dependencies.refreshEnrichment = [] { return rt::fulfilledTask(std::shared_ptr<const uos::models::openrouter_models::OpenRouterModelsSnapshot>{}); };
+  dependencies.refreshOpenlux = [capture = std::move(capture), waiting = resume.promise, finish = done.resolve](auto options)
+    -> rt::Task<std::optional<uos::provider::metered::MeteredModelsSnapshot>> {
+    co_await waiting.wait();
+    EXPECT_EQ(*capture, "admin refresh callback");
+    EXPECT(options.force);
+    finish();
+    co_return std::nullopt;
+  };
+  dependencies.refreshSurplus = [](auto) -> rt::Task<std::optional<uos::provider::surplus::SurplusModelsSnapshot>> {
+    throw rt::JsError("controlled refresh failure");
+    co_return std::nullopt;
+  };
+  dependencies.refreshLithos = [](auto) { return rt::fulfilledTask(std::optional<uos::provider::lithos_models::LithosModelsSnapshot>{}); };
+  dependencies.refreshClaude = [](auto) { return rt::fulfilledTask(std::optional<uos::provider::claude_code_models::ClaudeCodeModelsSnapshot>{}); };
+  auto pending = a::handleAdminModelsRefresh(std::move(dependencies));
+  EXPECT_REJECTS_MESSAGE(std::move(pending), rt::JsError, "controlled refresh failure");
+  ASSERT(!observer.expired());
+  resume.resolve();
+  co_await done.promise.wait();
+  EXPECT(observer.expired());
 }
 ASYNC_TEST("admin models refresh keeps the last good snapshots when every upstream fails") {
   Fixture fixture; const rt::Fetch unavailable([](rt::RequestInfo, rt::RequestInit) -> rt::Response { throw rt::JsError("upstream metadata is unreachable"); }); const rt::GlobalFetchOverride fetch(unavailable); AWAIT(response, a::handleAdminModelsRefresh()); EXPECT_EQ(response.status(), 200); AWAIT(body, response.json()); const auto& data = body.at("data"); EXPECT_EQ(rt::getNumber(data.at("openrouter"), "upstream_models"), 0); EXPECT(data.at("openrouter").at("updated_at_ms").is_null()); for (const auto key : {"openlux", "surplus", "lithos"}) EXPECT_EQ(rt::getNumber(data.at(key), "models"), 0);

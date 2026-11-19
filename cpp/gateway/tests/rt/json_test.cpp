@@ -2168,6 +2168,16 @@ TEST("JSON parse accepts the exact document byte limit and refuses the next byte
   EXPECT_THROWS_MESSAGE(rt::jsonParse(document), rt::SyntaxError, "Invalid JSON");
 }
 
+TEST("JSON values at the nesting limit can be copied and destroyed") {
+  static_assert(rt::kJsonMaxDepth == 128);
+  const auto array = rt::jsonParse(nestedArrays(rt::kJsonMaxDepth));
+  const auto object = rt::jsonParse(nestedObjects(rt::kJsonMaxDepth));
+  const json::value arrayCopy = array;
+  const json::value objectCopy = object;
+  EXPECT(arrayCopy.is_array());
+  EXPECT(objectCopy.is_object());
+}
+
 TEST("depth: jsonStringify at the limit and past it") {
   const std::string deepest = nestedArrays(rt::kJsonMaxDepth);
   json::value value = nestedArrayValue(rt::kJsonMaxDepth);

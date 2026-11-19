@@ -25,6 +25,7 @@ def native(profile, cache_enabled, lane=None):
         raise RuntimeError("Qualified native profile/toolchain READY is unavailable")
     clang = profile not in ("release", "asan-ubsan-gcc")
     compiler = TOOL_ROOT / "bin/clang++" if clang else Path("/usr/bin/g++")
+    c_compiler = TOOL_ROOT / "bin/clang" if clang else Path("/usr/bin/gcc")
     name = profile + ("-" + lane if lane else "")
     build = WORKSPACE / (".data/cpp-gateway-native-" + name)
     view = WORKSPACE / ".data/cpp-gateway-tool-view" / name
@@ -34,7 +35,7 @@ def native(profile, cache_enabled, lane=None):
     sanitizer = "address,undefined" if "asan-ubsan" in profile or profile == "fuzz-clang" else "thread" if profile == "tsan-threaded" else None
     libraries = [Path("/usr/lib") / name for name in ("libboost_json.a", "libboost_container.a", "libssl.so", "libcrypto.so",
                  "libsqlite3.so", "libz.so", "libbrotlidec.so", "libzstd.so", "libicuuc.so", "libicui18n.so")]
-    tools = [compiler, TOOL_ROOT / "bin/cmake", TOOL_ROOT / "bin/ninja", TOOL_ROOT / "bin/mold", TOOL_ROOT / "bin/ccache",
+    tools = [compiler, c_compiler, TOOL_ROOT / "bin/cmake", TOOL_ROOT / "bin/ninja", TOOL_ROOT / "bin/mold", TOOL_ROOT / "bin/ccache",
              Path("/usr/bin/ar"), Path("/usr/bin/ranlib"), TOOL_ROOT / "boost-1.92.0/boost/version.hpp"] + libraries
     for path in tools:
         if not path.is_file():
@@ -63,8 +64,9 @@ def native(profile, cache_enabled, lane=None):
     for tool in ("ar", "ranlib"):
         command = ["/usr/bin/python3", str(GATEWAY / "tools/compiler-limit.py"), "--archive", "/usr/bin/" + tool]
         executable(view / "bin" / ("uos-" + tool), '#!/bin/sh\nset -eu\nexec ' + shlex.join(command) + ' "$@"\n')
-    command = ["/usr/bin/python3", str(GATEWAY / "tools/compiler-limit.py"), str(compiler)]
-    executable(view / "bin/uos-cxx", '#!/bin/sh\nset -eu\nexec ' + shlex.join(command) + ' "$@"\n')
+    for wrapper, driver in (("uos-cc", c_compiler), ("uos-cxx", compiler)):
+        command = ["/usr/bin/python3", str(GATEWAY / "tools/compiler-limit.py"), str(driver)]
+        executable(view / "bin" / wrapper, '#!/bin/sh\nset -eu\nexec ' + shlex.join(command) + ' "$@"\n')
     config = cache / "ccache.conf"
     (cache / "tmp").mkdir(exist_ok=True)
     cache_config = "cache_dir = " + str(cache) + "\ntemporary_dir = " + str(cache / "tmp") + \

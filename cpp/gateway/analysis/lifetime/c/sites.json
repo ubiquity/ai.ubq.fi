@@ -1,0 +1,4012 @@
+{
+  "audited_commit": "6d28e858e7ab8b8b1036db4a4adfdade0465ed40",
+  "audited_tree": "6abb54014cf79ba7c64b24be4d28dde250c40ccf",
+  "files": {
+    "include/uos/chat/completions.hpp": {
+      "status": "reviewed",
+      "note": "The stream and buffered entry points have separate ownership of telemetry.",
+      "sites": [
+        {
+          "lines": "14-17",
+          "kind": "stream construction",
+          "verdict": "SAFE",
+          "reason": "The synchronous entry point copies the pointed-to context and retains its terminal callback in shared stream state."
+        },
+        {
+          "lines": "18-22",
+          "kind": "borrowed context",
+          "verdict": "SAFE",
+          "reason": "The buffered caller in envelope.cpp awaits the task with its context live, and the task copies that context before processing events."
+        }
+      ]
+    },
+    "include/uos/chat/envelope.hpp": {
+      "status": "reviewed",
+      "note": "Both public entry points are synchronous task factories despite their Task return types.",
+      "sites": [
+        {
+          "lines": "6-7",
+          "kind": "task factories",
+          "verdict": "SAFE",
+          "reason": "The wrappers copy the optional context into the coroutine arguments before returning, and the telemetry dispatcher owns its request callback."
+        }
+      ]
+    },
+    "include/uos/chat/stream_translation.hpp": {
+      "status": "reviewed",
+      "note": "Translation and accumulator methods are synchronous except for the completion recorder.",
+      "sites": [
+        {
+          "lines": "56-75",
+          "kind": "container ownership",
+          "verdict": "SAFE",
+          "reason": "Accumulator results own shared call records. Consumers read the exposed calls vector synchronously or copy its size before suspending."
+        },
+        {
+          "lines": "83-84",
+          "kind": "stream factory",
+          "verdict": "SAFE",
+          "reason": "The replay iterator owns its generator body and prepared state, and the returned cancel function captures copies of the source and iterator."
+        },
+        {
+          "lines": "90-92",
+          "kind": "borrowed context",
+          "verdict": "SAFE",
+          "reason": "Stream or buffered completion state retains its copied context through the awaited recorder."
+        }
+      ]
+    },
+    "include/uos/codex/account_routing.hpp": {
+      "status": "reviewed",
+      "note": "Routing decisions accept snapshots and keys by value.",
+      "sites": [
+        {
+          "lines": "46-48,57,68-83,90",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The election, refresh, selection and slot recheck frames own their account, pool, model and time inputs."
+        }
+      ]
+    },
+    "include/uos/codex/auth.hpp": {
+      "status": "reviewed",
+      "note": "The async API owns response handles, while the shared caches are reviewed at mutation sites in auth.cpp and auth_refresh.cpp.",
+      "sites": [
+        {
+          "lines": "203-208",
+          "kind": "shared registries",
+          "verdict": "SAFE",
+          "reason": "The namespace owns the promise maps and uses weak response identities; consumers copy results or handles before awaiting."
+        },
+        {
+          "lines": "230,238-244,250",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Each probe or lookup coroutine owns its response or scalar lookup inputs."
+        }
+      ]
+    },
+    "include/uos/codex/auth_refresh.hpp": {
+      "status": "reviewed",
+      "note": "Refresh helper interfaces transfer owned task inputs.",
+      "sites": [
+        {
+          "lines": "18,23,30,43-49",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Account data, promises and optional signals are copied or moved into the task frames."
+        }
+      ]
+    },
+    "include/uos/codex/auth_repair.hpp": {
+      "status": "reviewed",
+      "note": "Synchronous repair planning, token metadata and JSON conversion declarations. Their reference and view parameters have call-local use.",
+      "sites": []
+    },
+    "include/uos/codex/banked_reset.hpp": {
+      "status": "reviewed",
+      "note": "Reset records own their data and hook callables.",
+      "sites": [
+        {
+          "lines": "84-86,151-166",
+          "kind": "task and callback interfaces",
+          "verdict": "SAFE",
+          "reason": "The usage gate owns the store and candidate authorization; dependencies copied into reset operations keep the provider and telemetry/hash functions alive."
+        }
+      ]
+    },
+    "include/uos/codex/banked_reset_claim.hpp": {
+      "status": "reviewed",
+      "note": "The claim API uses owned arguments for the optimistic KV operations.",
+      "sites": [
+        {
+          "lines": "28-29,110,121,124-136,146-148,215-227",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Each operation retains KV, its candidate and fence data, and any clock, hash or mutator callable it invokes."
+        }
+      ]
+    },
+    "include/uos/codex/banked_reset_pool.hpp": {
+      "status": "reviewed",
+      "note": "Pool evaluation and shadow read declarations.",
+      "sites": [
+        {
+          "lines": "17-19,27-28",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The returned tasks own the optional store override or candidate array and evaluation dependencies."
+        }
+      ]
+    },
+    "include/uos/codex/banked_reset_provider.hpp": {
+      "status": "reviewed",
+      "note": "Reset provider interface and read-only display APIs.",
+      "sites": [
+        {
+          "lines": "163-166",
+          "kind": "member task interface",
+          "verdict": "SAFE",
+          "reason": "The built-in upstream implementation synchronously copies its shared binding into free tasks; production callers also retain their provider handle."
+        },
+        {
+          "lines": "184,279,282",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Display tasks own options including the clock/fetch dependencies, and their abort signal."
+        }
+      ]
+    },
+    "include/uos/codex/banked_reset_submission.hpp": {
+      "status": "reviewed",
+      "note": "Dependency bundles and reset candidates cross this boundary by value.",
+      "sites": [
+        {
+          "lines": "16,24-25,31-32",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The KV open and submission/reconciliation frames retain their provider, store override, callbacks and candidates."
+        }
+      ]
+    },
+    "include/uos/codex/capacity_routing.hpp": {
+      "status": "reviewed",
+      "note": "Async selection/persistence consumes owned snapshots; routing transforms are synchronous callables.",
+      "sites": [
+        {
+          "lines": "37-40,54,60,65,69,77,85-93,102,112-113",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Pool, observation, account and transform values stay in the receiving frames; a transform reads the supplied state only during invocation."
+        }
+      ]
+    },
+    "include/uos/codex/dispatch.hpp": {
+      "status": "reviewed",
+      "note": "Dispatch interfaces transfer request and callback objects by value; async invocations are traced in the implementation.",
+      "sites": [
+        {
+          "lines": "36-54,74-80,103-121,137-146,155-157,174",
+          "kind": "task parameters and callback interfaces",
+          "verdict": "SAFE",
+          "reason": "Dispatch tasks retain their response/auth/request data and owned callback objects; actual callback referents are reviewed at the installation sites."
+        },
+        {
+          "lines": "216-220,245-258,278-295",
+          "kind": "retry and admission interfaces",
+          "verdict": "SAFE",
+          "reason": "The serial driver owns its callbacks and the model classifiers own response handles; the retry race's branch lifetimes are reviewed in dispatch.cpp."
+        }
+      ]
+    },
+    "include/uos/codex/experiment.hpp": {
+      "status": "reviewed",
+      "note": "Cache-scope experiment API and owned input records.",
+      "sites": [
+        {
+          "lines": "34,65,72-74,91",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The experiment frames own session, slot, request and options data across auth/routing work."
+        }
+      ]
+    },
+    "include/uos/codex/external_auth.hpp": {
+      "status": "reviewed",
+      "note": "Synchronous external-auth decision and text/JSON declarations. No suspendable definition or asynchronous registration.",
+      "sites": []
+    },
+    "include/uos/codex/index.hpp": {
+      "status": "reviewed",
+      "note": "Codex Responses entry point overloads.",
+      "sites": [
+        {
+          "lines": "15-16",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The forwarded request value and dispatch options become frame-owned inputs."
+        }
+      ]
+    },
+    "include/uos/codex/manual_reset.hpp": {
+      "status": "reviewed",
+      "note": "Manual reset owns its dependency bundle through the operation.",
+      "sites": [
+        {
+          "lines": "23-26,35-37",
+          "kind": "task parameters and callbacks",
+          "verdict": "SAFE",
+          "reason": "Reset frames own the hash, dependencies, provider factory and signal used for the awaited operation."
+        }
+      ]
+    },
+    "include/uos/codex/manual_reset_state.hpp": {
+      "status": "reviewed",
+      "note": "Synchronous manual reset state and serialization declarations. No suspendable body or registration.",
+      "sites": []
+    },
+    "include/uos/codex/native_auth.hpp": {
+      "status": "reviewed",
+      "note": "Native credential inputs are owned; installed hooks need an invocation-time owner.",
+      "sites": [
+        {
+          "lines": "22-26,31",
+          "kind": "hook storage",
+          "verdict": "SAFE",
+          "reason": "The hook bundle stores callable values. The native-auth implementation copies the bundle for asynchronous use."
+        },
+        {
+          "lines": "38-50",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Credential, pool, JSON and path arguments are frame-owned, with owned values returned to the caller."
+        }
+      ]
+    },
+    "include/uos/codex/native_auth_transport.hpp": {
+      "status": "reviewed",
+      "note": "Native refresh request interface.",
+      "sites": [
+        {
+          "lines": "36",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The refresh task owns the home, email and account identity strings for the duration of its IPC."
+        }
+      ]
+    },
+    "include/uos/codex/overage_settings.hpp": {
+      "status": "reviewed",
+      "note": "Overage usage persistence and pool-loading API.",
+      "sites": [
+        {
+          "lines": "22-24,32",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Each store operation owns the KV handle and key, and pool loading owns its auth snapshot."
+        }
+      ]
+    },
+    "include/uos/codex/quota.hpp": {
+      "status": "reviewed",
+      "note": "Synchronous quota parsing and record declarations. No suspendable body or registration.",
+      "sites": []
+    },
+    "include/uos/codex/rate_limit_429.hpp": {
+      "status": "reviewed",
+      "note": "429 classification and routing updater API.",
+      "sites": [
+        {
+          "lines": "16-26",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Response and routing account handles are copied or moved to the receiving tasks before suspension."
+        }
+      ]
+    },
+    "include/uos/codex/reset_settings.hpp": {
+      "status": "reviewed",
+      "note": "Usage settings and legacy migration API.",
+      "sites": [
+        {
+          "lines": "45,53",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The migration and usage read retain their stores and any account hash in their frames."
+        }
+      ]
+    },
+    "include/uos/codex/responses_error.hpp": {
+      "status": "reviewed",
+      "note": "The synchronous error translation API takes borrowed event views and returns an owned event.",
+      "sites": []
+    },
+    "include/uos/codex/responses_operations.hpp": {
+      "status": "reviewed",
+      "note": "Synchronous installer for dispatch operations.",
+      "sites": [
+        {
+          "lines": "9-11",
+          "kind": "callback ownership",
+          "verdict": "SAFE",
+          "reason": "The installer receives an owning handle during registration; index.cpp holds the request context while the registered operations are joined."
+        }
+      ]
+    },
+    "include/uos/codex/responses_runners.hpp": {
+      "status": "reviewed",
+      "note": "Synchronous installer for request runners.",
+      "sites": [
+        {
+          "lines": "9-11",
+          "kind": "callback ownership",
+          "verdict": "SAFE",
+          "reason": "The installer receives an owning handle during registration; index.cpp holds the request context while the registered runners are joined."
+        }
+      ]
+    },
+    "include/uos/codex/responses_state.hpp": {
+      "status": "reviewed",
+      "note": "This header defines the request-local context and callback signatures.",
+      "sites": [
+        {
+          "lines": "5-11,133-191,250-285",
+          "kind": "callback ownership",
+          "verdict": "SAFE",
+          "reason": "The context owns operation and runner functions; the enclosing fetch frame owns the context throughout the joined serial dispatch and the functions use its nonowning back-pointer."
+        },
+        {
+          "lines": "303-305",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "State creation owns prepared inputs, options and the dispatch coordinator while assembling an independently owned context."
+        }
+      ]
+    },
+    "include/uos/codex/routing_evaluation.hpp": {
+      "status": "reviewed",
+      "note": "Synchronous evaluation and aggregation types and methods. No deferred borrowing.",
+      "sites": []
+    },
+    "include/uos/codex/routing_mutations.hpp": {
+      "status": "reviewed",
+      "note": "Routing mutations own command inputs; fence functions synchronously examine supplied values.",
+      "sites": [
+        {
+          "lines": "18-43,61,75,91-107",
+          "kind": "task parameters and fence interfaces",
+          "verdict": "SAFE",
+          "reason": "Mutation frames retain response, account, pool and fence values; the transaction owns the rows read by fence callbacks."
+        }
+      ]
+    },
+    "include/uos/codex/routing_serial.hpp": {
+      "status": "reviewed",
+      "note": "Serial routing APIs use owned snapshots.",
+      "sites": [
+        {
+          "lines": "37-43,57,70,90-92",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Evaluation, row read and selection tasks retain their snapshot or KV inputs."
+        },
+        {
+          "lines": "77-82",
+          "kind": "callback parameter",
+          "verdict": "SAFE",
+          "reason": "Admission owns the action function and awaits its result before releasing its gate."
+        }
+      ]
+    },
+    "include/uos/codex/routing_state.hpp": {
+      "status": "reviewed",
+      "note": "Synchronous value records, comparison and evaluation declarations. No coroutine or asynchronous callback registration.",
+      "sites": []
+    },
+    "include/uos/codex/session.hpp": {
+      "status": "reviewed",
+      "note": "KV session observation interface.",
+      "sites": [
+        {
+          "lines": "41-42",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Both overloads copy or move key, client metadata and time into the receiving task."
+        }
+      ]
+    },
+    "include/uos/codex/supervisor.hpp": {
+      "status": "reviewed",
+      "note": "Supervisor HTTP handlers take owned requests or no parameters.",
+      "sites": [
+        {
+          "lines": "9,17",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The output handler retains its request handle and sessions needs no caller-owned data."
+        }
+      ]
+    },
+    "include/uos/codex/supervisor_brief.hpp": {
+      "status": "reviewed",
+      "note": "Brief collection exposes two synchronous copying task factories and an owning HTTP task.",
+      "sites": [
+        {
+          "lines": "124-129,159",
+          "kind": "task factories",
+          "verdict": "SAFE",
+          "reason": "The collection wrappers copy the connection and source into their implementation Tasks before returning; the handler owns its request."
+        }
+      ]
+    },
+    "include/uos/codex/supervisor_config.hpp": {
+      "status": "reviewed",
+      "note": "The concurrency helper is executable template code; config and poll implementations are reviewed separately.",
+      "sites": [
+        {
+          "lines": "226",
+          "kind": "poll interface",
+          "verdict": "SAFE",
+          "reason": "The poll function consumes its signal handle by value; registration ownership is reviewed in supervisor_config.cpp."
+        },
+        {
+          "lines": "243-270",
+          "kind": "coroutine capture and fail-fast all",
+          "verdict": "SAFE",
+          "reason": "Each rt::async worker owns its closure and shared State across sibling rejection; fixed-size input/result vectors stay alive and call sites supply value-capturing workers or free functions."
+        },
+        {
+          "lines": "283-297",
+          "kind": "callback and task interface",
+          "verdict": "SAFE",
+          "reason": "Configuration resolution retains the options and the environment reader callable until its reads finish."
+        }
+      ]
+    },
+    "include/uos/codex/supervisor_follow.hpp": {
+      "status": "reviewed",
+      "note": "Follow selection borrows only synchronously; polling owns its inputs.",
+      "sites": [
+        {
+          "lines": "66,81-82",
+          "kind": "container and task ownership",
+          "verdict": "SAFE",
+          "reason": "The selection helper finishes before returning, while readFollowUpdate retains a shared revision map and owns source, cursor and signal."
+        }
+      ]
+    },
+    "include/uos/codex/supervisor_inventory.hpp": {
+      "status": "reviewed",
+      "note": "Inventory snapshot declaration.",
+      "sites": [
+        {
+          "lines": "108",
+          "kind": "owning task result",
+          "verdict": "SAFE",
+          "reason": "The refresh API takes no borrowed input and yields a copied snapshot from its shared cache."
+        }
+      ]
+    },
+    "include/uos/codex/supervisor_log.hpp": {
+      "status": "reviewed",
+      "note": "Rollout tail reader interface.",
+      "sites": [
+        {
+          "lines": "58",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The task frame owns the input record and its path parameters."
+        }
+      ]
+    },
+    "include/uos/codex/supervisor_secret.hpp": {
+      "status": "reviewed",
+      "note": "Synchronous secret validation declarations. No suspendable body or callback registration.",
+      "sites": []
+    },
+    "include/uos/codex/supervisor_transport.hpp": {
+      "status": "reviewed",
+      "note": "The control connection is an owning pair of task factories.",
+      "sites": [
+        {
+          "lines": "25-28,43-44",
+          "kind": "task factories and callbacks",
+          "verdict": "SAFE",
+          "reason": "Open owns the socket path and signal; returned call and close callbacks synchronously move an owning state handle into the actual coroutine."
+        }
+      ]
+    },
+    "include/uos/deepseek/chat_projection.hpp": {
+      "status": "reviewed",
+      "note": "Synchronous message projection declarations with call-local JSON borrows.",
+      "sites": []
+    },
+    "include/uos/deepseek/context_admission_failure.hpp": {
+      "status": "reviewed",
+      "note": "Synchronous construction of context-admission failures. No suspendable body or registration.",
+      "sites": []
+    },
+    "include/uos/deepseek/flash_aliases.hpp": {
+      "status": "reviewed",
+      "note": "Catalog aliases expose owned snapshot values. Background publication is reviewed in flash_aliases.cpp.",
+      "sites": []
+    },
+    "include/uos/deepseek/forwarded_payload_policy.hpp": {
+      "status": "reviewed",
+      "note": "Payload projection and validation are synchronous.",
+      "sites": [
+        {
+          "lines": "77-78",
+          "kind": "projection callback",
+          "verdict": "SAFE",
+          "reason": "The caller retains the callback and the input object throughout the inline admission projection."
+        }
+      ]
+    },
+    "include/uos/deepseek/handlers.hpp": {
+      "status": "reviewed",
+      "note": "The DeepSeek entry points retain their request payloads, with a borrowed telemetry context.",
+      "sites": [
+        {
+          "lines": "23-38",
+          "kind": "borrowed context",
+          "verdict": "SAFE",
+          "reason": "The chat/Responses callers keep the context in the joined handler frame, and the streaming branch copies it into relay state before returning."
+        }
+      ]
+    },
+    "include/uos/deepseek/index.hpp": {
+      "status": "reviewed",
+      "note": "The dispatcher passes projected request data and callback objects as owning values.",
+      "sites": [
+        {
+          "lines": "198-202,291-292",
+          "kind": "task and callback interface",
+          "verdict": "SAFE",
+          "reason": "The options frame retains admission/timing/projection hooks; the projected JSON reference is used in a synchronous callback."
+        }
+      ]
+    },
+    "include/uos/deepseek/responses.hpp": {
+      "status": "reviewed",
+      "note": "Synchronous Responses conversion declarations. The results own translated wire values.",
+      "sites": []
+    },
+    "include/uos/deepseek/responses_payload.hpp": {
+      "status": "reviewed",
+      "note": "Synchronous construction of downstream payloads. No suspension or retained callback.",
+      "sites": []
+    },
+    "include/uos/deepseek/responses_stream.hpp": {
+      "status": "reviewed",
+      "note": "A synchronous stateful adapter is returned by value.",
+      "sites": [
+        {
+          "lines": "17-40",
+          "kind": "callback bundle",
+          "verdict": "SAFE",
+          "reason": "Each callback owns the shared adapter state; push consumes its JSON argument during the call."
+        }
+      ]
+    },
+    "include/uos/deepseek/stream.hpp": {
+      "status": "reviewed",
+      "note": "Synchronous stream event parsing declarations with owned delta results.",
+      "sites": []
+    },
+    "include/uos/deepseek/waterfall.hpp": {
+      "status": "reviewed",
+      "note": "Planning callbacks are synchronous predicates.",
+      "sites": [
+        {
+          "lines": "38-39",
+          "kind": "predicate interface",
+          "verdict": "SAFE",
+          "reason": "The plan builder invokes each callback while its input and current provider string are live."
+        }
+      ]
+    },
+    "include/uos/deepseek/waterfall_handler.hpp": {
+      "status": "reviewed",
+      "note": "The waterfall awaits each provider and paid-tail callback before attempting another hop.",
+      "sites": [
+        {
+          "lines": "16-30",
+          "kind": "borrowed arguments and context",
+          "verdict": "SAFE",
+          "reason": "The hop frame holds dispatch data and callback; the paid-tail implementation copies forward or joins the invoked task with its source values live."
+        }
+      ]
+    },
+    "include/uos/embeddings/handlers.hpp": {
+      "status": "reviewed",
+      "note": "Embeddings handler API with optional telemetry.",
+      "sites": [
+        {
+          "lines": "8-9",
+          "kind": "borrowed context",
+          "verdict": "SAFE",
+          "reason": "Existing route callers join the handler with a live context, and the implementation copies it into owned telemetry dispatch state."
+        }
+      ]
+    },
+    "include/uos/embeddings/jobs.hpp": {
+      "status": "reviewed",
+      "note": "Job API with a shared store and borrowed request telemetry.",
+      "sites": [
+        {
+          "lines": "6-25",
+          "kind": "borrowed context and store ownership",
+          "verdict": "SAFE",
+          "reason": "The create and get entry points are joined by their route, and job-attempt callers keep the telemetry context alive while the job retains its store."
+        }
+      ]
+    },
+    "include/uos/embeddings/ledger.hpp": {
+      "status": "reviewed",
+      "note": "Idempotency and ledger declarations.",
+      "sites": [
+        {
+          "lines": "214-235",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Fingerprint, reservation and completion frames own their input vectors, lease, store and response handle."
+        }
+      ]
+    },
+    "include/uos/embeddings/voyage.hpp": {
+      "status": "reviewed",
+      "note": "Embeddings cache/budget operations borrow KV where specified.",
+      "sites": [
+        {
+          "lines": "12-18,31-32",
+          "kind": "borrowed store and owned signal",
+          "verdict": "SAFE",
+          "reason": "Handlers and jobs keep the shared KV handle alive until each cache/budget task returns; the timer factory uses a signal value."
+        },
+        {
+          "lines": "42-44,45-67",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Encryption and fetch frames own their inputs, provider callback bundle and any store handle."
+        }
+      ]
+    },
+    "include/uos/harmony/adapter.hpp": {
+      "status": "reviewed",
+      "note": "HarmonyTransport implements an owning erased transport wrapper.",
+      "sites": [
+        {
+          "lines": "87-107",
+          "kind": "callback lifetime",
+          "verdict": "SAFE",
+          "reason": "The outer callable only forwards; keepAlive retains the function and its shared target until the returned coroutine completes."
+        },
+        {
+          "lines": "133",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The turn task owns options and a transport handle while dispatching and normalizing the response."
+        }
+      ]
+    },
+    "include/uos/harmony/classifier.hpp": {
+      "status": "reviewed",
+      "note": "Synchronous classifier request/projection declarations. No async registration or suspended borrowing.",
+      "sites": []
+    },
+    "include/uos/harmony/conversation.hpp": {
+      "status": "reviewed",
+      "note": "Synchronous conversation construction and JSON values. No deferred borrowing.",
+      "sites": []
+    },
+    "include/uos/harmony/parse.hpp": {
+      "status": "reviewed",
+      "note": "Synchronous wire parsing API with call-local views.",
+      "sites": []
+    },
+    "include/uos/harmony/probe_scenarios.hpp": {
+      "status": "reviewed",
+      "note": "Scenario definitions store owned run functions.",
+      "sites": [
+        {
+          "lines": "17",
+          "kind": "callback interface",
+          "verdict": "SAFE",
+          "reason": "The scenario table retains the run functions, and each invocation passes its probe context by value."
+        }
+      ]
+    },
+    "include/uos/harmony/probes.hpp": {
+      "status": "reviewed",
+      "note": "Probe context callbacks forward to task factories.",
+      "sites": [
+        {
+          "lines": "120-131",
+          "kind": "callback bundle",
+          "verdict": "SAFE",
+          "reason": "RunRaw invokes synchronously and the underlying probe tasks own their body, conversation and transport."
+        }
+      ]
+    },
+    "include/uos/harmony/reliability/context.hpp": {
+      "status": "reviewed",
+      "note": "Synchronous reliability context records and projection declarations.",
+      "sites": []
+    },
+    "include/uos/harmony/reliability/failure.hpp": {
+      "status": "reviewed",
+      "note": "Synchronous failure mapping and record declarations.",
+      "sites": []
+    },
+    "include/uos/harmony/reliability/feedback.hpp": {
+      "status": "reviewed",
+      "note": "Synchronous feedback formatting declarations.",
+      "sites": []
+    },
+    "include/uos/harmony/reliability/harness.hpp": {
+      "status": "reviewed",
+      "note": "The harness retains its options and event observer.",
+      "sites": [
+        {
+          "lines": "100-101,123",
+          "kind": "callback and task interface",
+          "verdict": "SAFE",
+          "reason": "The harness frame owns options; the observer sees each event during a synchronous call with its source value live."
+        }
+      ]
+    },
+    "include/uos/harmony/reliability/hash.hpp": {
+      "status": "reviewed",
+      "note": "Synchronous reliability hashing declarations.",
+      "sites": []
+    },
+    "include/uos/harmony/reliability/loops.hpp": {
+      "status": "reviewed",
+      "note": "Synchronous loop detection state and method declarations.",
+      "sites": []
+    },
+    "include/uos/harmony/reliability/retry.hpp": {
+      "status": "reviewed",
+      "note": "Synchronous retry decisions and option records.",
+      "sites": []
+    },
+    "include/uos/harmony/reliability/state.hpp": {
+      "status": "reviewed",
+      "note": "Synchronous reliability state and transition declarations.",
+      "sites": []
+    },
+    "include/uos/harmony/reliability/surfaces.hpp": {
+      "status": "reviewed",
+      "note": "Synchronous surface selection and policy declarations.",
+      "sites": []
+    },
+    "include/uos/harmony/reliability/verify.hpp": {
+      "status": "reviewed",
+      "note": "Synchronous reliability verification predicates and records.",
+      "sites": []
+    },
+    "include/uos/harmony/render.hpp": {
+      "status": "reviewed",
+      "note": "Synchronous Harmony text rendering declaration. The returned text owns its bytes.",
+      "sites": []
+    },
+    "include/uos/harmony/tools/backend.hpp": {
+      "status": "reviewed",
+      "note": "Backend interfaces include a member task for shell work.",
+      "sites": [
+        {
+          "lines": "81",
+          "kind": "member task",
+          "verdict": "SAFE",
+          "reason": "The awaited router frame retains the owning backend bundle until shell work finishes; the task's command and options are owned."
+        }
+      ]
+    },
+    "include/uos/harmony/tools/fakes.hpp": {
+      "status": "reviewed",
+      "note": "The local fake implements the shell backend interface.",
+      "sites": [
+        {
+          "lines": "105",
+          "kind": "member task",
+          "verdict": "SAFE",
+          "reason": "The router retains the backend through the await, and the fake's shell inputs are values."
+        }
+      ]
+    },
+    "include/uos/harmony/tools/result.hpp": {
+      "status": "reviewed",
+      "note": "Synchronous tool result types and construction helpers.",
+      "sites": []
+    },
+    "include/uos/harmony/tools/router.hpp": {
+      "status": "reviewed",
+      "note": "Four overloads route owned tool work.",
+      "sites": [
+        {
+          "lines": "30-34",
+          "kind": "task factories",
+          "verdict": "SAFE",
+          "reason": "The pointer overload copies or converts the JSON argument synchronously before returning the implementation task, whose backend bundle is owning."
+        }
+      ]
+    },
+    "include/uos/harmony/tools/schemas.hpp": {
+      "status": "reviewed",
+      "note": "Synchronous tool schema declarations.",
+      "sites": []
+    },
+    "include/uos/harmony/types.hpp": {
+      "status": "reviewed",
+      "note": "Harmony value records and synchronous JSON conversions.",
+      "sites": []
+    },
+    "include/uos/live/calls.hpp": {
+      "status": "reviewed",
+      "note": "Call-creation handler API.",
+      "sites": [
+        {
+          "lines": "8",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The create frame owns the request and principal identity."
+        }
+      ]
+    },
+    "include/uos/live/handler.hpp": {
+      "status": "reviewed",
+      "note": "Live route and upgrade handler APIs.",
+      "sites": [
+        {
+          "lines": "11-12",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Both tasks retain the request and the routing or upgrade inputs by value."
+        }
+      ]
+    },
+    "include/uos/live/routes.hpp": {
+      "status": "reviewed",
+      "note": "Synchronous route matcher. It uses method/path views within the call and returns an owned call ID.",
+      "sites": []
+    },
+    "include/uos/live/sideband.hpp": {
+      "status": "reviewed",
+      "note": "Live sideband handler and upgrade factory API.",
+      "sites": [
+        {
+          "lines": "10-11",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The preparation and handler frames retain request, call ID and principal by value; the upgrade callbacks manage their socket ownership separately."
+        }
+      ]
+    },
+    "include/uos/live/upstream.hpp": {
+      "status": "reviewed",
+      "note": "Live upstream helpers and mapping API.",
+      "sites": [
+        {
+          "lines": "36-38",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Mapping operations retain their IDs across KV awaits, including detached retirement."
+        }
+      ]
+    },
+    "include/uos/paid_fallback/claude_code_route.hpp": {
+      "status": "reviewed",
+      "note": "The subscription attempt receives its body and options as values.",
+      "sites": [
+        {
+          "lines": "21",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The attempt owns the body and options while dispatching; telemetry referents are retained by its joined caller."
+        }
+      ]
+    },
+    "include/uos/paid_fallback/health.hpp": {
+      "status": "reviewed",
+      "note": "Health reads, catalog operations and fallback routing API.",
+      "sites": [
+        {
+          "lines": "23,27-39,69-70,87-88",
+          "kind": "task and callback interface",
+          "verdict": "SAFE",
+          "reason": "Each task owns its response, signal or option data; bookkeeping awaits its owned callable before releasing it."
+        }
+      ]
+    },
+    "include/uos/paid_fallback/index.hpp": {
+      "status": "reviewed",
+      "note": "Paid reservation and terminal accounting API.",
+      "sites": [
+        {
+          "lines": "85-86,103-125,156-157",
+          "kind": "task and callback interface",
+          "verdict": "SAFE",
+          "reason": "Accounting tasks own their reservations, delivery evidence and billing parameters; the test sweep hook is stored as a value."
+        }
+      ]
+    },
+    "include/uos/paid_fallback/ledger_admission.hpp": {
+      "status": "reviewed",
+      "note": "Ledger admission, release and update declarations.",
+      "sites": [
+        {
+          "lines": "38-39,57-70",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The coroutines retain keys, reservation inputs, patches and any store override as values."
+        }
+      ]
+    },
+    "include/uos/paid_fallback/ledger_backfill.hpp": {
+      "status": "reviewed",
+      "note": "Backfill and reconciliation API with a copied shared-work promise.",
+      "sites": [
+        {
+          "lines": "60-61,84-85,101-102,117,124-149",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The caller hands over store, options and reconciliation inputs by value; the scheduled-work accessor copies its promise handle."
+        }
+      ]
+    },
+    "include/uos/paid_fallback/ledger_settlement.hpp": {
+      "status": "reviewed",
+      "note": "Settlement and lease APIs.",
+      "sites": [
+        {
+          "lines": "19-33,46-53,76",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Settlement/lease tasks retain the store and their request, result, lease and provider-log values throughout awaits."
+        }
+      ]
+    },
+    "include/uos/paid_fallback/ledger_state.hpp": {
+      "status": "reviewed",
+      "note": "KV read and pending-gate APIs.",
+      "sites": [
+        {
+          "lines": "53,61-65,80-86,104-115",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Tasks own their store or override and all query keys, time bounds or limit values."
+        }
+      ]
+    },
+    "include/uos/paid_fallback/ledger_stats.hpp": {
+      "status": "reviewed",
+      "note": "Ledger statistics API.",
+      "sites": [
+        {
+          "lines": "118,132,202",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The task frames own statistics inputs, options and store handles."
+        }
+      ]
+    },
+    "include/uos/paid_fallback/removed_provider.hpp": {
+      "status": "reviewed",
+      "note": "Removed provider stub and compatibility helpers.",
+      "sites": [
+        {
+          "lines": "14-37,46-59",
+          "kind": "synchronous promise factories",
+          "verdict": "SAFE",
+          "reason": "The stub returns settled promises and stores no borrows of caller input; the identity projection is synchronous and rejects rvalues."
+        }
+      ]
+    },
+    "include/uos/paid_fallback/rollups.hpp": {
+      "status": "reviewed",
+      "note": "Terminal rollup write/read API.",
+      "sites": [
+        {
+          "lines": "46-47,56",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Rollup frames own their inputs, optional store override and read options."
+        }
+      ]
+    },
+    "include/uos/paid_fallback/routing.hpp": {
+      "status": "reviewed",
+      "note": "Paid waterfall API.",
+      "sites": [
+        {
+          "lines": "17-18",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The routing frame owns its request body and options; the joined parent owns any referenced telemetry."
+        }
+      ]
+    },
+    "include/uos/provider/anthropic_chat_responses.hpp": {
+      "status": "reviewed",
+      "note": "Provider Chat normalization owns a response and its options.",
+      "sites": [
+        {
+          "lines": "27",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The normalizer retains the response handle and options in its coroutine frame."
+        }
+      ]
+    },
+    "include/uos/provider/anthropic_chat_stream.hpp": {
+      "status": "reviewed",
+      "note": "The public stream factory is synchronous. The body and adapter state are retained by its returned stream.",
+      "sites": []
+    },
+    "include/uos/provider/anthropic_replay.hpp": {
+      "status": "reviewed",
+      "note": "Replay metadata transformation is synchronous.",
+      "sites": [
+        {
+          "lines": "58",
+          "kind": "clock callback",
+          "verdict": "SAFE",
+          "reason": "Replay options hold a callable value used by synchronous normalization."
+        }
+      ]
+    },
+    "include/uos/provider/anthropic_response_wire.hpp": {
+      "status": "reviewed",
+      "note": "Synchronous Anthropic wire event and output conversion declarations.",
+      "sites": []
+    },
+    "include/uos/provider/anthropic_responses.hpp": {
+      "status": "reviewed",
+      "note": "Anthropic Messages adapter task interface.",
+      "sites": [
+        {
+          "lines": "36",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The normalization task owns its response handle and options."
+        }
+      ]
+    },
+    "include/uos/provider/capacity.hpp": {
+      "status": "reviewed",
+      "note": "Capacity readers, samplers and handlers use owning arguments.",
+      "sites": [
+        {
+          "lines": "75-84,103-104,114-121",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Capacity snapshot tasks own stores, request handles and options during reads, refreshes and detached sampling."
+        }
+      ]
+    },
+    "include/uos/provider/capacity_analytics.hpp": {
+      "status": "reviewed",
+      "note": "One remote observation writer and one snapshot reader.",
+      "sites": [
+        {
+          "lines": "70-74",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Both tasks own their store handle and writer or query inputs."
+        }
+      ]
+    },
+    "include/uos/provider/capacity_contract.hpp": {
+      "status": "reviewed",
+      "note": "Capacity observation and configuration types.",
+      "sites": [
+        {
+          "lines": "291-300",
+          "kind": "callback interface",
+          "verdict": "SAFE",
+          "reason": "The snapshot options own their fetch, clock and lease owner callable objects; invocation lifetimes are traced in capacity.cpp."
+        }
+      ]
+    },
+    "include/uos/provider/capacity_events.hpp": {
+      "status": "reviewed",
+      "note": "Event tasks and sample-trigger callback declarations.",
+      "sites": [
+        {
+          "lines": "76-115",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Event records/options and any overridden store are owned across the reads/writes."
+        },
+        {
+          "lines": "120-124",
+          "kind": "synchronous trigger",
+          "verdict": "SAFE",
+          "reason": "The installed trigger consumes options on the call and dispatches a task constructed with its own values."
+        }
+      ]
+    },
+    "include/uos/provider/capacity_history.hpp": {
+      "status": "reviewed",
+      "note": "Capacity history and recovery APIs.",
+      "sites": [
+        {
+          "lines": "33,59-61,71-72",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The reader/merger tasks retain their store and point/event input values."
+        }
+      ]
+    },
+    "include/uos/provider/capacity_parse.hpp": {
+      "status": "reviewed",
+      "note": "Capacity parsing helpers are synchronous; there is one stored snapshot read.",
+      "sites": [
+        {
+          "lines": "31,87",
+          "kind": "clock and task interface",
+          "verdict": "SAFE",
+          "reason": "safeNow invokes its callable inline, and the snapshot coroutine owns KV while it awaits."
+        }
+      ]
+    },
+    "include/uos/provider/capacity_rollups.hpp": {
+      "status": "reviewed",
+      "note": "Capacity rollup query API.",
+      "sites": [
+        {
+          "lines": "138",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The query owns the store and options across awaits."
+        }
+      ]
+    },
+    "include/uos/provider/cerebras.hpp": {
+      "status": "reviewed",
+      "note": "Cerebras transport copies arguments and owns the provider option objects.",
+      "sites": [
+        {
+          "lines": "81-83,150-151",
+          "kind": "task and callback interface",
+          "verdict": "SAFE",
+          "reason": "The task retains the request and dispatch hooks while it performs its single buffered dispatch."
+        }
+      ]
+    },
+    "include/uos/provider/cerebras_handlers.hpp": {
+      "status": "reviewed",
+      "note": "Buffered Cerebras Chat APIs use the route telemetry context while joined.",
+      "sites": [
+        {
+          "lines": "10-24",
+          "kind": "borrowed context",
+          "verdict": "SAFE",
+          "reason": "The awaiting route or adapter keeps the UsageContext live through all joined status and completion helpers."
+        }
+      ]
+    },
+    "include/uos/provider/cerebras_rate_limits.hpp": {
+      "status": "reviewed",
+      "note": "Synchronous rate-limit reading and parsing API. No task or registration.",
+      "sites": []
+    },
+    "include/uos/provider/cerebras_responses.hpp": {
+      "status": "reviewed",
+      "note": "Buffered Cerebras Responses API.",
+      "sites": [
+        {
+          "lines": "5-6",
+          "kind": "borrowed context",
+          "verdict": "SAFE",
+          "reason": "The route holds its context while awaiting completion and the task owns the request and record values."
+        }
+      ]
+    },
+    "include/uos/provider/claude_capacity_history.hpp": {
+      "status": "reviewed",
+      "note": "Claude capacity recording and reading.",
+      "sites": [
+        {
+          "lines": "28-30",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The reader and recorder own their store and inputs."
+        }
+      ]
+    },
+    "include/uos/provider/claude_capacity_rollups.hpp": {
+      "status": "reviewed",
+      "note": "Claude capacity rollup and usage scan API.",
+      "sites": [
+        {
+          "lines": "77,104,121",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The read/key tasks own store and query/key inputs."
+        }
+      ]
+    },
+    "include/uos/provider/claude_code.hpp": {
+      "status": "reviewed",
+      "note": "Claude Code transport and workspace interfaces own their option records.",
+      "sites": [
+        {
+          "lines": "205-206,296,300-301",
+          "kind": "task and callback interface",
+          "verdict": "SAFE",
+          "reason": "Each dispatch or discovery task retains its option values, including its transport and dispatch callbacks."
+        }
+      ]
+    },
+    "include/uos/provider/claude_code_access.hpp": {
+      "status": "reviewed",
+      "note": "Stores borrow an existing KV while owning the policy payload.",
+      "sites": [
+        {
+          "lines": "24-27",
+          "kind": "borrowed store",
+          "verdict": "SAFE",
+          "reason": "The forwarding overloads copy or convert the supplied IDs into the store task, and the admin caller retains its owning store handle through the await."
+        }
+      ]
+    },
+    "include/uos/provider/claude_code_accounts.hpp": {
+      "status": "reviewed",
+      "note": "Claude account load and mutation APIs.",
+      "sites": [
+        {
+          "lines": "60-108",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The account tasks retain store, identity, binding, environment lookup and mutation data by value."
+        }
+      ]
+    },
+    "include/uos/provider/claude_code_credentials.hpp": {
+      "status": "reviewed",
+      "note": "Claude credential and workspace store/resolution API.",
+      "sites": [
+        {
+          "lines": "105-140",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Async operations own store handles, state and the environment lookup callable used in their frames."
+        }
+      ]
+    },
+    "include/uos/provider/claude_code_fwd.hpp": {
+      "status": "reviewed",
+      "note": "Transport and environment type aliases.",
+      "sites": [
+        {
+          "lines": "16-25",
+          "kind": "callback interface",
+          "verdict": "SAFE",
+          "reason": "rt::Fetch supplies the transport callable owner, and the environment lookup is invoked synchronously with a live name."
+        }
+      ]
+    },
+    "include/uos/provider/claude_code_models.hpp": {
+      "status": "reviewed",
+      "note": "Model discovery and store interfaces.",
+      "sites": [
+        {
+          "lines": "51,83-100",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The coroutine owns the credential, workspace, options and any KV handle or prepared catalog it receives."
+        }
+      ]
+    },
+    "include/uos/provider/claude_code_quota.hpp": {
+      "status": "reviewed",
+      "note": "Quota state and observation recording API.",
+      "sites": [
+        {
+          "lines": "120-127",
+          "kind": "callback registration",
+          "verdict": "SAFE",
+          "reason": "Registration owns the callable in module state and the quota write copies it before invoking the awaited work."
+        },
+        {
+          "lines": "228-230,300-310",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Quota reads, mutations and clearing tasks retain their store and input/binding values."
+        }
+      ]
+    },
+    "include/uos/provider/claude_code_usage.hpp": {
+      "status": "reviewed",
+      "note": "Usage fetch and its owning options.",
+      "sites": [
+        {
+          "lines": "68,76-77",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The fetch frame owns credential and options, including the clock and fetch functions."
+        }
+      ]
+    },
+    "include/uos/provider/claude_code_usage_fwd.hpp": {
+      "status": "reviewed",
+      "note": "Forward declarations for the Claude usage schema. No executable site.",
+      "sites": []
+    },
+    "include/uos/provider/claude_code_usage_refresh.hpp": {
+      "status": "reviewed",
+      "note": "Usage refresh entry point.",
+      "sites": [
+        {
+          "lines": "18-19",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "The refresh task owns KV, account binding and optional fetch inputs."
+        }
+      ]
+    },
+    "include/uos/provider/claude_code_usage_schema.hpp": {
+      "status": "reviewed",
+      "note": "Synchronous usage schema records and converters.",
+      "sites": []
+    },
+    "include/uos/provider/health.hpp": {
+      "status": "reviewed",
+      "note": "Health API returns shared recorder promises and owns clock callables for reads.",
+      "sites": [
+        {
+          "lines": "75-96,101-123",
+          "kind": "task and callback interface",
+          "verdict": "SAFE",
+          "reason": "Each health operation uses owned provider/clock data and returns a copied promise or a task with owning inputs."
+        }
+      ]
+    },
+    "include/uos/provider/lithos.hpp": {
+      "status": "reviewed",
+      "note": "Lithos provider transport API with owned options.",
+      "sites": [
+        {
+          "lines": "124-126,234-235",
+          "kind": "task and callback interface",
+          "verdict": "SAFE",
+          "reason": "Request and dispatch hook values stay in the task frame through fetch and retry."
+        }
+      ]
+    },
+    "include/uos/provider/lithos_handlers.hpp": {
+      "status": "reviewed",
+      "note": "Lithos handler interface with borrowed telemetry and an observer seam.",
+      "sites": [
+        {
+          "lines": "12-19",
+          "kind": "borrowed context and observer",
+          "verdict": "SAFE",
+          "reason": "The caller awaits the handler while its context lives, and stream construction copies it. The test observer receives a weak controller handle."
+        }
+      ]
+    },
+    "include/uos/provider/lithos_models.hpp": {
+      "status": "reviewed",
+      "note": "Lithos catalog API.",
+      "sites": [
+        {
+          "lines": "17-18",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Catalog tasks retain any supplied options as a value."
+        }
+      ]
+    },
+    "include/uos/provider/lithos_rate_limits.hpp": {
+      "status": "reviewed",
+      "note": "Retry wait factory interface.",
+      "sites": [
+        {
+          "lines": "97-98",
+          "kind": "callback interface",
+          "verdict": "SAFE",
+          "reason": "The timer wait owns its signal and elapsed callback; its listener cleanup is reviewed in lithos_rate_limits.cpp."
+        }
+      ]
+    },
+    "include/uos/provider/lithos_streams.hpp": {
+      "status": "reviewed",
+      "note": "Synchronous construction of stream adapters.",
+      "sites": [
+        {
+          "lines": "17",
+          "kind": "model callback",
+          "verdict": "SAFE",
+          "reason": "The adapter receives the model function as a value and retains it with its stream state."
+        }
+      ]
+    },
+    "include/uos/provider/metered.hpp": {
+      "status": "reviewed",
+      "note": "Metered Models and Responses request declarations.",
+      "sites": [
+        {
+          "lines": "65-66,108,125-126,154-161",
+          "kind": "task and callback interface",
+          "verdict": "SAFE",
+          "reason": "Each operation owns its catalog, request and dispatch option values, including hook objects and clock."
+        }
+      ]
+    },
+    "include/uos/provider/openrouter.hpp": {
+      "status": "reviewed",
+      "note": "Ref-taking public funcs are synchronous wrappers for owning tasks.",
+      "sites": [
+        {
+          "lines": "44-49,56-57,67-68",
+          "kind": "task factories",
+          "verdict": "SAFE",
+          "reason": "Fetch wrappers copy the body, init or decision record before returning their coroutine; lookup frames own the model string."
+        }
+      ]
+    },
+    "include/uos/provider/openrouter_handlers.hpp": {
+      "status": "reviewed",
+      "note": "Handler injection and borrowed telemetry interfaces.",
+      "sites": [
+        {
+          "lines": "6-15",
+          "kind": "borrowed transport inputs",
+          "verdict": "SAFE",
+          "reason": "Handler/dispatch frames retain the callback, body and init until the joined invocation finishes, and the relay copies the context."
+        }
+      ]
+    },
+    "include/uos/provider/openrouter_request_controls.hpp": {
+      "status": "reviewed",
+      "note": "Prompt-cache control API uses a synchronous forwarding wrapper.",
+      "sites": [
+        {
+          "lines": "13",
+          "kind": "task factory",
+          "verdict": "SAFE",
+          "reason": "The wrapper copies the JSON into the requestExtensions task before returning."
+        }
+      ]
+    },
+    "include/uos/provider/openrouter_streams.hpp": {
+      "status": "reviewed",
+      "note": "The public stream iterator factory is synchronous. Its generator owns response and stream options.",
+      "sites": []
+    },
+    "include/uos/provider/openrouter_web_tools.hpp": {
+      "status": "reviewed",
+      "note": "Synchronous request projection and web-tool handling declarations. No deferred borrowing.",
+      "sites": []
+    },
+    "include/uos/provider/presentation.hpp": {
+      "status": "reviewed",
+      "note": "Synchronous provider ID/display declarations. Returned literals have static storage.",
+      "sites": []
+    },
+    "include/uos/provider/removed_provider_circuit.hpp": {
+      "status": "reviewed",
+      "note": "Retired circuit compatibility API.",
+      "sites": [
+        {
+          "lines": "21-26",
+          "kind": "settled promise factory",
+          "verdict": "SAFE",
+          "reason": "The factories return settled values with no callbacks retaining inputs."
+        }
+      ]
+    },
+    "include/uos/provider/removed_provider_telemetry.hpp": {
+      "status": "reviewed",
+      "note": "Retired telemetry compatibility API.",
+      "sites": [
+        {
+          "lines": "6",
+          "kind": "settled promise factory",
+          "verdict": "SAFE",
+          "reason": "The synchronous wrapper returns a resolved promise and retains no reference to the supplied JSON."
+        }
+      ]
+    },
+    "include/uos/provider/selection.hpp": {
+      "status": "reviewed",
+      "note": "Provider selection read/store and hash API.",
+      "sites": [
+        {
+          "lines": "75,123,130,217-218",
+          "kind": "owning task parameters",
+          "verdict": "SAFE",
+          "reason": "Lookup and store frames own their store/options/selection data, and hash owns its account string."
+        }
+      ]
+    },
+    "include/uos/provider/stream_relay.hpp": {
+      "status": "reviewed",
+      "note": "Relay factories copy per-request inputs into their state.",
+      "sites": [
+        {
+          "lines": "20-25,32-40",
+          "kind": "iterator and adapter callbacks",
+          "verdict": "SAFE",
+          "reason": "The production iterator factories own generator handles and the relay state owns its callback bundle."
+        },
+        {
+          "lines": "48-71",
+          "kind": "borrowed context copy",
+          "verdict": "SAFE",
+          "reason": "The synchronous factories copy telemetry into relay state and copy or move the stream, signals and cancel callback before returning a response."
+        }
+      ]
+    },
+    "include/uos/provider/surplus.hpp": {
+      "status": "reviewed",
+      "note": "Surplus catalog and Responses transport API.",
+      "sites": [
+        {
+          "lines": "88-89,116-117,124-125",
+          "kind": "task and callback interface",
+          "verdict": "SAFE",
+          "reason": "Request/catalog frames own option inputs, including the dispatch hook objects."
+        }
+      ]
+    },
+    "include/uos/provider/surplus_claude_chat_request.hpp": {
+      "status": "reviewed",
+      "note": "Synchronous Chat projection and result type declarations.",
+      "sites": []
+    },
+    "include/uos/provider/surplus_claude_request.hpp": {
+      "status": "reviewed",
+      "note": "Synchronous Anthropic request projection declarations with owned payload results.",
+      "sites": []
+    },
+    "src/chat/completions.cpp": {
+      "status": "reviewed",
+      "note": "Chat SSE and buffered completion use separate state owners. Stream cancellation can overlap a pull, so the member calls and the iterator copies were traced independently of terminal accounting.",
+      "sites": [
+        {
+          "lines": "28-87,131-175,201-205,294-311,338-359",
+          "kind": "synchronous projections and container access",
+          "verdict": "SAFE",
+          "reason": "Event and tool references are consumed synchronously and queued tool calls own shared records."
+        },
+        {
+          "lines": "91,188,199,205,236,395",
+          "kind": "iterator cleanup and spawn",
+          "verdict": "SAFE",
+          "reason": "returnIterator takes an iterator value, including when spawned after controller.close releases the algorithms."
+        },
+        {
+          "lines": "179-199,207-254,256-285,364-374",
+          "kind": "stream member tasks and registered algorithms",
+          "verdict": "SAFE",
+          "reason": "SourceAlgorithm::runAsync owns the callable capturing shared StreamState during both pull and cancel, including nested joins after controller close. Events and usage retained over suspension are local values and the queue is accessed anew."
+        },
+        {
+          "lines": "190,275,318,398",
+          "kind": "telemetry awaits",
+          "verdict": "SAFE",
+          "reason": "The await chain keeps the state containing the copied UsageContext alive and the terminal callback is a value."
+        },
+        {
+          "lines": "312-335,376-403",
+          "kind": "buffered member tasks and borrowed context",
+          "verdict": "SAFE",
+          "reason": "The only caller joins completion with its telemetry live. The buffered frame copies the context before its first suspension and waits for each state method before destroying the state."
+        }
+      ]
+    },
+    "src/chat/envelope.cpp": {
+      "status": "reviewed",
+      "note": "The handler owns its telemetry copy through joined models and preflight, and response construction transfers semantically complete state into the stream.",
+      "sites": [
+        {
+          "lines": "48-69,72-96,120-129,199-214",
+          "kind": "parse, model, and command awaits",
+          "verdict": "SAFE",
+          "reason": "Requests and options are owned by the relevant frames. The envelope reference points into handleInternal's own result variant and stays within that frame. Borrowed telemetry is supplied by that same frame."
+        },
+        {
+          "lines": "139-155,157-167,175-177,186-197",
+          "kind": "borrowed context and deadline cleanup",
+          "verdict": "SAFE",
+          "reason": "handleInternal waits for dispatch and its nested failure paths while the context lives. The cleanup callable owns a deadline copy and clears it on the reached paths."
+        },
+        {
+          "lines": "168-174",
+          "kind": "probe termination callback and spawn",
+          "verdict": "SAFE",
+          "reason": "The callback owns an upstream response handle and the once flag. Detached probe tasks receive their own response handle."
+        },
+        {
+          "lines": "180-189",
+          "kind": "capturing coroutine generator",
+          "verdict": "SAFE",
+          "reason": "AsyncGenerator transfers the first-event closure into runGenerator, whose frame owns both the closure and the upstream iterator across yields and return."
+        },
+        {
+          "lines": "204-207,215-225",
+          "kind": "provider dispatch and handler wrappers",
+          "verdict": "SAFE",
+          "reason": "Handler request tasks are joined and returned stream construction copies the telemetry. The public wrappers copy the context synchronously and the telemetry wrapper owns its callable."
+        }
+      ]
+    },
+    "src/chat/stream_translation.cpp": {
+      "status": "reviewed",
+      "note": "Event reconciliation mutates frame-owned output state synchronously. Replay and cancellation have separate iterator handles.",
+      "sites": [
+        {
+          "lines": "49,75-338,346-352,379-385,394-400",
+          "kind": "synchronous closures and accumulator references",
+          "verdict": "SAFE",
+          "reason": "The matcher only examines its live argument synchronously. Results own their tool calls, and no borrow of the accumulator container crosses a suspension."
+        },
+        {
+          "lines": "354-368",
+          "kind": "capturing coroutine generator",
+          "verdict": "SAFE",
+          "reason": "runGenerator owns the closure and its shared prepared state. The replay buffer is immutable and each yield uses an owned event value."
+        },
+        {
+          "lines": "369-374",
+          "kind": "capturing cancel coroutine",
+          "verdict": "SAFE",
+          "reason": "The returned cancel closure owns both iterator copies. Live callers invoke it through a SourceAlgorithm-owned StreamState and await it before that state can be released."
+        },
+        {
+          "lines": "386-393",
+          "kind": "borrowed context recorder",
+          "verdict": "SAFE",
+          "reason": "Stream and buffered callers retain their context owners across the join and this task uses the context only to start the completion write."
+        }
+      ]
+    },
+    "src/codex/account_routing.cpp": {
+      "status": "reviewed",
+      "note": "Election and admission use frame-local snapshots and optimistic KV commits. Concurrent routing changes replace the stored values without mutating those snapshots.",
+      "sites": [
+        {
+          "lines": "70-117,148-192",
+          "kind": "account and slot borrows",
+          "verdict": "SAFE",
+          "reason": "Pool, row, slot, and evaluation data come from owned snapshots. Account and slot values needed after awaits are copied."
+        },
+        {
+          "lines": "122-143,218-240,264-295,346-390",
+          "kind": "election, recheck, and route awaits",
+          "verdict": "SAFE",
+          "reason": "Each frame retains its account, row and pool values and the KV owner. A commit's AtomicOperation remains in scope through completion."
+        },
+        {
+          "lines": "194-214",
+          "kind": "fail-fast all",
+          "verdict": "SAFE",
+          "reason": "routingAccountIdentity receives a CodexAuthState value, so a pending hash child survives the parent result or rejection independently."
+        },
+        {
+          "lines": "297-329",
+          "kind": "admission coroutine closure",
+          "verdict": "SAFE",
+          "reason": "withCodexAdmission retains the moved action in its frame and waits for it. The action captures KV and account by value."
+        }
+      ]
+    },
+    "src/codex/auth.cpp": {
+      "status": "reviewed",
+      "note": "Auth pool cache accesses are synchronous or start with a copied handle. Probe outcome maps use weak response identities.",
+      "sites": [
+        {
+          "lines": "192-223,608-661",
+          "kind": "probe, health, and transition awaits",
+          "verdict": "SAFE",
+          "reason": "Tasks and health writes receive owned response, account and transition data. The map keeps the promise value until settlement and no iterator into it is saved."
+        },
+        {
+          "lines": "333-383",
+          "kind": "auth pool load and seed",
+          "verdict": "SAFE",
+          "reason": "The frame owns its KV, row, seed and binding inputs. The local AtomicOperation is kept through the commit."
+        },
+        {
+          "lines": "680-704",
+          "kind": "cache promise and finalizer",
+          "verdict": "SAFE",
+          "reason": "The function copies the cached pool or in-flight Promise before a wait, and the zero-capture finalizer only accesses the module cache."
+        }
+      ]
+    },
+    "src/codex/auth_refresh.cpp": {
+      "status": "reviewed",
+      "note": "Refresh routing uses owned account snapshots and shares work while aborting only the current wait.",
+      "sites": [
+        {
+          "lines": "89-115,135-181,207-279",
+          "kind": "response and refresh persistence awaits",
+          "verdict": "SAFE",
+          "reason": "Response, parsed pool copies and database owners live in the joined frames, and the refresh decisions use scalar generation values."
+        },
+        {
+          "lines": "281-420,438-454,460-517",
+          "kind": "lease, account, and retry awaits",
+          "verdict": "SAFE",
+          "reason": "Each child receives copies of credentials, lease key and KV owner. Owner and lease views refer to local JSON and are consumed within one iteration."
+        },
+        {
+          "lines": "535-548",
+          "kind": "abort listener ownership cycle",
+          "verdict": "DEFECT",
+          "reason": "While shared refresh is pending, the signal owns its listener and the listener owns the same signal. Teardown before settlement or abort discards the finalizer without breaking that edge. Capture a weak signal state in the once listener and use the settled signal reason while the state is locked."
+        },
+        {
+          "lines": "526-534,538,543-549",
+          "kind": "executor and sibling lifetime",
+          "verdict": "SAFE",
+          "reason": "newPromise calls its executor synchronously, and the abort race passes only owning promise values. Its shared-work finalizer owns the exact listener identity to remove on settlement."
+        },
+        {
+          "lines": "554-608",
+          "kind": "stateless refresh and single-flight finalizer",
+          "verdict": "SAFE",
+          "reason": "Request and auth inputs are frame-owned. The hash-map value is copied before waiting and the registered eraser owns the account ID."
+        }
+      ]
+    },
+    "src/codex/auth_repair.cpp": {
+      "status": "reviewed",
+      "note": "Repair plans and records are built synchronously.",
+      "sites": [
+        {
+          "lines": "25,30-48,286-316",
+          "kind": "synchronous view and callbacks",
+          "verdict": "SAFE",
+          "reason": "The result outcome view refers to a static literal, and the sort and expiry predicates finish before their captured or pointed-to inputs leave scope."
+        }
+      ]
+    },
+    "src/codex/banked_reset.cpp": {
+      "status": "reviewed",
+      "note": "The usage gate performs one asynchronous read. Record conversion and observers run synchronously.",
+      "sites": [
+        {
+          "lines": "44-69",
+          "kind": "usage gate read",
+          "verdict": "SAFE",
+          "reason": "The coroutine owns KV, account hash, and authorization until readCodexResetUsage settles and the decision is made."
+        },
+        {
+          "lines": "381-403",
+          "kind": "telemetry invocation",
+          "verdict": "SAFE",
+          "reason": "Observer and metric arguments are consumed synchronously under the caller's live telemetry and field owners."
+        }
+      ]
+    },
+    "src/codex/banked_reset_claim.cpp": {
+      "status": "reviewed",
+      "note": "Hash and ledger transitions preserve their candidate, row and transaction state through sequential waits.",
+      "sites": [
+        {
+          "lines": "69-105,169-191",
+          "kind": "hash callback and fence iterator",
+          "verdict": "SAFE",
+          "reason": "The hash callable and candidate are frame values. Each fence reference refers to the private immutable candidate vector during its joined KV read."
+        },
+        {
+          "lines": "206-440",
+          "kind": "claim and update transaction awaits",
+          "verdict": "SAFE",
+          "reason": "Candidates, KV, rows, mutators and atomic operations are retained by the frames which join their reads and commits. Row alternatives and optional values are local snapshots."
+        },
+        {
+          "lines": "462-572,616-683",
+          "kind": "submission preparation and renewal",
+          "verdict": "SAFE",
+          "reason": "The row, budget, fences and usage variants are local to each attempt and remain live through sequential read and commit waits."
+        },
+        {
+          "lines": "783-820",
+          "kind": "record update callbacks",
+          "verdict": "SAFE",
+          "reason": "Each mutator's outcome data is captured by value and the update task owns the callable until after the commit."
+        }
+      ]
+    },
+    "src/codex/banked_reset_pool.cpp": {
+      "status": "reviewed",
+      "note": "Pool evaluation snapshots inputs before concurrent work and keeps single-reader list iteration local.",
+      "sites": [
+        {
+          "lines": "133-185,192-226",
+          "kind": "shadow KV read/write and list iterator",
+          "verdict": "SAFE",
+          "reason": "The frame retains KV, its AtomicOperation or list iterator, and local decision data through each sequential suspension."
+        },
+        {
+          "lines": "297-313,377-408,490-512",
+          "kind": "fail-fast all and provider interface",
+          "verdict": "SAFE",
+          "reason": "Each child owns its candidate and hash, KV, or provider handle. None references the fan-out vector after a sibling can reject."
+        },
+        {
+          "lines": "332-357,421-431,440-465,565-603",
+          "kind": "hash, duplicate, and credit scan awaits",
+          "verdict": "SAFE",
+          "reason": "The fence and inventory slices refer to immutable frame-owned inputs. Inventory and selection values remain alive through the awaited hash."
+        },
+        {
+          "lines": "528-551,634-645,667-737",
+          "kind": "pool orchestration awaits",
+          "verdict": "SAFE",
+          "reason": "Each frame owns its candidate, provider dependency and variant results and joins each nested operation before releasing them."
+        }
+      ]
+    },
+    "src/codex/banked_reset_provider.cpp": {
+      "status": "reviewed",
+      "note": "The default provider is a thin synchronous factory around coroutine tasks using an immutable binding.",
+      "sites": [
+        {
+          "lines": "95",
+          "kind": "body cancel spawn",
+          "verdict": "SAFE",
+          "reason": "ByteStream::cancel starts from a shared stream handle and transfers operation state to its returned task before the local optional body disappears."
+        },
+        {
+          "lines": "150-233,238-245",
+          "kind": "bound member calls, fetch, and JSON reads",
+          "verdict": "SAFE",
+          "reason": "The virtual wrapper copies Bound into the free coroutine. Bound retains the Fetch callable, and the request, response and JSON owners survive their awaits."
+        },
+        {
+          "lines": "441-494",
+          "kind": "inventory diagnostic awaits",
+          "verdict": "SAFE",
+          "reason": "Each display frame keeps its resolved fetcher, signal, response, and parsed result, and the credit loop runs over a local value after the read."
+        }
+      ]
+    },
+    "src/codex/banked_reset_submission.cpp": {
+      "status": "reviewed",
+      "note": "Reset submission and verification keep the provider and its inputs alive from admission through settlement.",
+      "sites": [
+        {
+          "lines": "85-148,192-255,261-405",
+          "kind": "provider method and preflight joins",
+          "verdict": "SAFE",
+          "reason": "The joined tasks own their provider/dependency bundle and KV. Credit, response and record references point into local result snapshots."
+        },
+        {
+          "lines": "412-429,451-485,488-560,568-610",
+          "kind": "submit, verify, and receipt awaits",
+          "verdict": "SAFE",
+          "reason": "The provider owner stays in the submitting frame through the result wait. Intermediate observers are synchronous and swallow their own exceptions."
+        },
+        {
+          "lines": "614-622,666-825,828-837",
+          "kind": "store selection and claim driver",
+          "verdict": "SAFE",
+          "reason": "Dependency, callback and claimed variant values are owned in the awaited frames. No live cursor or borrow from the shared store is retained."
+        }
+      ]
+    },
+    "src/codex/capacity_routing.cpp": {
+      "status": "reviewed",
+      "note": "Routing caches contain replaceable values. Each async read or transformation works on a local snapshot and refreshes the shared cache synchronously.",
+      "sites": [
+        {
+          "lines": "39-49,74-112,122-209,214-234",
+          "kind": "hash, KV transaction, and observation read",
+          "verdict": "SAFE",
+          "reason": "The owned pool and JSON snapshots back slot references. The write task or its caller retains AtomicOperation, and the synchronous transform reads a copied row."
+        },
+        {
+          "lines": "238-292,504-546",
+          "kind": "fail-fast identity and observation fan-outs",
+          "verdict": "SAFE",
+          "reason": "Each child receives its account or input by value and the private hash helpers own their text. Tuple extraction follows a named await result."
+        },
+        {
+          "lines": "303-343",
+          "kind": "routing cache normalization",
+          "verdict": "SAFE",
+          "reason": "Normalization receives a value copy and the caller re-reads the module cache after resuming without retaining a cache member pointer."
+        },
+        {
+          "lines": "352-436,479-496",
+          "kind": "joined borrowing transformations",
+          "verdict": "SAFE",
+          "reason": "All borrowed account, observation, model and change flags are in the waiting parent. updateRoutingState owns the callable and awaits each retry before returning."
+        },
+        {
+          "lines": "440-472",
+          "kind": "parallel KV reads",
+          "verdict": "SAFE",
+          "reason": "The legacy reader owns KV, and the concrete guarded production get copies native store, key and options into its task. A failed sibling cannot invalidate those owners."
+        }
+      ]
+    },
+    "src/codex/dispatch.cpp": {
+      "status": "reviewed",
+      "note": "Codex transport and retry use the request's owned argument state. The injectable retry sleeper has a separate closure lifetime from the request.",
+      "sites": [
+        {
+          "lines": "89-113,145-211,224-272",
+          "kind": "transport, health, and deadline callbacks",
+          "verdict": "SAFE",
+          "reason": "The timer callback owns its controller, ScopeExit clears the timer, and beforeTransport remains frame-owned through the join. Spawned storage or body cancellation takes owned values."
+        },
+        {
+          "lines": "338-371",
+          "kind": "dispatch coordinator callback chain",
+          "verdict": "SAFE",
+          "reason": "The noncoroutine coordinator callbacks own their state. The outer dispatch frames retain the coordinator while the claim runs, and the then reaction owns the individual generation."
+        },
+        {
+          "lines": "380-390,396-481,514-544",
+          "kind": "request transform and digest",
+          "verdict": "SAFE",
+          "reason": "The synchronous work stack stops using a frame reference after a push that may reallocate, and the digest coroutine owns the copied cache scope and key."
+        },
+        {
+          "lines": "611-618",
+          "kind": "joined retry without abort",
+          "verdict": "SAFE",
+          "reason": "The waiter owns the sleep callable until its only child settles."
+        },
+        {
+          "lines": "623-635",
+          "kind": "retry abort listener ownership cycle",
+          "verdict": "DEFECT",
+          "reason": "While retry is suspended the signal owns its once listener and the listener owns that signal. Destroying the waiting frame before either branch settles skips explicit removal. Put removal in a scope guard so frame teardown also removes the listener."
+        },
+        {
+          "lines": "628-635",
+          "kind": "retry sleeper closure after race",
+          "verdict": "DEFECT",
+          "reason": "If the supplied retrySleep is a capturing coroutine and abort wins, the waiting frame destroys its copy of sleep. The losing sleeper can resume and use its dead closure. Wrap invocation in an owning rt::async child. The default function and current differential fixture use owning free tasks."
+        },
+        {
+          "lines": "639-645,712-791",
+          "kind": "probe join and attributed response reads",
+          "verdict": "SAFE",
+          "reason": "Probe promises are copied from the registry before allSettled. The auth loop retains its local pool snapshot through each joined identity hash."
+        },
+        {
+          "lines": "807-881",
+          "kind": "serial driver and loop-state borrows",
+          "verdict": "SAFE",
+          "reason": "The loop owns both driver and state values through the joined private helper tasks, and each dispatched response is passed by value."
+        }
+      ]
+    },
+    "src/codex/experiment.cpp": {
+      "status": "reviewed",
+      "note": "The cache-scope experiment owns its session, auth pool snapshot and callback options.",
+      "sites": [
+        {
+          "lines": "45-57,69-85,108-117",
+          "kind": "auth pool and row reads",
+          "verdict": "SAFE",
+          "reason": "The KV owner and copied row stay in the awaited frame. Slot iteration uses the local copied pool."
+        },
+        {
+          "lines": "123-187",
+          "kind": "refresh, classification, and compare-and-set",
+          "verdict": "SAFE",
+          "reason": "The selectedAccount pointer refers to the const local selected variant through refresh and commit. The race's refresh child owns auth independently. Listener ownership is reviewed in auth_refresh.cpp."
+        },
+        {
+          "lines": "198-238,248-328",
+          "kind": "transport, hooks, and probe fan-out",
+          "verdict": "SAFE",
+          "reason": "Option and routing copies stay in the experiment frame. Probe handles are copied before allSettled, and detached health writes receive values."
+        }
+      ]
+    },
+    "src/codex/external_auth.cpp": {
+      "status": "reviewed",
+      "note": "Token shape and external account planning are synchronous. Returned records own their text and no async callback is installed.",
+      "sites": []
+    },
+    "src/codex/index.cpp": {
+      "status": "reviewed",
+      "note": "The two entry points join dispatch and its accounting cleanup.",
+      "sites": [
+        {
+          "lines": "13-38",
+          "kind": "serial loop callback borrows",
+          "verdict": "SAFE",
+          "reason": "fetchPreparedCodexResponses holds shared ctx across the serial loop join. The loop's raw pointer predicates are synchronous and its other installed operations are joined."
+        },
+        {
+          "lines": "44-60",
+          "kind": "request coordinator cleanup",
+          "verdict": "SAFE",
+          "reason": "Both options and coordinator are frame-owned and cancellation is awaited before the frame returns or rethrows."
+        }
+      ]
+    },
+    "src/codex/manual_reset.cpp": {
+      "status": "reviewed",
+      "note": "Manual reset keeps request, billing proof and selection data in local snapshots. Its injectable KV dependency needs separate treatment under fail-fast reads.",
+      "sites": [
+        {
+          "lines": "47-78,89-120",
+          "kind": "target scan, usage callback, and intent reads",
+          "verdict": "SAFE",
+          "reason": "The account references are into the frame's immutable parsed pool. The copied fetch callable, dependencies and KV live through their nested joins, while a spawned body cancellation owns its handle."
+        },
+        {
+          "lines": "88,161-162,199-201",
+          "kind": "KV receiver lifetime after fail-fast all",
+          "verdict": "DEFECT",
+          "reason": "readEntry is a forwarding function and releases its KV copy before the returned virtual get finishes. If an injected KV's coroutine get loses to a rejected sibling and the caller supplied the last owner, the pending method can resume with a dead receiver. Make readEntry an owning coroutine. Guarded production KV and MemoryKv take their own inner store ownership."
+        },
+        {
+          "lines": "129-153,155-184,192-208,220-229",
+          "kind": "validated promotion and reset joins",
+          "verdict": "SAFE",
+          "reason": "The target, intent, observation and operation handles belong to the parent frames, and every nested step after fan-out is joined."
+        },
+        {
+          "lines": "209-219",
+          "kind": "durable fence predicate closures",
+          "verdict": "SAFE",
+          "reason": "Predicates copy target, selection, intent and clock into the candidate and are only invoked synchronously with row values."
+        }
+      ]
+    },
+    "src/codex/manual_reset_state.cpp": {
+      "status": "reviewed",
+      "note": "Manual reset state comparison, JSON conversion and key construction are synchronous. Each literal-backed view is consumed in its loop iteration.",
+      "sites": []
+    },
+    "src/codex/native_auth.cpp": {
+      "status": "reviewed",
+      "note": "Native binding carries immutable auth snapshots, exact KV rows, and owned copies of optional hook callables.",
+      "sites": [
+        {
+          "lines": "73-93,153-178,180-235,244-291",
+          "kind": "document, hash, and binding awaits",
+          "verdict": "SAFE",
+          "reason": "Document text and auth snapshots belong to each frame. The installed readAuth callable is copied before invocation, pool iterators are consumed or copied before the next await, and KV stays live through each transaction."
+        },
+        {
+          "lines": "318-420",
+          "kind": "generation, binding, and external adoption",
+          "verdict": "SAFE",
+          "reason": "The frame owns the candidate pool and generation inputs. Persist/copy and hash operations retain their local records through joined waits."
+        },
+        {
+          "lines": "424-480",
+          "kind": "native refresh hook and socket join",
+          "verdict": "SAFE",
+          "reason": "The account context and hook copy stay live until refresh settles, and the transport entry point takes owned strings."
+        }
+      ]
+    },
+    "src/codex/native_auth_transport.cpp": {
+      "status": "reviewed",
+      "note": "The registered native WebSocket outlives its RPC callbacks through the connection and clears listeners on close or loop teardown.",
+      "sites": [
+        {
+          "lines": "63-76,144-193",
+          "kind": "socket open, file, and RPC awaits",
+          "verdict": "SAFE",
+          "reason": "The coroutine owns RefreshState and its strings. Open/error callbacks own the promise resolvers. Pointers into initialized and account payloads have frame-owned optional storage."
+        },
+        {
+          "lines": "85-139",
+          "kind": "pending-call iteration and timer",
+          "verdict": "SAFE",
+          "reason": "Resolve and reject enqueue reactions, so the synchronous pending scan cannot be invalidated by a resumed caller. Timers are cleared on reply, send failure, socket failure or Loop teardown."
+        },
+        {
+          "lines": "196-222",
+          "kind": "socket listener cycle",
+          "verdict": "SAFE",
+          "reason": "The concrete socket clears persistent callbacks in emitClose, and WebSocketRegistry clears the same callbacks at loop shutdown when no close is emitted. Refresh normally terminates the socket after success or error."
+        }
+      ]
+    },
+    "src/codex/overage_settings.cpp": {
+      "status": "reviewed",
+      "note": "The refresh builds fresh overage rows before replacing shared state.",
+      "sites": [
+        {
+          "lines": "42-56",
+          "kind": "KV read and write",
+          "verdict": "SAFE",
+          "reason": "Each task retains KV and its key/value arguments until the operation finishes."
+        },
+        {
+          "lines": "64-95",
+          "kind": "capturing coroutine and nested fail-fast joins",
+          "verdict": "SAFE",
+          "reason": "rt::async owns the captured account and KV independently of the parent. Both nested hash tasks take owning inputs and the final map mutation uses copied output rows."
+        }
+      ]
+    },
+    "src/codex/quota.cpp": {
+      "status": "reviewed",
+      "note": "Header classification and redaction are synchronous. Header iteration uses keys owned for the loop and each suffix view refers to static storage.",
+      "sites": []
+    },
+    "src/codex/rate_limit_429.cpp": {
+      "status": "reviewed",
+      "note": "Quota classification and probe updates use owned response and account state.",
+      "sites": [
+        {
+          "lines": "16-25,28-65",
+          "kind": "routing transformations and classifier awaits",
+          "verdict": "SAFE",
+          "reason": "The account values remain in joined parent frames through updateRoutingState's calls. The parse result is a frame-owned value and response decoding takes its own handle."
+        }
+      ]
+    },
+    "src/codex/reset_settings.cpp": {
+      "status": "reviewed",
+      "note": "Native migration reads normally own their backing store. The public shared-KV override also accepts virtual methods that use their receiver after suspension.",
+      "sites": [
+        {
+          "lines": "59-67,108-112",
+          "kind": "injectable KV reads in fail-fast all",
+          "verdict": "DEFECT",
+          "reason": "The read promises run virtual get methods but the parent holds the only guaranteed KV owner. A rejecting sibling can unwind that owner while an injected coroutine get still uses its receiver. Wrap each parallel read in a coroutine with a shared KV parameter."
+        },
+        {
+          "lines": "68-98,113-145",
+          "kind": "owned hashes and sequential migration writes",
+          "verdict": "SAFE",
+          "reason": "Hash children receive owned strings. Account iteration, rows and the AtomicOperation are owned by the frame through the joined reads and commits."
+        }
+      ]
+    },
+    "src/codex/responses_error.cpp": {
+      "status": "reviewed",
+      "note": "All error event projection is synchronous. Output item iteration and key/value pointers refer to live local or caller-owned JSON for the duration of the call.",
+      "sites": []
+    },
+    "src/codex/responses_operations.cpp": {
+      "status": "reviewed",
+      "note": "Per-request callbacks lock a weak context before returning an owning coroutine. The dispatch loop serializes mutable request state.",
+      "sites": [
+        {
+          "lines": "191-218,253-387,453-476",
+          "kind": "admission, proof, and banked candidate awaits",
+          "verdict": "SAFE",
+          "reason": "Coroutine arguments own context and routing state, and fences snapshot account or row values before installation. Local KV remains live through each read."
+        },
+        {
+          "lines": "483-506",
+          "kind": "candidate map references across two awaits",
+          "verdict": "SAFE",
+          "reason": "The only production caller is the serial runner waiting for reportHealthyFallback. The other map mutators run in separate, sequentially joined phases of that same request, so this loop has exclusive access to this context's map."
+        },
+        {
+          "lines": "511-599,600-714,718-763",
+          "kind": "cohort, inventory, and overage awaits",
+          "verdict": "SAFE",
+          "reason": "Loops borrow from local candidate, observation and selection snapshots. Options, provider handles, fences and context stay owned through their joins."
+        },
+        {
+          "lines": "767-853,867-907,944-988",
+          "kind": "transport callbacks, spawn, and auth refresh",
+          "verdict": "SAFE",
+          "reason": "Installed preTransport/onDispatch callbacks travel by value in the awaited transport. Health children receive their own response and error data. The auth race's refreshing child takes auth by value."
+        },
+        {
+          "lines": "993-1055",
+          "kind": "weak context dispatch table",
+          "verdict": "SAFE",
+          "reason": "Context owns the callbacks without owning itself through them. Each noncoroutine wrapper locks before handing a strong context value to the async implementation."
+        }
+      ]
+    },
+    "src/codex/responses_runners.cpp": {
+      "status": "reviewed",
+      "note": "Runner coroutines carry a strong context while request-local state is driven serially.",
+      "sites": [
+        {
+          "lines": "86-250,253-413",
+          "kind": "reset, fence, and inference attempt awaits",
+          "verdict": "SAFE",
+          "reason": "All attempt parameters are values, including shared credential attempts. The external pre-dispatch fence owns its context and candidate across its joined invocation."
+        },
+        {
+          "lines": "416-463,465-503",
+          "kind": "account entries, terminal outcome, and retry",
+          "verdict": "SAFE",
+          "reason": "The account iteration uses a vector copy. Retry receives a copied sleeper and its own signal. The losing sleeper lifetime is reviewed in dispatch.cpp."
+        },
+        {
+          "lines": "505-625,627-682,713-771",
+          "kind": "retry, response authorization, and reselection awaits",
+          "verdict": "SAFE",
+          "reason": "Retry and read results are local snapshots, and the forwarding failure helper immediately constructs a task that owns ctx. The selected variant is only borrowed for synchronous tests or copying scalars into an awaited call."
+        },
+        {
+          "lines": "774-811",
+          "kind": "weak context runner table",
+          "verdict": "SAFE",
+          "reason": "Stored forwarders lock weak state synchronously and transfer a strong context value to each returned task."
+        }
+      ]
+    },
+    "src/codex/responses_state.cpp": {
+      "status": "reviewed",
+      "note": "Creation reads and packages one request-local state. State reset and decision helpers are synchronous.",
+      "sites": [
+        {
+          "lines": "13-94",
+          "kind": "response context construction and callbacks",
+          "verdict": "SAFE",
+          "reason": "The input, strong pool, route result and coordinator live in the frame. The stored reload callback owns its config or is copied from options."
+        }
+      ]
+    },
+    "src/codex/routing_evaluation.cpp": {
+      "status": "reviewed",
+      "note": "Routing classification and proof folds are synchronous. The borrowed pool, account and map elements are consumed during each call.",
+      "sites": []
+    },
+    "src/codex/routing_mutations.cpp": {
+      "status": "reviewed",
+      "note": "Route mutations use owned snapshots and joined persistence.",
+      "sites": [
+        {
+          "lines": "33-49,83-154,172-215,329-395",
+          "kind": "fence iteration, CAS, and proof awaits",
+          "verdict": "SAFE",
+          "reason": "The private fence vector and KV/atomic operation remain in the waiting frames. Optional row/probe data is copied before any later mutation."
+        },
+        {
+          "lines": "222-237,244-288,291-308",
+          "kind": "joined routing transform closures",
+          "verdict": "SAFE",
+          "reason": "updateRoutingState owns the callable through each retry while the joined parent retains captured account and identity referents."
+        }
+      ]
+    },
+    "src/codex/routing_serial.cpp": {
+      "status": "reviewed",
+      "note": "The serial admission lock chains copied promises and invokes a frame-owned action. Slot identity resolution is independently owned.",
+      "sites": [
+        {
+          "lines": "96-159,232-263",
+          "kind": "strong row, commit, and selected pool awaits",
+          "verdict": "SAFE",
+          "reason": "Row and pool snapshots plus the transaction owner remain local. The account hash loop uses the unchanged by-value pool."
+        },
+        {
+          "lines": "177-228",
+          "kind": "fail-fast account identity children",
+          "verdict": "SAFE",
+          "reason": "Each child copies the particular auth record from the slot pool and can outlive a sibling rejection without a borrow into that vector."
+        },
+        {
+          "lines": "266-285,295-325",
+          "kind": "admission lock and coroutine closure",
+          "verdict": "SAFE",
+          "reason": "withCodexAdmission keeps both the action and KV in its own frame through the wait and release. The action closure owns its account inputs and every result is joined."
+        }
+      ]
+    },
+    "src/codex/routing_state.cpp": {
+      "status": "reviewed",
+      "note": "KV key constants and routing row serialization are synchronous. Reference-taking converters do their work within the call.",
+      "sites": []
+    },
+    "src/codex/session.cpp": {
+      "status": "reviewed",
+      "note": "Session telemetry uses per-observation hashes and a local durable update.",
+      "sites": [
+        {
+          "lines": "200-269",
+          "kind": "session, key, and rate update awaits",
+          "verdict": "SAFE",
+          "reason": "Inputs and hashes are frame-owned, the row vector remains local across the write, and the AtomicOperation and KV survive the commit."
+        }
+      ]
+    },
+    "src/codex/supervisor.cpp": {
+      "status": "reviewed",
+      "note": "The admin follow handler spawns one owning polling task and weakly observes it from the stream and request signal.",
+      "sites": [
+        {
+          "lines": "209-259,292-307",
+          "kind": "stream start, detached poll, cancel and abort",
+          "verdict": "SAFE",
+          "reason": "The poll frame owns FollowState and the revisions handle. Controller holds a weak stream handle, and the abort and cancel callbacks lock weak state only for their synchronous use."
+        },
+        {
+          "lines": "263-290",
+          "kind": "config and inventory awaits",
+          "verdict": "SAFE",
+          "reason": "Config and inventory snapshots are frame-owned. A matching configured source is copied before the inventory suspension."
+        }
+      ]
+    },
+    "src/codex/supervisor_brief.cpp": {
+      "status": "reviewed",
+      "note": "Transcript and brief generation use independent owned transcript, connection, and request records.",
+      "sites": [
+        {
+          "lines": "204-209,270-327,330-350",
+          "kind": "connection tasks and enrichment iteration",
+          "verdict": "SAFE",
+          "reason": "The frames retain connection and callable owners. Target references come from a private immutable vector and lookup views refer to locally owned RPC payloads."
+        },
+        {
+          "lines": "440-501,561-606,637-666,854-879",
+          "kind": "transcript, brief, and connection teardown",
+          "verdict": "SAFE",
+          "reason": "Source, config, response, and turn vectors are frame-owned. The connection stays live through collection errors and the awaited close."
+        },
+        {
+          "lines": "764-770",
+          "kind": "borrowed adapter inputs",
+          "verdict": "SAFE",
+          "reason": "Both reference-taking entry points are regular factories that copy connection/source into the child without suspending first."
+        }
+      ]
+    },
+    "src/codex/supervisor_config.cpp": {
+      "status": "reviewed",
+      "note": "Supervisor configuration copies its env reader before the file-read boundary.",
+      "sites": [
+        {
+          "lines": "104-119",
+          "kind": "poll timer and abort listener",
+          "verdict": "SAFE",
+          "reason": "The timer completion removes the listener and abort clears the timer. Loop::clearAllTimers clears the timer callback on teardown, breaking the callback ownership chain."
+        },
+        {
+          "lines": "199-250",
+          "kind": "config read and parser await",
+          "verdict": "SAFE",
+          "reason": "Options, env function, path and file contents stay in the frame. The environment reader is invoked synchronously."
+        }
+      ]
+    },
+    "src/codex/supervisor_follow.cpp": {
+      "status": "reviewed",
+      "note": "Each poll owns its revisions state and goes through one joined connection read and close.",
+      "sites": [
+        {
+          "lines": "143-199",
+          "kind": "RPC and revisions map ownership",
+          "verdict": "SAFE",
+          "reason": "The connection and shared revisions are task parameters. The awaited RPCs consume local result values and revisions are accessed synchronously at the end."
+        }
+      ]
+    },
+    "src/codex/supervisor_inventory.cpp": {
+      "status": "reviewed",
+      "note": "Inventory sampling keeps source records, connection hooks and per-source projections independent.",
+      "sites": [
+        {
+          "lines": "99-126,193-233,314-373,430-446",
+          "kind": "SQLite and socket reads",
+          "verdict": "SAFE",
+          "reason": "Path, database and connection handles belong to their calling frames. SQL statements and payload projections are consumed synchronously."
+        },
+        {
+          "lines": "580-590,632-708",
+          "kind": "sample reads, fan-out and join",
+          "verdict": "SAFE",
+          "reason": "Each worker is held by rt::async and mapWithConcurrency owns shared worker state. probeOne copies the thread ID and client into each task. Projection maps and callback are local."
+        },
+        {
+          "lines": "711-774,785-797,842-856",
+          "kind": "sampling ownership and cache finalizer",
+          "verdict": "SAFE",
+          "reason": "Source, connection, timeout and copied in-flight promise survive waits. Close is joined, and cache reactions only access module storage."
+        }
+      ]
+    },
+    "src/codex/supervisor_log.cpp": {
+      "status": "reviewed",
+      "note": "Rollout tail reads use owned input and a local fd guard across file checks and bounded reads.",
+      "sites": [
+        {
+          "lines": "154-194",
+          "kind": "file guard across microtasks",
+          "verdict": "SAFE",
+          "reason": "The read frame owns file/path handles and byte buffers. Its fd guard releases the descriptor on every exit and is unrelated to serialized shared state."
+        }
+      ]
+    },
+    "src/codex/supervisor_secret.cpp": {
+      "status": "reviewed",
+      "note": "Secret detection and redaction are synchronous.",
+      "sites": [
+        {
+          "lines": "600,716,755",
+          "kind": "synchronous redaction callbacks",
+          "verdict": "SAFE",
+          "reason": "Regex captures refer to static pattern storage. Local accumulation callbacks are invoked before their output collections leave scope."
+        }
+      ]
+    },
+    "src/codex/supervisor_transport.cpp": {
+      "status": "reviewed",
+      "note": "Socket events now use weak connection state. The separate per-call abort callback still creates a cycle while an RPC is pending.",
+      "sites": [
+        {
+          "lines": "62-70,154-179,181-263",
+          "kind": "transport awaits and socket listeners",
+          "verdict": "SAFE",
+          "reason": "Connection and call frames own the shared state. Socket message/close/error callbacks use weak state, and initialization failure settles pending calls and terminates the socket."
+        },
+        {
+          "lines": "88-101,127-150",
+          "kind": "pending map and normal cleanup",
+          "verdict": "SAFE",
+          "reason": "Settlement copies the call record before erase, clears its timer, removes the matching listener and only then settles its promise."
+        },
+        {
+          "lines": "134-140",
+          "kind": "per-call abort ownership cycle",
+          "verdict": "DEFECT",
+          "reason": "While the call is suspended, pending cleanup owns its signal and listener, and the listener owns the same ConnectionState. Loop teardown drops the timer and socket callbacks without settling that call, leaving the pending cleanup cycle alive. Use weak state in the abort callable while callConnection owns the state."
+        }
+      ]
+    },
+    "src/deepseek/chat_projection.cpp": {
+      "status": "reviewed",
+      "note": "Projection and normalization are synchronous. The system message iterator is used only while its local vector is live.",
+      "sites": []
+    },
+    "src/deepseek/context_admission_failure.cpp": {
+      "status": "reviewed",
+      "note": "Failure marking and recognition are synchronous. Response identity tracking uses weak keys.",
+      "sites": []
+    },
+    "src/deepseek/flash_aliases.cpp": {
+      "status": "reviewed",
+      "note": "Catalog warming is detached while alias calculation uses copied catalog and model results.",
+      "sites": [
+        {
+          "lines": "104-107",
+          "kind": "detached catalog fetches",
+          "verdict": "SAFE",
+          "reason": "Each spawned task obtains or owns its fetch state and receives no local view or closure from the warming function."
+        }
+      ]
+    },
+    "src/deepseek/forwarded_payload_policy.cpp": {
+      "status": "reviewed",
+      "note": "Payload and context limits are parsed and applied synchronously. The profile view is consumed within the lookup call.",
+      "sites": []
+    },
+    "src/deepseek/handlers.cpp": {
+      "status": "reviewed",
+      "note": "Chat and Responses handlers join upstream fetch and buffered projection. The streaming adapters copy state before returning.",
+      "sites": [
+        {
+          "lines": "77-129,204-224",
+          "kind": "error, projected-body callback, and preheader awaits",
+          "verdict": "SAFE",
+          "reason": "The joined handler retains its telemetry owner, and projected JSON is consumed synchronously by a callable owning the diagnostic destination."
+        },
+        {
+          "lines": "186-196,226-262,269-323",
+          "kind": "stream adapter, buffered read and usage record",
+          "verdict": "SAFE",
+          "reason": "The relay copies telemetry for streaming, and the joined frame owns each response, payload, options and request input for buffered work."
+        }
+      ]
+    },
+    "src/deepseek/index.cpp": {
+      "status": "reviewed",
+      "note": "DeepSeek preparation, validation and envelope checks operate synchronously on the current payload. Fetch transfers argument copies across transport.",
+      "sites": [
+        {
+          "lines": "620-696",
+          "kind": "deadline, admission and fetch callbacks",
+          "verdict": "SAFE",
+          "reason": "Options and fetcher own their callables across the joins. The deadline callback owns a controller copy and is cleared by ScopeExit, and projected body observation is synchronous."
+        }
+      ]
+    },
+    "src/deepseek/responses.cpp": {
+      "status": "reviewed",
+      "note": "Responses request projection and model policy checks are synchronous. Reasoning and model views are consumed within the owning record or table's lifetime.",
+      "sites": []
+    },
+    "src/deepseek/responses_payload.cpp": {
+      "status": "reviewed",
+      "note": "Responses payload construction is synchronous. Field lookups return copies or are used immediately against the live JSON record.",
+      "sites": []
+    },
+    "src/deepseek/responses_stream.cpp": {
+      "status": "reviewed",
+      "note": "The projection API exposes synchronous translator operations.",
+      "sites": [
+        {
+          "lines": "352-355",
+          "kind": "translator callback bundle",
+          "verdict": "SAFE",
+          "reason": "Each returned function owns shared translator state and that state does not retain the function bundle."
+        }
+      ]
+    },
+    "src/deepseek/stream.cpp": {
+      "status": "reviewed",
+      "note": "The generator owns its reader session and watchdog. The individual read race uses a weak signal listener.",
+      "sites": [
+        {
+          "lines": "129-151",
+          "kind": "reader race and abort registration",
+          "verdict": "SAFE",
+          "reason": "The executor is synchronous, its installed callback locks a weak signal, and reader.readPromise retains the pending read independently of the winning branch."
+        },
+        {
+          "lines": "157-234,250-287",
+          "kind": "read session, timer, and generator",
+          "verdict": "SAFE",
+          "reason": "The factory copies options and starts an owning generator task. Each read owns session, yielded frames belong to the task, and the watchdog captures a controller value. Finish clears the timer and releases the reader."
+        }
+      ]
+    },
+    "src/deepseek/waterfall.cpp": {
+      "status": "reviewed",
+      "note": "Provider waterfall order, status classification and callback decisions are synchronous. The enabled/configured predicates execute during plan construction.",
+      "sites": []
+    },
+    "src/deepseek/waterfall_handler.cpp": {
+      "status": "reviewed",
+      "note": "Waterfall hops are joined serially, and the replay pump owns its iterator independently of the processing frame.",
+      "sites": [
+        {
+          "lines": "33-52,81-95,104-129",
+          "kind": "dispatch callback, borrowed telemetry and hop iteration",
+          "verdict": "SAFE",
+          "reason": "The dispatcher owns its paid tail and all child calls are joined by frames retaining the input and context. The plan vector is immutable during iteration."
+        },
+        {
+          "lines": "54-78",
+          "kind": "stream replay and detached iterator operations",
+          "verdict": "SAFE",
+          "reason": "The pump owns its iterator and has a weak controller. Stream cancel invokes the synchronous return_ factory before the captured iterator is released, handing the queued request state to the detached task."
+        }
+      ]
+    },
+    "src/embeddings/handlers.cpp": {
+      "status": "reviewed",
+      "note": "The buffered handler joins member operations while its request and telemetry owners are live. Its optional KV seam admits implementations with a borrowed async receiver.",
+      "sites": [
+        {
+          "lines": "80-130,150-231,237-342",
+          "kind": "request-state members and retries",
+          "verdict": "SAFE",
+          "reason": "handleEmbeddingsRequest owns the RequestState object. Nested tasks are joined serially, and Voyage parameters and chunk slices are copied before sending."
+        },
+        {
+          "lines": "137-140",
+          "kind": "cache fan-out virtual receiver",
+          "verdict": "DEFECT",
+          "reason": "One cache get can reject while another injected KV get is still awaiting. The request unwinds the last shared store owner, leaving the pending virtual coroutine with a dead receiver. Wrap each get in an owning child as jobs.cpp does."
+        },
+        {
+          "lines": "343-398",
+          "kind": "handler context, hash fan-out and callback",
+          "verdict": "SAFE",
+          "reason": "The terminal route retains its context during entry, runTelemetry owns its copy, and the telemetry wrapper retains the callback. Each hash child owns its input text."
+        }
+      ]
+    },
+    "src/embeddings/jobs.cpp": {
+      "status": "reviewed",
+      "note": "Jobs keep their attempt state in the request coroutine and pass owned KV into pending reads and writes.",
+      "sites": [
+        {
+          "lines": "38-60,134-144,212-234",
+          "kind": "cache and input fail-fast fan-outs",
+          "verdict": "SAFE",
+          "reason": "Each cacheEntry child takes a shared KV and key by value, including children whose results are overtaken by a sibling's failure."
+        },
+        {
+          "lines": "83-106",
+          "kind": "budget borrow, commit and allSettled",
+          "verdict": "SAFE",
+          "reason": "The job retains its shared KV while the budget helper runs. AtomicOperation is local, and the input delete batch joins both successful and rejected operations."
+        },
+        {
+          "lines": "146-211,237-302",
+          "kind": "job member awaits and state mutation",
+          "verdict": "SAFE",
+          "reason": "The attempt frame owns JobState and joins its members. Chunk inputs and response results are local values, and nested updates preserve their transaction owners."
+        },
+        {
+          "lines": "305-385,387-448",
+          "kind": "create/get, encrypt writes and telemetry",
+          "verdict": "SAFE",
+          "reason": "Each input write owns KV, key components and plaintext input. The handler awaits job execution and the telemetry adapters retain their own context copies."
+        },
+        {
+          "lines": "451-498",
+          "kind": "job attempt and public entry joins",
+          "verdict": "SAFE",
+          "reason": "The parent retains the optional borrowed telemetry during joined operation. Job state and atomic operations are frame-owned, and wrappers retain request arguments by value."
+        }
+      ]
+    },
+    "src/embeddings/ledger.cpp": {
+      "status": "reviewed",
+      "note": "Ledger records, chunk assembly and transaction state are per invocation. The replay fetch batch needs ownership for each virtual KV read.",
+      "sites": [
+        {
+          "lines": "161-168",
+          "kind": "idempotency replay fan-out receiver",
+          "verdict": "DEFECT",
+          "reason": "A rejected chunk read can lead to an unavailable response while another injected virtual get remains pending. When the acquisition unwinds the last shared KV owner, that coroutine can resume with a dead receiver. Keep the store in each child frame."
+        },
+        {
+          "lines": "156-160,169-180,197-347,534-618,621-714",
+          "kind": "response hash, acquisition and settlement joins",
+          "verdict": "SAFE",
+          "reason": "Named results, owned lease and params, per-attempt rows and local atomic handles retain their resources through joined reads and writes. Hash children own the combined text."
+        }
+      ]
+    },
+    "src/embeddings/voyage.cpp": {
+      "status": "reviewed",
+      "note": "Cache and budget code borrow KV within joined request and job frames, with a separate issue at the cache eviction fan-out.",
+      "sites": [
+        {
+          "lines": "55-124,144-175,246-289",
+          "kind": "borrowed KV, list iterator and atomic waits",
+          "verdict": "SAFE",
+          "reason": "The handler or job retains KV through the awaited cache and budget operation, and the list and transaction handles are local to each frame."
+        },
+        {
+          "lines": "126-136",
+          "kind": "eviction fan-out receiver",
+          "verdict": "DEFECT",
+          "reason": "If one eviction index get rejects, the cache writer returns failure without joining a pending sibling. An injected KV coroutine can resume after its receiver's last owner leaves the request. Propagate a shared store into the eviction reader children."
+        },
+        {
+          "lines": "186-188,194-197",
+          "kind": "timer-driven completion",
+          "verdict": "SAFE",
+          "reason": "Sleep captures its resolver, and the abortable sleep timer owns State and removes the listener during ordinary completion."
+        },
+        {
+          "lines": "198-207",
+          "kind": "retry sleep abort ownership cycle",
+          "verdict": "DEFECT",
+          "reason": "The signal retains the once callback and that callback retains the same signal. When loop teardown clears the pending timer before it fires, the listener cycle remains. Use weak signal state or rely on once to remove the listener before it runs."
+        },
+        {
+          "lines": "435-467,503-545",
+          "kind": "encryption, key read, and upstream fetch",
+          "verdict": "SAFE",
+          "reason": "Input and request options are frame-owned, the fetch hook is awaited through completion, and ScopeExit clears the streaming-independent request timer."
+        }
+      ]
+    },
+    "src/harmony/adapter.cpp": {
+      "status": "reviewed",
+      "note": "The Harmony transport makes its callable owner explicit, including when a consumer races it with cancellation.",
+      "sites": [
+        {
+          "lines": "256-277",
+          "kind": "transport callable keep-alive",
+          "verdict": "SAFE",
+          "reason": "The member wrapper synchronously transfers a shared function owner into keepAlive alongside the returned task. The Cerebras forwarder owns options and returns a value-taking task."
+        },
+        {
+          "lines": "280-299",
+          "kind": "transport and buffered parse awaits",
+          "verdict": "SAFE",
+          "reason": "The frame owns adapter options, response and JSON values. The parse recovery callback has no captures."
+        }
+      ]
+    },
+    "src/harmony/classifier.cpp": {
+      "status": "reviewed",
+      "note": "Classifier request and verdict conversion are synchronous and consume each view while its owning response is live.",
+      "sites": []
+    },
+    "src/harmony/conversation.cpp": {
+      "status": "reviewed",
+      "note": "Conversation transforms are synchronous. They return owned copies and do not suspend while iterating turns.",
+      "sites": []
+    },
+    "src/harmony/parse.cpp": {
+      "status": "reviewed",
+      "note": "The Harmony parser consumes text views synchronously and returns owning parse records.",
+      "sites": []
+    },
+    "src/harmony/probe_scenarios.cpp": {
+      "status": "reviewed",
+      "note": "Probe scenarios sequence each model step while owning the probe context and its callables.",
+      "sites": [
+        {
+          "lines": "47-153,170-176",
+          "kind": "scenario joins and callback factory",
+          "verdict": "SAFE",
+          "reason": "The scenario frame owns its context, options, tool calls and conversation at each wait. The registered scenario wrapper is synchronous and copies its index into the returned task."
+        }
+      ]
+    },
+    "src/harmony/probes.cpp": {
+      "status": "reviewed",
+      "note": "Probe transport and result projections own their per-call state.",
+      "sites": [
+        {
+          "lines": "112-170,179-203",
+          "kind": "probe invocation, JSON reads and result values",
+          "verdict": "SAFE",
+          "reason": "Each task owns a context and request arguments, and each parse uses a local response. The zero-capture catch reaction owns no referents."
+        },
+        {
+          "lines": "241-249",
+          "kind": "published probe callback bundle",
+          "verdict": "SAFE",
+          "reason": "The returned functions own a shared ContextState which contains transport and clock values, without a back-reference to the bundle."
+        }
+      ]
+    },
+    "src/harmony/reliability/context.cpp": {
+      "status": "reviewed",
+      "note": "Transcript sizing, compaction and rendering are synchronous. Indexes and views are used while the conversation is live.",
+      "sites": []
+    },
+    "src/harmony/reliability/failure.cpp": {
+      "status": "reviewed",
+      "note": "Reliability classification is synchronous and returns owning results.",
+      "sites": []
+    },
+    "src/harmony/reliability/feedback.cpp": {
+      "status": "reviewed",
+      "note": "Tool argument validation and feedback projection use synchronous calls with live JSON arguments.",
+      "sites": []
+    },
+    "src/harmony/reliability/harness.cpp": {
+      "status": "reviewed",
+      "note": "The harness joins private borrowing helpers and uses owning race branches for cancellation.",
+      "sites": [
+        {
+          "lines": "117-135",
+          "kind": "run cancellation listener and race",
+          "verdict": "SAFE",
+          "reason": "ScopeExit removes the listener and the listener owns only a resolver. Both race inputs own their pending state."
+        },
+        {
+          "lines": "218-298",
+          "kind": "transport, body parse, and borrowed retry parameters",
+          "verdict": "SAFE",
+          "reason": "The joined frame retains run, opts and built. HarmonyTransport::keepAlive and Response::json separately own the work that may outlive an aborted wait."
+        },
+        {
+          "lines": "321-340,369-414",
+          "kind": "tool annotations, retry sleep and loop references",
+          "verdict": "SAFE",
+          "reason": "The sequential caller owns run, options, validation data, tool calls and analysis through the join. Tool routing takes an owning backend handle."
+        },
+        {
+          "lines": "465-479,511-519",
+          "kind": "turn and run joins",
+          "verdict": "SAFE",
+          "reason": "runReliabilityHarness owns run and options, and runHarnessTurn owns the built request and normalized result until both children complete."
+        }
+      ]
+    },
+    "src/harmony/reliability/hash.cpp": {
+      "status": "reviewed",
+      "note": "Reliability hashes are calculated synchronously from live input views.",
+      "sites": []
+    },
+    "src/harmony/reliability/loops.cpp": {
+      "status": "reviewed",
+      "note": "Loop detection and ordered-map observation execute synchronously. Returned flags own their inspection results.",
+      "sites": []
+    },
+    "src/harmony/reliability/retry.cpp": {
+      "status": "reviewed",
+      "note": "Retry policy and ledger inspection are synchronous. Entry copies and scalar delay values travel outside the function.",
+      "sites": []
+    },
+    "src/harmony/reliability/state.cpp": {
+      "status": "reviewed",
+      "note": "Tool observation reducers and state normalization are synchronous. Returned state owns the values read from sources.",
+      "sites": []
+    },
+    "src/harmony/reliability/surfaces.cpp": {
+      "status": "reviewed",
+      "note": "Provider surface assertions and request descriptions are synchronous. The returned records own their inspected fields.",
+      "sites": []
+    },
+    "src/harmony/reliability/verify.cpp": {
+      "status": "reviewed",
+      "note": "Verification and final-answer checks evaluate synchronous snapshots. No callback or container reference crosses a wait.",
+      "sites": []
+    },
+    "src/harmony/render.cpp": {
+      "status": "reviewed",
+      "note": "Rendering runs synchronously over input turns and static option literals.",
+      "sites": []
+    },
+    "src/harmony/tools/backend.cpp": {
+      "status": "reviewed",
+      "note": "Backend path normalization operates synchronously on the supplied text.",
+      "sites": []
+    },
+    "src/harmony/tools/fakes.cpp": {
+      "status": "reviewed",
+      "note": "The fake workspace performs synchronous in-memory operations.",
+      "sites": [
+        {
+          "lines": "162-165",
+          "kind": "fake backend task factory",
+          "verdict": "SAFE",
+          "reason": "execShell calls shell_ before returning and transfers only the result value to fulfilledTask."
+        }
+      ]
+    },
+    "src/harmony/tools/result.cpp": {
+      "status": "reviewed",
+      "note": "Tool result shaping and clipping are synchronous. Results own their strings.",
+      "sites": []
+    },
+    "src/harmony/tools/router.cpp": {
+      "status": "reviewed",
+      "note": "The tool router owns its backend and validated argument snapshots.",
+      "sites": [
+        {
+          "lines": "68-87,163-200",
+          "kind": "shell receiver and tool dispatch await",
+          "verdict": "SAFE",
+          "reason": "execShell retains a shared workspace while the virtual shell task runs, and runToolImpl awaits it with its other inputs live."
+        },
+        {
+          "lines": "203-217",
+          "kind": "borrowed JSON task factories",
+          "verdict": "SAFE",
+          "reason": "The pointer overloads copy optional JSON into runToolImpl before returning its task."
+        }
+      ]
+    },
+    "src/harmony/tools/schemas.cpp": {
+      "status": "reviewed",
+      "note": "Schema parsing and argument validation are synchronous and return owned data.",
+      "sites": []
+    },
+    "src/harmony/types.cpp": {
+      "status": "reviewed",
+      "note": "Harmony wire and tool type conversion is synchronous with static discriminator views.",
+      "sites": []
+    },
+    "src/live/calls.cpp": {
+      "status": "reviewed",
+      "note": "Call creation buffers and validates local multipart data, then joins account selection, transport, and mapping persistence.",
+      "sites": [
+        {
+          "lines": "35-89",
+          "kind": "request and multipart awaits",
+          "verdict": "SAFE",
+          "reason": "The Request, optional File and parsed form live in their frames. A nested read or cancellation copies its stream owner before suspending."
+        },
+        {
+          "lines": "93-128,133-148,150-181",
+          "kind": "account, response and telemetry waits",
+          "verdict": "SAFE",
+          "reason": "Account and response results are local value snapshots and the mapping write owns all its identifiers."
+        }
+      ]
+    },
+    "src/live/handler.cpp": {
+      "status": "reviewed",
+      "note": "HTTP and upgrade handlers own the incoming Request and principal snapshots.",
+      "sites": [
+        {
+          "lines": "27-45,47-65",
+          "kind": "authentication, principal, and upgrade waits",
+          "verdict": "SAFE",
+          "reason": "Auth/route decisions and the presentation callback are local values. UpgradeResult owns the returned accept function separately."
+        }
+      ]
+    },
+    "src/live/routes.cpp": {
+      "status": "reviewed",
+      "note": "Route matching is synchronous and returns owned route fields.",
+      "sites": []
+    },
+    "src/live/sideband.cpp": {
+      "status": "reviewed",
+      "note": "Sideband ownership spans both WebSockets and the delayed mapping retirement before close.",
+      "sites": [
+        {
+          "lines": "28-33,88-120",
+          "kind": "constructor await and downstream handlers",
+          "verdict": "SAFE",
+          "reason": "The bridge frame owns State through installation and the downstream registrations retain it afterwards. A close while the constructor is pending sets settled before the frame resumes."
+        },
+        {
+          "lines": "59-87,121-142",
+          "kind": "socket callbacks and deferred close",
+          "verdict": "SAFE",
+          "reason": "State is retained while either socket can deliver a callback. Both concrete sockets clear listener edges at close or WebSocketRegistry teardown. The retirement task owns its call ID and the then callbacks own the state."
+        },
+        {
+          "lines": "147-165,168-193",
+          "kind": "account and upgrade transfer",
+          "verdict": "SAFE",
+          "reason": "Lookups operate on frame-local data. The synchronous accept callable copies socket and routing strings into the detached bridge task."
+        }
+      ]
+    },
+    "src/live/upstream.cpp": {
+      "status": "reviewed",
+      "note": "Mapping operations own identifiers and retain KV through each joined operation.",
+      "sites": [
+        {
+          "lines": "65-91",
+          "kind": "mapping reads and writes",
+          "verdict": "SAFE",
+          "reason": "The returned store and entry are local values. Retiring state is looked up anew after an await instead of retaining a set iterator."
+        },
+        {
+          "lines": "93-109",
+          "kind": "retirement guard and retries",
+          "verdict": "SAFE",
+          "reason": "ScopeExit borrows the same frame's callId, whose parameter storage outlives the guard. Each delete retains its KV owner through completion."
+        }
+      ]
+    },
+    "src/paid_fallback/claude_code_route.cpp": {
+      "status": "reviewed",
+      "note": "Pool work copies subscription data before forwarding and retains one shared lifetime per request.",
+      "sites": [
+        {
+          "lines": "53-127",
+          "kind": "capability check, settlement hook, and pool fan-out",
+          "verdict": "SAFE",
+          "reason": "Each loadPoolState child owns a store/account copy. The joined bookkeeping frame owns each callback and its result/health snapshots."
+        },
+        {
+          "lines": "135-203",
+          "kind": "before-dispatch and transport callbacks",
+          "verdict": "SAFE",
+          "reason": "Fetch options own captured state and the handler waits for the fetch to settle with its telemetry referent live."
+        },
+        {
+          "lines": "206-293",
+          "kind": "selection and one request lifetime",
+          "verdict": "SAFE",
+          "reason": "The roster or pool view remains frame-local. Joined dispatch, outcome settlement and pool advancement receive owned request/state copies."
+        }
+      ]
+    },
+    "src/paid_fallback/health.cpp": {
+      "status": "reviewed",
+      "note": "The lifecycle shares one recorded flag and sends owning values into deferred bookkeeping.",
+      "sites": [
+        {
+          "lines": "63-116,182-185",
+          "kind": "bookkeeping spawn and fail-fast outcomes",
+          "verdict": "SAFE",
+          "reason": "Detached bookkeeping takes the callable and operation string by value. Settlement and health children own their reservation/provider inputs and can finish independently."
+        },
+        {
+          "lines": "199-242,244-266",
+          "kind": "classification and lifecycle callbacks",
+          "verdict": "SAFE",
+          "reason": "Response classifiers own their handles and the lifecycle functions own shared state without a back-reference to themselves."
+        },
+        {
+          "lines": "270-285,358-401",
+          "kind": "catalog fan-out, cache and background refresh",
+          "verdict": "SAFE",
+          "reason": "Each refresh owns its options and signal. The routing lambda reads only local catalog values when invoked synchronously."
+        },
+        {
+          "lines": "142-150,319-356",
+          "kind": "temporary Surplus transport",
+          "verdict": "SAFE",
+          "reason": "The frame copies the supplied telemetry and the dispatch callbacks capture independent context and marker copies through the joined fetch."
+        }
+      ]
+    },
+    "src/paid_fallback/index.cpp": {
+      "status": "reviewed",
+      "note": "Policy and settlement tasks operate on owned request and reservation records.",
+      "sites": [
+        {
+          "lines": "165-203,213",
+          "kind": "policy lookup, retry, and terminal-sweep spawn",
+          "verdict": "SAFE",
+          "reason": "KV and policy snapshots stay in their frames. The detached reconciliation entry point takes no caller-owned references."
+        },
+        {
+          "lines": "246-315,322-373",
+          "kind": "pricing and reservation awaits",
+          "verdict": "SAFE",
+          "reason": "Pricing, policy, and admission input data are held as values and model/catalog pointers refer to local snapshots."
+        },
+        {
+          "lines": "376-484",
+          "kind": "reservation settlement and bookkeeping awaits",
+          "verdict": "SAFE",
+          "reason": "Provider response, reservation, and usage data are frame-owned and all durable steps in each function are joined."
+        }
+      ]
+    },
+    "src/paid_fallback/ledger_admission.cpp": {
+      "status": "reviewed",
+      "note": "Admission and release use CAS snapshots and module-owned KV; explicit override deletion uses joined member operations.",
+      "sites": [
+        {
+          "lines": "91-142,144-197,201-266",
+          "kind": "iterator, read batches, and commit ownership",
+          "verdict": "SAFE",
+          "reason": "Admission and release read the globally retained production KV, whose guarded get also retains native storage independently. Transaction and tuple/value owners remain live across their waits."
+        },
+        {
+          "lines": "271-320,324-386",
+          "kind": "deletion, retry, and request update ownership",
+          "verdict": "SAFE",
+          "reason": "The override store, row and transaction handles remain in the joined frames. The deletion scans retain individual iterator owners through next."
+        }
+      ]
+    },
+    "src/paid_fallback/ledger_backfill.cpp": {
+      "status": "reviewed",
+      "note": "Backfill and reconciliation use serialized leases and owned scan state. One read batch accepts an externally owned store.",
+      "sites": [
+        {
+          "lines": "119-450",
+          "kind": "cursor, scan, and transaction ownership",
+          "verdict": "SAFE",
+          "reason": "Frames retain the shared KV and local list/transaction handles. Progress is shared by value and row and cursor references point into private snapshots."
+        },
+        {
+          "lines": "451-457",
+          "kind": "backfill predicate KV fan-out receiver",
+          "verdict": "DEFECT",
+          "reason": "A rejecting state or cursor get can unwind the backfill while a sibling using an injected KV receiver is still pending. A caller that transferred the last shared KV owner leaves that sibling with a dead receiver. Wrap each of the three virtual reads in an owning child."
+        },
+        {
+          "lines": "458-527,530-594,597-648",
+          "kind": "predicate, lease, and reconciliation awaits",
+          "verdict": "SAFE",
+          "reason": "Scans and settlement join frame-owned candidates, stores and log maps. deferAll itself starts a child with a KV owner for each entry. Nested virtual read fan-outs are reviewed in ledger_settlement.cpp."
+        },
+        {
+          "lines": "652-792,794-806",
+          "kind": "backfill driver and single-flight callbacks",
+          "verdict": "SAFE",
+          "reason": "The worker owns KV and progress through its leases. The scheduled reactions have no captures and pass the resolved KV by value to the worker."
+        },
+        {
+          "lines": "808-1074",
+          "kind": "public reconciliation and queue awaits",
+          "verdict": "SAFE",
+          "reason": "Keys, leases, override handles, and row lists remain in the frame or become child values. Iteration uses live local snapshots and each queue/commit call is joined."
+        }
+      ]
+    },
+    "src/paid_fallback/ledger_settlement.cpp": {
+      "status": "reviewed",
+      "note": "Settlement keeps transaction values and cursor rows local. Directly injected store receivers need ownership in each fail-fast read child.",
+      "sites": [
+        {
+          "lines": "99-223",
+          "kind": "leased scan, preparation, and commit awaits",
+          "verdict": "SAFE",
+          "reason": "KV, pending rows, and transaction handles are coroutine parameters or locals alive through each awaited operation."
+        },
+        {
+          "lines": "225-260,388-445",
+          "kind": "request-bound settlement against global KV",
+          "verdict": "SAFE",
+          "reason": "The production store has a module owner and each guarded get also retains an inner native store. Durable settlement inputs are copied before the joins."
+        },
+        {
+          "lines": "266-271,322-327",
+          "kind": "deferral and settlement KV fan-outs",
+          "verdict": "DEFECT",
+          "reason": "A rejecting virtual read can end deferral or settlement while a sibling coroutine get from an injected store is pending. After the last public caller releases KV the sibling can use its dead receiver. Give each parallel read its own store owner."
+        },
+        {
+          "lines": "272-296,299-314,328-386",
+          "kind": "row selection, provider log, and settlement CAS",
+          "verdict": "SAFE",
+          "reason": "Tuple alternatives refer to named local await results, and rollup and commit inputs are owned by their respective child frames."
+        }
+      ]
+    },
+    "src/paid_fallback/ledger_state.cpp": {
+      "status": "reviewed",
+      "note": "The ledger view functions retain a store and each reader/queue receiver through joined operations.",
+      "sites": [
+        {
+          "lines": "64-128",
+          "kind": "store, pending iterator, and enqueue owner",
+          "verdict": "SAFE",
+          "reason": "The frame retains KV and the list handle while stepping. The borrowed KvEnqueue interface is obtained from the KV it owns through send completion."
+        },
+        {
+          "lines": "129-219,221-320",
+          "kind": "ledger projections and cursor storage",
+          "verdict": "SAFE",
+          "reason": "Each scan owns its iterator and accumulators. Awaited row values and readable request/pending snapshots remain local."
+        }
+      ]
+    },
+    "src/paid_fallback/ledger_stats.cpp": {
+      "status": "reviewed",
+      "note": "Stats merges keep their transform closure and snapshot data in the writer frame.",
+      "sites": [
+        {
+          "lines": "86-107,246-295",
+          "kind": "joined merge closure and commit",
+          "verdict": "SAFE",
+          "reason": "The transform owns scalar/string captures and consumes each local row synchronously. KV and the AtomicOperation live through each commit."
+        },
+        {
+          "lines": "346-430",
+          "kind": "growth scan and iterator",
+          "verdict": "SAFE",
+          "reason": "Growth reads retain the list iterator, store handle and result accumulators while stepping."
+        }
+      ]
+    },
+    "src/paid_fallback/removed_provider.cpp": {
+      "status": "reviewed",
+      "note": "Retired provider compatibility has synchronous implementation and immutable literals.",
+      "sites": []
+    },
+    "src/paid_fallback/rollups.cpp": {
+      "status": "reviewed",
+      "note": "Rollup writes and listing use shared KV and independent local cursors.",
+      "sites": [
+        {
+          "lines": "42-75,76-100",
+          "kind": "CAS and listing ownership",
+          "verdict": "SAFE",
+          "reason": "The frame keeps KV, the AtomicOperation and its list iterator alive through awaited commits or reads."
+        }
+      ]
+    },
+    "src/paid_fallback/routing.cpp": {
+      "status": "reviewed",
+      "note": "The waterfall keeps one borrowed telemetry referent through serial provider attempts. Callback and accounting operations retain their required owners.",
+      "sites": [
+        {
+          "lines": "38-118",
+          "kind": "primary hooks, telemetry and cancellation",
+          "verdict": "SAFE",
+          "reason": "The request's waiting frame retains context and the owned fetch options retain both hooks, which are used during joined dispatch. Bookkeeping owns reservation records."
+        },
+        {
+          "lines": "120-200",
+          "kind": "paid attempts, deadline, and provider iteration",
+          "verdict": "SAFE",
+          "reason": "The provider reference refers to a private immutable vector and the task inputs are copied. The deadline callback is guarded and the provider fetch is joined before returning."
+        },
+        {
+          "lines": "214-278",
+          "kind": "delivery and admission handler joins",
+          "verdict": "SAFE",
+          "reason": "The response recorder owns its reservation and response copies. Synchronous rejectAdmission ends with the frame that owns the other routing snapshots and borrows the live caller context."
+        }
+      ]
+    },
+    "src/provider/anthropic_chat_responses.cpp": {
+      "status": "reviewed",
+      "note": "Claude Chat projection hands owned frame and stream state to the generator and to its buffered reader.",
+      "sites": [
+        {
+          "lines": "353-445",
+          "kind": "generator inputs, iterator and event vectors",
+          "verdict": "SAFE",
+          "reason": "The generator body owns response/options, and the inner iterator and emitted byte buffers stay live through yield. The reference-capturing projections are synchronous, local helpers."
+        },
+        {
+          "lines": "446-518",
+          "kind": "translated stream callbacks and cancellation",
+          "verdict": "SAFE",
+          "reason": "Pull and cancel tasks take shared state by value and the source algorithms retain their closures across a join. Controller is weak and reader buffers are owned."
+        },
+        {
+          "lines": "519",
+          "kind": "direct await of aggregate body-read options",
+          "verdict": "DEFECT",
+          "reason": "The bounded-reader helper is a coroutine taking an owning aggregate by value. Passing the aggregate in the awaited expression violates PORTING.md's GCC 12.2 rule. Construct a named task before awaiting it."
+        }
+      ]
+    },
+    "src/provider/anthropic_chat_stream.cpp": {
+      "status": "reviewed",
+      "note": "Framing and response bytes live in the generator, with owned watchdog and reader cancellation state.",
+      "sites": [
+        {
+          "lines": "114-138",
+          "kind": "read/abort race",
+          "verdict": "SAFE",
+          "reason": "The executor is synchronous, the installed listener locks weak signal state and reader.readPromise owns its I/O state even when it loses the race."
+        },
+        {
+          "lines": "156-220",
+          "kind": "generator, watchdog and cancellation",
+          "verdict": "SAFE",
+          "reason": "The generator owns its reader and input response. Its chunk borrow points into the local read result across the yield. Abort and timeout callbacks copy their handles and normal cleanup or timer-queue teardown drops the ownership edges."
+        }
+      ]
+    },
+    "src/provider/anthropic_replay.cpp": {
+      "status": "reviewed",
+      "note": "Replay validation, identity and cache maintenance are synchronous. Borrowed JSON blocks and cache iterators are consumed in the corresponding call.",
+      "sites": []
+    },
+    "src/provider/anthropic_response_wire.cpp": {
+      "status": "reviewed",
+      "note": "The Responses writer's callable bundle is synchronous.",
+      "sites": [
+        {
+          "lines": "231-345",
+          "kind": "writer and output projection state",
+          "verdict": "SAFE",
+          "reason": "The writer callables own their state and synchronously copy event or tool values, without a state-to-callable back-reference."
+        }
+      ]
+    },
+    "src/provider/anthropic_responses.cpp": {
+      "status": "reviewed",
+      "note": "Native Messages parsing uses a per-stream generator and weak abort signal access. The normalizer has direct aggregate awaits requiring task naming.",
+      "sites": [
+        {
+          "lines": "551-575",
+          "kind": "read and abort race",
+          "verdict": "SAFE",
+          "reason": "The synchronous setup installs a weak signal listener and independent resolvers. Both branches retain operation state after the race settles."
+        },
+        {
+          "lines": "644-719",
+          "kind": "watchdog, frame borrow, and reader cancellation",
+          "verdict": "SAFE",
+          "reason": "ReaderState and the native read result remain live through yield. The callback receives its own reader/cause state, and cleanup or timer shutdown releases the timer edge."
+        },
+        {
+          "lines": "721-771,805,820-852,864-876",
+          "kind": "translation generator and source algorithms",
+          "verdict": "SAFE",
+          "reason": "Frame and translated buffer values stay local. Pull and cancel own the shared translation state, and detached body cancel owns stream operation state."
+        },
+        {
+          "lines": "779,857,880",
+          "kind": "direct awaits of by-value aggregates",
+          "verdict": "DEFECT",
+          "reason": "The bounded-body reads and native error normalization await coroutine calls with owning option aggregates directly in the expression. GCC 12.2's documented pattern can miscompile their destruction. Name each task before awaiting."
+        }
+      ]
+    },
+    "src/provider/capacity.cpp": {
+      "status": "reviewed",
+      "note": "Capacity refresh uses value snapshots, leases and independently owned sampling work.",
+      "sites": [
+        {
+          "lines": "55-127,203-275",
+          "kind": "KV options, Codex fetch, and Claude paired reads",
+          "verdict": "SAFE",
+          "reason": "Each task owns account, fetch, context and option data. Both quota/health branches and their reaction callbacks carry their own inputs."
+        },
+        {
+          "lines": "283-327,346-417",
+          "kind": "account and provider fail-fast fan-outs",
+          "verdict": "SAFE",
+          "reason": "Each slot or provider task receives its own account, options, fetch and signal values. The result tuple is named and remains live through routing observation recording."
+        },
+        {
+          "lines": "539-705,723-769",
+          "kind": "lease, comparison and history scan waits",
+          "verdict": "SAFE",
+          "reason": "The parent retains KV and transaction state. Comparison gets join through allSettled, and fail-fast history children themselves take KV ownership."
+        },
+        {
+          "lines": "772-777",
+          "kind": "borrowed CapacityReads",
+          "verdict": "SAFE",
+          "reason": "Both refresh and persisted-view callers wait while their local CapacityReads snapshot lives, and the nested merge receives copied history/events."
+        },
+        {
+          "lines": "781-834,854-871,914-1012,1014-1148",
+          "kind": "refresh publication and admin view awaits",
+          "verdict": "SAFE",
+          "reason": "Each child owns its rows, input handles and option snapshots. View assembly keeps the shared context, and each parallel child owns the KV and inputs it uses."
+        }
+      ]
+    },
+    "src/provider/capacity_analytics.cpp": {
+      "status": "reviewed",
+      "note": "Capacity analytics read and write via local snapshots.",
+      "sites": [
+        {
+          "lines": "139-187",
+          "kind": "CAS and remote row iteration",
+          "verdict": "SAFE",
+          "reason": "KV, the AtomicOperation and list cursor remain in the waiting frames, and sorting follows the scan."
+        }
+      ]
+    },
+    "src/provider/capacity_contract.cpp": {
+      "status": "reviewed",
+      "note": "Contract parsing and JSON conversion are synchronous. Variant visitor references are confined to each call.",
+      "sites": []
+    },
+    "src/provider/capacity_events.cpp": {
+      "status": "reviewed",
+      "note": "Event persistence and scans retain their store and cursor owners. Event sampling receives a copied timestamp.",
+      "sites": [
+        {
+          "lines": "54-64,79-144,152-204",
+          "kind": "KV write and list awaits",
+          "verdict": "SAFE",
+          "reason": "The task owns KV, the candidate event and any iterator or AtomicOperation through its awaited use."
+        },
+        {
+          "lines": "212-221",
+          "kind": "event-triggered deferred sampling",
+          "verdict": "SAFE",
+          "reason": "The reaction owns its timestamp and returns a task with owned sampling options. The rejection reaction is stateless."
+        },
+        {
+          "lines": "296-451",
+          "kind": "record and event-list driver awaits",
+          "verdict": "SAFE",
+          "reason": "Each list owns its cursor and result vector. Historical backfill writes and separate root reads keep their argument copies and store live."
+        }
+      ]
+    },
+    "src/provider/capacity_history.cpp": {
+      "status": "reviewed",
+      "note": "History scan and recovery use copied snapshots.",
+      "sites": [
+        {
+          "lines": "183-205,320-339,357-385",
+          "kind": "row scan, event persistence and recovery",
+          "verdict": "SAFE",
+          "reason": "Store, iterator, snapshots and event lists remain local across the joined operations, and source pointers are used only against live local data."
+        }
+      ]
+    },
+    "src/provider/capacity_parse.cpp": {
+      "status": "reviewed",
+      "note": "Capacity schema consumers return owned rows. Only the final stored snapshot lookup suspends.",
+      "sites": [
+        {
+          "lines": "424-435",
+          "kind": "snapshot read",
+          "verdict": "SAFE",
+          "reason": "The frame owns KV and the received row, with field views consumed synchronously by the local parser."
+        }
+      ]
+    },
+    "src/provider/capacity_rollups.cpp": {
+      "status": "reviewed",
+      "note": "Rollup transforms consume local snapshots synchronously and sorted listing owns its cursor.",
+      "sites": [
+        {
+          "lines": "325-349",
+          "kind": "rollup list iteration",
+          "verdict": "SAFE",
+          "reason": "The store and unique iterator are frame values through next and sorting uses the collected copies."
+        }
+      ]
+    },
+    "src/provider/cerebras.cpp": {
+      "status": "reviewed",
+      "note": "Cerebras Chat wire normalization is synchronous. Its request owns options through the preheader send.",
+      "sites": [
+        {
+          "lines": "655-733",
+          "kind": "fetch callback, admission and deadline",
+          "verdict": "SAFE",
+          "reason": "The options and fetcher stay live during awaited dispatch. The timer captures its controller and is cleared by ScopeExit."
+        }
+      ]
+    },
+    "src/provider/cerebras_handlers.cpp": {
+      "status": "reviewed",
+      "note": "Chat reads the bounded complete upstream body before returning a buffered or replay response.",
+      "sites": [
+        {
+          "lines": "98-148,153-215",
+          "kind": "buffered handler, context, and callback borrows",
+          "verdict": "SAFE",
+          "reason": "The envelope joins the handler with live telemetry, fetch options retain its callbacks, and the captured bytes/results and replay data are owned values."
+        }
+      ]
+    },
+    "src/provider/cerebras_rate_limits.cpp": {
+      "status": "reviewed",
+      "note": "Rate-limit mapping is synchronous and returns owning values.",
+      "sites": []
+    },
+    "src/provider/cerebras_responses.cpp": {
+      "status": "reviewed",
+      "note": "Responses uses a joined buffered Chat result with synchronous projection.",
+      "sites": [
+        {
+          "lines": "91-117,119-170",
+          "kind": "borrowed telemetry and buffered dispatch",
+          "verdict": "SAFE",
+          "reason": "The route joins dispatch while its context remains alive, and upstream response, bytes and translated values belong to their frames."
+        }
+      ]
+    },
+    "src/provider/claude_capacity_history.cpp": {
+      "status": "reviewed",
+      "note": "Capacity history has separate owning per-rollup reads and a local list cursor.",
+      "sites": [
+        {
+          "lines": "229-259,413-427",
+          "kind": "hash and rollup-key arithmetic",
+          "verdict": "SAFE",
+          "reason": "The event, window selector, KV and point are owned values. The local projection sees only the frame-owned event."
+        },
+        {
+          "lines": "493-527",
+          "kind": "fail-fast rollup fan-outs and commit",
+          "verdict": "SAFE",
+          "reason": "Each reader owns KV and the point/meter input, so a failed sibling does not release its receiver. AtomicOperation joins its commit."
+        },
+        {
+          "lines": "530-586",
+          "kind": "history iterator and close",
+          "verdict": "SAFE",
+          "reason": "The owning cursor and frame-local points remain live across next or return, and sorting takes place after iteration."
+        }
+      ]
+    },
+    "src/provider/claude_capacity_rollups.cpp": {
+      "status": "reviewed",
+      "note": "Capacity and usage lists use local cursors and typed point snapshots.",
+      "sites": [
+        {
+          "lines": "236-267,269-278,355-397",
+          "kind": "list iteration, keying and cursor cleanup",
+          "verdict": "SAFE",
+          "reason": "KV, list cursor, each row and the hash task's point stay live through next, return and joined validation."
+        }
+      ]
+    },
+    "src/provider/claude_code.cpp": {
+      "status": "reviewed",
+      "note": "Claude Messages transport owns fetch callbacks and request state. Its preheader abort listener has a teardown cycle.",
+      "sites": [
+        {
+          "lines": "100-119",
+          "kind": "Claude abort listener ownership cycle",
+          "verdict": "DEFECT",
+          "reason": "The signal owns an abort callback that retains the same signal. If the transport and abort are both pending when the wait is destroyed, the frame drops dispose without calling it. Capture weak signal state or install a removal guard before suspension."
+        },
+        {
+          "lines": "137-158,213-289",
+          "kind": "preheader transport, fetch branch and error body",
+          "verdict": "SAFE",
+          "reason": "The provider options and hooks are frame values. rt::Fetch::keepAlive owns the transport callable if abort wins. The running timer owns its controller and normal paths clear it."
+        },
+        {
+          "lines": "426-496,498-624",
+          "kind": "workspace discovery, retries and normalization",
+          "verdict": "SAFE",
+          "reason": "The source frame owns workspace, native request, credentials and attempt snapshots. Before-dispatch closures remain live through joined attempts, and the returned normalizer stream has its own options."
+        }
+      ]
+    },
+    "src/provider/claude_code_access.cpp": {
+      "status": "reviewed",
+      "note": "Access policy helpers consume environment/row inputs synchronously and join their writes.",
+      "sites": [
+        {
+          "lines": "32-41,59-86",
+          "kind": "borrowed store and owning arguments",
+          "verdict": "SAFE",
+          "reason": "The storePolicy coroutine borrows KV from an awaited admin caller. Public forwarders copy allowed key IDs synchronously, and their result tasks keep the JSON values."
+        }
+      ]
+    },
+    "src/provider/claude_code_accounts.cpp": {
+      "status": "reviewed",
+      "note": "Account roster state is snapshotted at each read and mutation.",
+      "sites": [
+        {
+          "lines": "62-71,111-131,173-214",
+          "kind": "credential hash and account update snapshots",
+          "verdict": "SAFE",
+          "reason": "The reference-taking fingerprint is a synchronous task factory that creates owned digest input. The roster and account update frames retain their copied records."
+        },
+        {
+          "lines": "263-372,375-441",
+          "kind": "KV read, account generation, and CAS waits",
+          "verdict": "SAFE",
+          "reason": "Frames retain KV, typed rows and transaction owners. Borrowed account data is consumed synchronously or copied into each child operation."
+        }
+      ]
+    },
+    "src/provider/claude_code_credentials.cpp": {
+      "status": "reviewed",
+      "note": "Credential and workspace lookup accepts owned store and environment callables.",
+      "sites": [
+        {
+          "lines": "160-216,222-248,279-319",
+          "kind": "credential and workspace KV joins",
+          "verdict": "SAFE",
+          "reason": "The frames retain KV and local roster, state and environment owners. The recursive reload copies the KV handle and no pointer into the prior result crosses the recursion."
+        }
+      ]
+    },
+    "src/provider/claude_code_models.cpp": {
+      "status": "reviewed",
+      "note": "Catalog fetch keeps the active task and its cache object alive independently of registry replacement.",
+      "sites": [
+        {
+          "lines": "123-166,188-249",
+          "kind": "bounded page read, credential and workspace resolution",
+          "verdict": "SAFE",
+          "reason": "Response, reader, scoped account and payload values live in each joined frame. The identity hash owns its material."
+        },
+        {
+          "lines": "252-290,353-399,403-425",
+          "kind": "single-flight cache and publication",
+          "verdict": "SAFE",
+          "reason": "Refresh owns a shared cache object and re-finds registry membership after suspension. The caller waits on a copied promise, and Loop teardown clears pending reactions and their frame owners."
+        },
+        {
+          "lines": "301-351",
+          "kind": "catalog pagination and fetch",
+          "verdict": "SAFE",
+          "reason": "The discovery frame owns the fetch callable and parsed page, and each body cancel is joined under its live handle."
+        }
+      ]
+    },
+    "src/provider/claude_code_quota.cpp": {
+      "status": "reviewed",
+      "note": "Quota rows and health observations keep independent store and snapshot owners.",
+      "sites": [
+        {
+          "lines": "400-425",
+          "kind": "accepted observation recorder",
+          "verdict": "SAFE",
+          "reason": "The joined recorder receives KV and the observation by value and the function pointer is copied before invoking."
+        },
+        {
+          "lines": "544-555,624-715",
+          "kind": "quota CAS, retry, and completion",
+          "verdict": "SAFE",
+          "reason": "Each state and row is a local snapshot. Receiver, keys and AtomicOperation stay live through joined reads, recursion and writes."
+        }
+      ]
+    },
+    "src/provider/claude_code_usage.cpp": {
+      "status": "reviewed",
+      "note": "Usage fetch keeps the credential, fetch function, options, and response in its task frame.",
+      "sites": [
+        {
+          "lines": "27-41,128-196",
+          "kind": "usage request and buffered read",
+          "verdict": "SAFE",
+          "reason": "Parser input and response handles are frame-owned. Usage hooks are copied from owned options and the fetch is joined."
+        }
+      ]
+    },
+    "src/provider/claude_code_usage_refresh.cpp": {
+      "status": "reviewed",
+      "note": "The work and cleanup closures are owned correctly. Two KV await expressions contain the same direct aggregate temporary.",
+      "sites": [
+        {
+          "lines": "22-34,36-72",
+          "kind": "usage refresh task and capturing work coroutine",
+          "verdict": "SAFE",
+          "reason": "rt::async retains the work closure and its KV, binding, clock and options captures through the refreshed usage write."
+        },
+        {
+          "lines": "35,75",
+          "kind": "braced read options in co_await",
+          "verdict": "DEFECT",
+          "reason": "Each virtual get is awaited with an inline KvGetOptions aggregate. The port forbids that form in its GCC 12 comparison profile, even with this trivial value. Name the options and get task before the await."
+        },
+        {
+          "lines": "74,76-83",
+          "kind": "cleanup coroutine closure",
+          "verdict": "SAFE",
+          "reason": "withFinally owns the cleanup callback throughout the final read/commit, including when the main work rejects."
+        }
+      ]
+    },
+    "src/provider/claude_code_usage_schema.cpp": {
+      "status": "reviewed",
+      "note": "Usage and rate-limit schemas parse and serialize synchronously. Field views do not escape their source rows.",
+      "sites": []
+    },
+    "src/provider/health.cpp": {
+      "status": "reviewed",
+      "note": "Provider observations are serialized per identity. Clock injection and the injectable KV boundary each have a distinct owner hazard.",
+      "sites": [
+        {
+          "lines": "120-151,173-180,292-331",
+          "kind": "queued writes and promise reaction ownership",
+          "verdict": "SAFE",
+          "reason": "The continuation and persistence frame own transition data, KV and transaction. The finalizer re-finds its queue entry, and loop teardown clears the registered promise reactions."
+        },
+        {
+          "lines": "158-172",
+          "kind": "reentrant clock callback and queue entry",
+          "verdict": "DEFECT",
+          "reason": "With a pending distinct transition, an injected clock can synchronously clear the transition map via the test reset hook. The call then reads current->tail through a freed node. Re-find the entry after invoking the clock."
+        },
+        {
+          "lines": "254-266",
+          "kind": "KV receiver in fail-fast read fan-out",
+          "verdict": "DEFECT",
+          "reason": "One virtual get can reject and drop the reader's KV owner while a sibling waits. If the fixture replaces the global KV and the sibling borrows its receiver, resumption reads a dead object. Give each read an owning child; the production guard and native store retain their own receiver state."
+        },
+        {
+          "lines": "333-369",
+          "kind": "forwarded view reads and binding lifetime",
+          "verdict": "SAFE",
+          "reason": "Factories copy their inputs before returning. The Claude reader retains its binding and local KV while waiting on the owning health-view and account-entry lookups."
+        }
+      ]
+    },
+    "src/provider/lithos.cpp": {
+      "status": "reviewed",
+      "note": "Wire normalization uses synchronous views. The stream generator and transport own separate read and dispatch state.",
+      "sites": [
+        {
+          "lines": "405-459,607-615",
+          "kind": "borrowed parser projections",
+          "verdict": "SAFE",
+          "reason": "Each message field pointer and frame substring is consumed in the synchronous caller before the source object or buffer changes."
+        },
+        {
+          "lines": "636-666",
+          "kind": "read/abort race callbacks",
+          "verdict": "SAFE",
+          "reason": "The installed listener captures only a Promise rejector and a weak signal. The racing read uses reader-owned request state, and normal and error returns remove the listener."
+        },
+        {
+          "lines": "680-711,722-756,975-982",
+          "kind": "generator session, pending read and detached finish",
+          "verdict": "SAFE",
+          "reason": "The generator and each pending nextFrame own the stream session. The constructor callback forwards copies into the frame, and reader.cancel obtains its own stream state before the reader lock is released."
+        },
+        {
+          "lines": "809-876",
+          "kind": "admission and fetch hooks, deadline callback",
+          "verdict": "SAFE",
+          "reason": "The by-value options hold the hooks through their joined calls. Fetch retains its callable, and the deadline timer owns its controller until the frame guard clears it."
+        }
+      ]
+    },
+    "src/provider/lithos_handlers.cpp": {
+      "status": "reviewed",
+      "note": "Immediate dispatch joins the caller. A streamed retry copies telemetry and keeps the cancellation controller in the pending task.",
+      "sites": [
+        {
+          "lines": "58-110,123-151,184-222",
+          "kind": "joined dispatch and diagnostics",
+          "verdict": "SAFE",
+          "reason": "The caller retains telemetry while the local error, admission, wait and HTTP body tasks run. The elapsed time callback owns its shared result."
+        },
+        {
+          "lines": "224-250,255-269",
+          "kind": "pending retry and cancellation",
+          "verdict": "SAFE",
+          "reason": "resumeLithosDispatch takes an owned input with a copied UsageContext and controller. The stored raw context aliases that owned copy and the returned cancellation callback locks the controller weakly."
+        },
+        {
+          "lines": "280-315,337-350,357-399",
+          "kind": "handler waits and deferred stream transfer",
+          "verdict": "SAFE",
+          "reason": "The handlers and joined buffered reader retain their arguments. Stream construction copies telemetry and models, and the pending reaction and getter share ownership of the chosen model."
+        }
+      ]
+    },
+    "src/provider/lithos_models.cpp": {
+      "status": "reviewed",
+      "note": "The catalog coalesces through a module-owned promise and publishes an owning snapshot.",
+      "sites": [
+        {
+          "lines": "32-52",
+          "kind": "catalog fetch and buffered decode",
+          "verdict": "SAFE",
+          "reason": "The task owns options, timeout/signal handles, fetch function, key and response while waiting. The data view is used synchronously against the named JSON."
+        },
+        {
+          "lines": "60-78",
+          "kind": "coalesced promise and publication guard",
+          "verdict": "SAFE",
+          "reason": "wait() copies the promise state before the registry can change, and the scope guard captures the exact promise identity rather than a reference into the optional."
+        }
+      ]
+    },
+    "src/provider/lithos_rate_limits.cpp": {
+      "status": "reviewed",
+      "note": "Rate-limit parsing and failover-window lookups finish synchronously. The retry promise links a timer and once listener by weak back-references.",
+      "sites": [
+        {
+          "lines": "197-227",
+          "kind": "failover-window map references",
+          "verdict": "SAFE",
+          "reason": "Lookups and writes consume map entries synchronously without an intervening suspension or callback."
+        },
+        {
+          "lines": "255-292",
+          "kind": "rate-limit retry timer, listener, and executor",
+          "verdict": "SAFE",
+          "reason": "newPromise runs the borrowing executor inline. The timer owns the wait state and signal, and the once listener keeps weak back-references and its own elapsed callback and rejector."
+        }
+      ]
+    },
+    "src/provider/lithos_streams.cpp": {
+      "status": "reviewed",
+      "note": "The adapter forwards owned frames through the shared relay and SSE keepalive wrappers.",
+      "sites": [
+        {
+          "lines": "20-33",
+          "kind": "generator body and frame forwarding",
+          "verdict": "SAFE",
+          "reason": "The generator closure forwards its copied inputs into an owning task. forAwait retains the iterable and callback, and the callback returns an owned provider frame."
+        },
+        {
+          "lines": "44-78,110-125",
+          "kind": "provider adapter and deferred model callback",
+          "verdict": "SAFE",
+          "reason": "The framing adapter owns the model getter, uses it synchronously and returns a generator owning the resolved model. The relay copies telemetry and pending source state before returning."
+        }
+      ]
+    },
+    "src/provider/metered.cpp": {
+      "status": "reviewed",
+      "note": "Metered transport and metadata use owning fetch and body tasks. Its abort race retains the registered signal, and the coalescing cell can survive its abandoned loop.",
+      "sites": [
+        {
+          "lines": "193-230",
+          "kind": "abort race listener ownership cycle",
+          "verdict": "DEFECT",
+          "reason": "A pending catalog or billing request registers a listener whose own signal and finish captures keep the registering signal alive. Loop teardown can discard both operation reactions and the timeout before either branch removes the listener. Use weak signal ownership inside the listener and its finish helper."
+        },
+        {
+          "lines": "243-274,334-365,462-487,611-661,777-884",
+          "kind": "provider fetch, admission and body waits",
+          "verdict": "SAFE",
+          "reason": "Frames own the request data, hooks, body and response handles. rt::Fetch and Response::json retain the underlying operations if their abort race settles first. The header timer is scoped to dispatch."
+        },
+        {
+          "lines": "684-707,712-717",
+          "kind": "coalescing cell after an abandoned wait",
+          "verdict": "DEFECT",
+          "reason": "Destroying a fixture Loop with an unresolved coalesced discovery destroys its waiting frame before the explicit global clear. A later Loop in the same process can join that old Promise with no producer. Use an identity-checked scope guard as in lithos_models.cpp."
+        },
+        {
+          "lines": "731-771",
+          "kind": "pricing fail-fast fan-out",
+          "verdict": "SAFE",
+          "reason": "Each fetchMetadataJson child owns its fetcher, URL, signal and error strings, and settled envelope references are to the local result vector."
+        }
+      ]
+    },
+    "src/provider/openrouter.cpp": {
+      "status": "reviewed",
+      "note": "Catalog and transport requests own their parameters, and the public reference-taking entry points are synchronous forwarders.",
+      "sites": [
+        {
+          "lines": "18-32,177-185",
+          "kind": "model lookup refresh and rejection continuation",
+          "verdict": "SAFE",
+          "reason": "The child owns the model string and a resolver function pointer. The rejection reaction has no captures, and warm resolution uses fresh snapshots."
+        },
+        {
+          "lines": "34-79,81-147",
+          "kind": "dispatch hooks, deadline and body tasks",
+          "verdict": "SAFE",
+          "reason": "Options own the hooks through invocation. Fetch and body operations retain their own state, and detached error-body cancellation keeps its stream state and a stateless rejection reaction."
+        },
+        {
+          "lines": "151-175,187-207",
+          "kind": "catalog snapshots and reference-taking factories",
+          "verdict": "SAFE",
+          "reason": "Catalog scans retain a shared snapshot during synchronous iteration. The reference-taking entry points construct owned body and options arguments before returning the child task."
+        }
+      ]
+    },
+    "src/provider/openrouter_handlers.cpp": {
+      "status": "reviewed",
+      "note": "Both handlers await dispatch and buffered reads in the request lifetime. The stream adapters take over copied telemetry.",
+      "sites": [
+        {
+          "lines": "25-60",
+          "kind": "borrowed JSON walk",
+          "verdict": "SAFE",
+          "reason": "Every pending pointer refers to the immutable local JSON root and is consumed before the synchronous helper returns."
+        },
+        {
+          "lines": "74-97,125-134,157-166",
+          "kind": "transport closure and telemetry borrow",
+          "verdict": "SAFE",
+          "reason": "The dispatch frame owns the attempt callable through its awaited result. Handler locals and the request owner's UsageContext survive dispatch and the buffered capture, and stream factories copy telemetry."
+        },
+        {
+          "lines": "110-140,142-176",
+          "kind": "buffered body, status views and usage joins",
+          "verdict": "SAFE",
+          "reason": "The handlers retain request snapshots and buffered payloads. The status view refers to the local payload, and bounded reads use a named task."
+        }
+      ]
+    },
+    "src/provider/openrouter_request_controls.cpp": {
+      "status": "reviewed",
+      "note": "Extension selection copies its source body at the public API boundary.",
+      "sites": [
+        {
+          "lines": "16-30",
+          "kind": "reference-taking task factory and catalog waits",
+          "verdict": "SAFE",
+          "reason": "The synchronous wrapper copies the body into the task. Provider selection and model resolution return value snapshots and the model string is a frame local."
+        }
+      ]
+    },
+    "src/provider/openrouter_streams.cpp": {
+      "status": "reviewed",
+      "note": "OpenRouter Chat owns its parser session and Responses passes owned telemetry into the shared proxy.",
+      "sites": [
+        {
+          "lines": "112-135",
+          "kind": "read/abort race listener",
+          "verdict": "SAFE",
+          "reason": "The executor runs inline. The signal owns a callback with a weak signal reference, and the reader request and rejector stay valid when their branch loses."
+        },
+        {
+          "lines": "137-173,194-213,258-264",
+          "kind": "stream session, watchdog and yielded frame",
+          "verdict": "SAFE",
+          "reason": "The generator and each pending nextFrame own the session. The timer owns a controller copy, and detached cancellation owns its stream operation and a stateless rejection callback."
+        },
+        {
+          "lines": "218-243,266-312",
+          "kind": "relay and proxy callbacks",
+          "verdict": "SAFE",
+          "reason": "Stream construction copies the framing adapter and telemetry. Proxy callbacks keep shared context and owned request ID and signal values for their synchronous invocations."
+        }
+      ]
+    },
+    "src/provider/openrouter_web_tools.cpp": {
+      "status": "reviewed",
+      "note": "Tool projection uses synchronous views of live JSON and static tool names, then returns owning JSON.",
+      "sites": []
+    },
+    "src/provider/presentation.cpp": {
+      "status": "reviewed",
+      "note": "Presentation tables and JSON conversion are synchronous and return copies.",
+      "sites": []
+    },
+    "src/provider/removed_provider_circuit.cpp": {
+      "status": "reviewed",
+      "note": "The retired circuit returns settled promises with owned values and registers no asynchronous callbacks.",
+      "sites": []
+    },
+    "src/provider/removed_provider_telemetry.cpp": {
+      "status": "reviewed",
+      "note": "The retired telemetry hook returns an already settled promise without retaining its argument.",
+      "sites": []
+    },
+    "src/provider/selection.cpp": {
+      "status": "reviewed",
+      "note": "Provider selection reads and writes snapshots. Its in-flight token needs the same cleanup on frame destruction as on settlement.",
+      "sites": [
+        {
+          "lines": "82-96,102-107,181-204,258-262",
+          "kind": "store, hash and selection snapshot ownership",
+          "verdict": "SAFE",
+          "reason": "The frame owns KV through the joined child or virtual task. Hash and selection reads do not keep shared map entries across suspension."
+        },
+        {
+          "lines": "82-98,264-277",
+          "kind": "selection cache retains an abandoned load",
+          "verdict": "DEFECT",
+          "reason": "Destroying a fixture Loop while KV is pending destroys the load frame without executing its global reset. A later Loop can reuse the stranded Promise. Move the token-checked reset into a frame scope guard."
+        },
+        {
+          "lines": "149-176,238-252",
+          "kind": "selection views and synchronous predicate",
+          "verdict": "SAFE",
+          "reason": "Views are consumed while their caller-owned strings or KV values remain live. The predicate never leaves selectedCatalogEntryProviders."
+        }
+      ]
+    },
+    "src/provider/stream_relay.cpp": {
+      "status": "reviewed",
+      "note": "The relay copies telemetry, retains the upstream until late cancellation is handled, and preserves the existing loop-shutdown cleanup for the late-abort callback.",
+      "sites": [
+        {
+          "lines": "33-43,100-122",
+          "kind": "refusal buffer and detached body cancel",
+          "verdict": "SAFE",
+          "reason": "The refusal frame owns its response and parsed JSON. The relay copies context and signals, and cancelPromise retains the detached body operation."
+        },
+        {
+          "lines": "62-82,125-142",
+          "kind": "late downstream abort and pending response",
+          "verdict": "SAFE",
+          "reason": "The abort listener owns PendingCancellation and only a weak signal. The loop registry releases any callback-owned cycle at shutdown, and the pending upstream reaction owns relay state until settlement or loop teardown."
+        },
+        {
+          "lines": "158-256,323-435",
+          "kind": "member coroutines and awaited children",
+          "verdict": "SAFE",
+          "reason": "SourceAlgorithm retains the state-capturing pull closure while the member pulls run and join their children. They use named iterator and response copies, so cancellation can reset the relay's copies independently."
+        },
+        {
+          "lines": "259-270,437-458,465-474",
+          "kind": "cancel closure and detached generator return",
+          "verdict": "SAFE",
+          "reason": "The stream owns the source closures, cancellation is synchronous, and iterator return takes a separate generator state handle before spawning."
+        }
+      ]
+    },
+    "src/provider/surplus.cpp": {
+      "status": "reviewed",
+      "note": "The Surplus stream projection owns its event and body state. Its header abort race and catalog coalescing cell repeat the Metered teardown hazards.",
+      "sites": [
+        {
+          "lines": "238-281,618-649,713-802",
+          "kind": "transport, admission, and normalization owners",
+          "verdict": "SAFE",
+          "reason": "The catalog and request tasks own options, signal and response snapshots, Fetch retains its callable if the race is lost, and the native response normalizer copies stream options."
+        },
+        {
+          "lines": "318-354",
+          "kind": "abort race listener ownership cycle",
+          "verdict": "DEFECT",
+          "reason": "If the preheader fetch remains pending when its loop stops, the signal retains its abort listener and both signal and finish captures retain that signal. Loop teardown discards the timer and reactions without invoking finish. Make the listener and finish use weak signal state."
+        },
+        {
+          "lines": "466-553",
+          "kind": "generator yields, pull and cancel ownership",
+          "verdict": "SAFE",
+          "reason": "The body owns its source iterator and part state, and each next result and vector live through yield. Pull and cancel receive a shared state parameter and their generator operations own their state."
+        },
+        {
+          "lines": "675-698,703-708",
+          "kind": "coalescing cell after an abandoned wait",
+          "verdict": "DEFECT",
+          "reason": "Fixture loop destruction can destroy the suite's unfinished discovery waiter before the coalescing cell is reset. A later loop can join an old Promise with no producer. Use an identity-checked scope guard."
+        }
+      ]
+    },
+    "src/provider/surplus_claude_chat_request.cpp": {
+      "status": "reviewed",
+      "note": "Native Chat projection, replay lookups and cache policy transforms are synchronous. Returned values own JSON and tool names.",
+      "sites": [
+        {
+          "lines": "357-405,512-545",
+          "kind": "cache block projections",
+          "verdict": "SAFE",
+          "reason": "The temporary pointer lists refer into the caller's private message and tool containers, which stay structurally unchanged while the selected inner object is updated."
+        }
+      ]
+    },
+    "src/provider/surplus_claude_request.cpp": {
+      "status": "reviewed",
+      "note": "Native Messages projection copies JSON and names. Its reference and view parameters are synchronous.",
+      "sites": [
+        {
+          "lines": "452-505,632-672",
+          "kind": "cache block and token bounds borrows",
+          "verdict": "SAFE",
+          "reason": "Cache pointers refer to frame-local inputs while the synchronous call runs, and the local catalog token value stays in scope until its numeric value is copied."
+        }
+      ]
+    }
+  }
+}

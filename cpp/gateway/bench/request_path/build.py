@@ -31,6 +31,7 @@ def main():
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--boost", type=Path, required=True, help="Boost source root with staged static libraries")
     parser.add_argument("--cxx", default="g++")
+    parser.add_argument("--cc", default=os.environ.get("CC", "cc"))
     parser.add_argument("--ar", default="ar")
     parser.add_argument("--linker", default="mold", help="Linker for -fuse-ld, or 'default'")
     parser.add_argument("--jobs", type=int, default=len(os.sched_getaffinity(0)))
@@ -56,6 +57,7 @@ def main():
     simdjson = tools["simdjson_consumers"](vendors)
 
     version = output([args.cxx, "--version"]).splitlines()[0]
+    c_version = output([args.cc, "--version"]).splitlines()[0]
     options = ["-O2", "-g1", "-DNDEBUG", "-fno-omit-frame-pointer", "-mno-omit-leaf-frame-pointer"]
     warnings = ["-Wall", "-Wextra", "-Wshadow", "-Wconversion", "-Werror"]
     definitions = ["BOOST_JSON_NO_LIB", "BOOST_CONTAINER_NO_LIB", "BOOST_SYSTEM_NO_LIB",
@@ -70,8 +72,13 @@ def main():
         "  depfile = $out.d",
         "  deps = gcc",
         "  description = CXX $in",
+        "rule cc",
+        "  command = " + ninja_args([args.cc, "-std=c11", *options]) + " $flags -MMD -MF $out.d -c $in -o $out",
+        "  depfile = $out.d",
+        "  deps = gcc",
+        "  description = CC $in",
         "rule archive",
-        "  command = " + ninja_args([args.ar, "rcs"]) + " $out $in",
+        "  command = rm -f $out && " + ninja_args([args.ar, "rcs"]) + " $out $in",
         "rule link",
         "  command = " + ninja_args([args.cxx, *linker, "-pthread"]) + " -o $out $in " + ninja_args(["-l" + lib for lib in libraries]),
         "  description = LINK $out",
@@ -83,15 +90,24 @@ def main():
     def object_file(source, source_flags):
         path = Path("obj") / (source + ".o")
         (out / path.parent).mkdir(parents=True, exist_ok=True)
-        lines.append(f"build {ninja_path(path)}: cxx {ninja_path(gateway / source)}")
-        lines.append("  flags = " + ninja_args(source_flags))
+        rule = "cc" if source.endswith(".c") else "cxx"
+        lines.append(f"build {ninja_path(path)}: {rule} {ninja_path(gateway / source)}")
+        if source_flags:
+            lines.append("  flags = " + ninja_args(source_flags))
         return path
 
-    app = [object_file(source, flags + (tools["simdjson_flags"](gateway) if source in simdjson else [])) for source in sources]
+    include_flags = tools.get("include_flags", lambda _library, _gateway: [])
+    c_dialect_flags = tools.get("c_dialect_flags", lambda _source: [])
+    app = [object_file(source, flags + (tools["simdjson_flags"](gateway) if source in simdjson else []) +
+                       [flag for lib in tools["required"](vendors, [source]) for flag in include_flags(lib, gateway)])
+           for source in sources]
     archives = []
     for library in vendors:
-        obj = object_file(library.source, [])
-        lines.append(f"build {library.archive}: archive {ninja_path(obj)}")
+        # Benchmark snapshots predating multi-file vendors still use `source`.
+        members = library.sources if hasattr(library, "sources") else (library.source,)
+        objects = [ninja_path(object_file(source, include_flags(library, gateway) + c_dialect_flags(source)))
+                   for source in members]
+        lines.append(f"build {library.archive}: archive " + " ".join(objects))
         archives.append(library.archive)
     startup = object_file("runtime/startup.cpp", flags)
     targets = []
@@ -106,6 +122,7 @@ def main():
     (out / "profile-owner.json").write_text(json.dumps({
         "schema": "uos-gateway-profile-v1", "profile": "clang-release" if "clang" in version else "release",
         "sanitizer": None, "source_root": str(gateway), "workspace_root": str(root), "compiler": version,
+        "c_compiler": c_version,
         "flags": list(map(str, [*options, *flags])), "entrypoints": targets, "inventory": counts,
     }, indent=2) + "\n")
     print(f"Building {len(sources)} production sources plus {len(vendors)} libraries, startup and entrypoints", flush=True)

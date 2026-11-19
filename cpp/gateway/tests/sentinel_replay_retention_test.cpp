@@ -14,6 +14,7 @@
 #include "uos/sentinel/replay_observation.hpp"
 #include "uos/sentinel/replay_read.hpp"
 #include "uos/sentinel/replay_retention.hpp"
+#include "uos/sentinel/replay_retention_bootstrap.hpp"
 #include "uos/sentinel/replay_retention_schema.hpp"
 #include "uos/sentinel/replay_store.hpp"
 #include "uos/utils.hpp"
@@ -30,9 +31,12 @@
 #include "uos/rt/string.hpp"
 #include "uos/rt/test_async.hpp"
 #include "uos/rt/text_codec.hpp"
+#include "helpers/live_allocations.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <cstdio>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -485,7 +489,10 @@ namespace {
 
   std::string fingerprintFor(const std::string& tag) {
     std::string out;
-    for (const std::string& character : rt::codePointStrings(tag)) out += rt::numberToString(rt::mod(rt::charCodeAt(character, 0), 16), 16);
+    for (const std::string& character : rt::codePointStrings(tag)) {
+      const auto unit = static_cast<std::uint16_t>(rt::charCodeAt(character, 0));
+      out += "0123456789abcdef"[unit & 0x0f];
+    }
     return rt::slice(out + std::string(64, '0'), 0, 64);
   }
 
@@ -1434,10 +1441,12 @@ ASYNC_TEST("a status row admitted into an unbootstrapped ledger is counted exact
 
 namespace {
   SentinelReplayManifest legacyManifestFor(double index, double capturedAtMs, std::optional<std::string> requestId = std::nullopt) {
+    char hex[8];
+    const auto end = std::to_chars(hex, hex + sizeof hex, static_cast<std::uint32_t>(index), 16).ptr;
     return {
       .version = 1,
       .capture_id = "legacy-bootstrap-" + rt::numberToString(index),
-      .fingerprint = rt::padStart(rt::numberToString(index, 16), 64, "0"),
+      .fingerprint = rt::padStart(std::string(hex, end), 64, "0"),
       .case_group_digest = std::string(64, 'c'),
       .captured_at_ms = capturedAtMs,
       .expires_at_ms = capturedAtMs + SENTINEL_REPLAY_TTL_MS,
@@ -1534,6 +1543,28 @@ ASYNC_TEST("a bootstrapped legacy capture with an owner is evicted and releases 
   const rt::KvEntryMaybe<> unrelated = co_await kv.get(unrelatedKey);
   EXPECT_EQ(unrelated.value, preservedValue);
   kv.close();
+}
+
+ASYNC_TEST("completed replay owner index fills release their wait promises") {
+  const auto bootstrap = []() -> rt::Task<void> {
+    const Store store = openStore();
+    const double now = 1'701'100'000'000;
+    const auto manifest = legacyManifestFor(1, now);
+    const auto manifestKey = legacyManifestKey(manifest);
+    const rt::KvKey chunkKey{SENTINEL_REPLAY_CHUNK_PREFIX, manifest.capture_id, 0};
+    const rt::KvValue manifestValue(json::value_from(manifest));
+    const rt::KvValue chunk(rt::KvBytes(static_cast<std::size_t>(manifest.ciphertext_bytes), 0));
+    co_await store->set(manifestKey, manifestValue);
+    co_await store->set(chunkKey, chunk);
+    namespace sweep = uos::sentinel::replay_retention_bootstrap;
+    auto filling = sweep::bootstrapBeforeMutation(*store, TEST_BUDGET_BYTES, now + 1, 60'000);
+    const auto ledger = co_await std::move(filling);
+    ASSERT(ledger);
+    EXPECT(ledger->bootstrap_complete);
+    store->close();
+  };
+  auto checking = uos::tests::helpers::expectStableLiveAllocations(bootstrap, 128);
+  co_await std::move(checking);
 }
 
 ASYNC_TEST("legacy accounting materialization resumes across bootstrap batches without charging rows twice") {

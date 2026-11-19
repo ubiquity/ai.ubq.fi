@@ -195,12 +195,15 @@ namespace uos::rt::ws::detail {
     while (!queue_.empty() && !writing_ && !destroyed_) {
       Pending& front = queue_.front();
       if (front.offset < front.data.size()) {
+        const auto buffer = asio::buffer(front.data.data() + front.offset, front.data.size() - front.offset);
         boost::system::error_code error;
-        const std::size_t written = stream_.write_some(asio::buffer(front.data.data() + front.offset, front.data.size() - front.offset), error);
+        const std::size_t written = stream_.write_some(buffer, error);
         if (error == asio::error::would_block || error == asio::error::try_again) {
+          // Closing can clear queue_ before the completion releases the buffer.
           writing_ = true;
-          stream_.async_write_some(asio::buffer(front.data.data() + front.offset, front.data.size() - front.offset),
-                                   [self = shared_from_this()](const boost::system::error_code& failure, std::size_t count) { guarded([&] { self->onWritten(failure, count); }); });
+          stream_.async_write_some(buffer, [self = shared_from_this(), data = std::move(front.data)](const boost::system::error_code& failure, std::size_t count) mutable {
+            guarded([&] { self->onWritten(failure, count, std::move(data)); });
+          });
           return;
         }
         if (error) {
@@ -221,7 +224,7 @@ namespace uos::rt::ws::detail {
     if (queue_.empty() && !writing_ && writeEnded_ && !writeFinished_ && !destroyed_) finishEnd();
   }
 
-  void Socket::onWritten(const boost::system::error_code& error, std::size_t count) {
+  void Socket::onWritten(const boost::system::error_code& error, std::size_t count, Bytes data) {
     writing_ = false;
     if (destroyed_) return;
     if (error) {
@@ -231,6 +234,7 @@ namespace uos::rt::ws::detail {
     }
     if (auto activity = onActivity) activity();
     Pending& front = queue_.front();
+    front.data = std::move(data);
     front.offset += count;
     if (front.offset == front.data.size()) {
       Callback callback = std::move(front.callback);

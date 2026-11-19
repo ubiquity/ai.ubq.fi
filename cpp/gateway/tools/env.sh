@@ -6,6 +6,7 @@ UOS_SDK="${UOS_CPP_TOOLCHAIN_DIR:-/home/codex/repos/ubiquity/ai.ubq.fi/.codex-wo
 UOS_SYSROOT="$UOS_SDK/root"
 UOS_TARGET_LIB="$UOS_SYSROOT/usr/lib/aarch64-linux-gnu"
 UOS_COMPILER="$UOS_SYSROOT/usr/bin/aarch64-linux-gnu-g++-12"
+UOS_C_COMPILER="$UOS_SYSROOT/usr/bin/aarch64-linux-gnu-gcc-12"
 UOS_LOADER="$UOS_SYSROOT/lib/ld-linux-aarch64.so.1"
 UOS_LOADER_PATH="$UOS_SYSROOT/lib/aarch64-linux-gnu:$UOS_TARGET_LIB"
 # All build output for this worktree: shared object cache, test binaries, locks.

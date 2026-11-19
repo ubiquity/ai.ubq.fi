@@ -106,6 +106,7 @@ namespace {
 #include "uos/rt/test_async.hpp"
 #include "uos/utils.hpp"
 #include "helpers/counting_kv.hpp"
+#include "helpers/live_allocations.hpp"
 namespace {
   namespace rt = uos::rt; namespace json = uos::json;
   namespace h = uos::health; namespace ph = uos::provider::health; namespace ca = uos::codex::auth;
@@ -275,6 +276,30 @@ ASYNC_TEST("active upstream health retains detailed failure diagnostics") {
 ASYNC_TEST("active upstream health bounds malformed Codex auth metadata") {
   const json::array invalid{json::object{{"tokens", json::object{{"access_token", "legacy-access-token"}, {"refresh_token", "legacy-refresh-token"}}}}, json::object{{"accounts", json::array{json::object{{"access_token", "partial-access-token"}, {"refresh_token", "partial-refresh-token"}, {"account_id", "partial-account"}}}}, {"updated_at_ms", 1}}};
   for (const auto& record : invalid) { Scope scope; scope.store->seed(ca::CODEX_AUTH_POOL_KV_KEY, rt::KvValue(record)); AWAIT(response, h::handleHealthUpstream()); const auto text = co_await response.text(); const auto payload = rt::jsonParse(text); EXPECT_EQ(response.status(), 503); EXPECT_EQ(rt::getNumber(payload, "status"), std::optional(503.0)); EXPECT_EQ(rt::getNumber(object(object(payload, "probes"), "codex"), "status"), std::optional(503.0)); EXPECT(rt::length(text) < 2048); }
+}
+ASYNC_TEST("completed health probes release their timeout promises on the running loop") {
+  Scope scope;
+  seed(scope, {authEntry()});
+  {
+    const rt::GlobalFetchOverride mock{rt::Fetch([](rt::RequestInfo, rt::RequestInit) {
+      return rt::Response::json(json::object{{"models", json::array{json::object{{"slug", "gpt-health"}}}}});
+    })};
+    const auto configured = co_await h::handleHealthUpstream();
+    EXPECT_EQ(configured.status(), 200);
+  }
+  // Exercise the same completed probe race without accumulating the separate
+  // Codex auth race's allocations across the samples.
+  uos::kv::setKvForTest(std::make_shared<rt::MemoryKv>(rt::dateNow));
+  const auto unconfigured = co_await h::handleHealthUpstream();
+  const auto payload = co_await unconfigured.json();
+  const auto& codex = object(object(payload, "probes"), "codex");
+  EXPECT_EQ(rt::getString(codex, "error"), "No Codex auth configured (CODEX_AUTH_JSON_B64 or KV entry missing).");
+  const auto probe = []() -> rt::Task<void> {
+    const auto response = co_await h::handleHealthUpstream();
+    EXPECT_EQ(response.status(), 503);
+  };
+  auto checking = uos::tests::helpers::expectStableLiveAllocations(probe, 64);
+  co_await std::move(checking);
 }
 ASYNC_TEST("active upstream health preserves the provider that finishes before the shared deadline") {
   for (int stalled = 0; stalled < 2; ++stalled) {

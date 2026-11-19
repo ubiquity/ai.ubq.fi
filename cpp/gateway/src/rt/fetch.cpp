@@ -69,11 +69,12 @@ namespace uos::rt {
     // After the response arrived, an abort errors its body with the reason.
     struct AbortableBody {
       std::optional<ReadableStreamDefaultReader<ByteChunk>> reader;
-      std::optional<ReadableStreamDefaultController<ByteChunk>> controller;
+      std::weak_ptr<detail::StreamState<ByteChunk>> wrapper;
       AbortSignal signal;
       EventListener onAbort;
       bool finished = false;
       explicit AbortableBody(AbortSignal signal_) : signal(std::move(signal_)) {}
+      ~AbortableBody() { finish(); }
       void finish() {
         if (finished) return;
         finished = true;
@@ -117,15 +118,16 @@ namespace uos::rt {
         if (!held || held->finished) return;
         held->finish();
         const Reason reason = held->signal.reason();
-        if (held->controller) held->controller->error(reason);
+        if (auto wrapper = held->wrapper.lock()) wrapper->error(reason);
         spawn(held->reader->cancel(reason), [](Reason) {});
       });
       UnderlyingSource<ByteChunk> wrapper;
-      wrapper.start = [body](ReadableStreamDefaultController<ByteChunk> controller) { body->controller = controller; };
       wrapper.pull = [body](ReadableStreamDefaultController<ByteChunk> controller) { return pullAbortable(body, controller); };
       wrapper.cancel = [body](Reason reason) { return cancelAbortable(body, std::move(reason)); };
+      ByteStream stream(std::move(wrapper), QueuingStrategy{0});
+      body->wrapper = stream.state();
       signal.addEventListener("abort", body->onAbort, AddEventListenerOptions{.once = true});
-      response.setBodyStream(ByteStream(std::move(wrapper), QueuingStrategy{0}));
+      response.setBodyStream(std::move(stream));
     }
 
     Task<Response> sendThrough(Request request, bool watchSignal) {
@@ -134,7 +136,8 @@ namespace uos::rt {
       const AbortSignal signal = request.signal();
       if (signal.aborted()) rethrow(signal.reason());
       Task<Response> sending = transport->send(std::move(request));
-      Task<Response> guarded = abortable(signal, std::move(sending));
+      auto ownedSend = detail::keepAlive<Response>(std::move(transport), std::move(sending));
+      Task<Response> guarded = abortable(signal, std::move(ownedSend));
       Response response = co_await std::move(guarded);
       if (watchSignal) {
         if (signal.aborted()) {
@@ -171,17 +174,14 @@ namespace uos::rt {
     }
   }
 
-  // The function is called now, as JS calls it; the returned Task keeps it
-  // alive (a coroutine lambda's captures live in it) until it completes.
+  // Call eagerly, pinning the function before it can replace itself. A
+  // returned coroutine may also borrow the arguments passed to the function.
   Task<Response> Fetch::operator()(RequestInfo input, RequestInit init) const {
-    if (!function_) throw std::logic_error("rt::Fetch: called an empty fetch value");
-    return keepAlive(function_, (*function_)(std::move(input), std::move(init)));
-  }
-
-  Task<Response> Fetch::keepAlive(std::shared_ptr<const Function> function, Task<Response> task) {
-    (void)function;
-    Response response = co_await std::move(task);
-    co_return response;
+    auto function = function_;
+    if (!function) throw std::logic_error("rt::Fetch: called an empty fetch value");
+    auto args = std::make_shared<std::pair<RequestInfo, RequestInit>>(std::move(input), std::move(init));
+    auto task = (*function)(std::move(args->first), std::move(args->second));
+    return detail::keepAlive<Response>(std::pair{std::move(function), std::move(args)}, std::move(task));
   }
 
   Task<Response> Fetch::resolved(Response response) { co_return response; }
@@ -203,6 +203,9 @@ namespace uos::rt {
 
   Task<Response> MockTransport::send(Request request) {
     requests_.push_back(request);
-    return handler_(std::move(request));
+    auto handler = handler_;
+    auto input = std::make_shared<Request>(std::move(request));
+    auto task = (*handler)(std::move(*input));
+    return detail::keepAlive<Response>(std::pair{std::move(handler), std::move(input)}, std::move(task));
   }
 }

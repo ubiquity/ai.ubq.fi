@@ -34,6 +34,7 @@
 #include <bit>
 #include <cmath>
 #include <limits>
+#include <memory>
 
 #define AWAIT(name, expr) auto name##Task = (expr); auto name = co_await std::move(name##Task)
 #define WAIT(expr) do { auto waitingTask = (expr); co_await std::move(waitingTask); } while (false)
@@ -180,6 +181,21 @@ ASYNC_TEST("embeddings sleep helpers honor aborts and deadlines") {
   rt::AbortController during;auto sleeping=v::sleepUnlessAborted(10000,during.signal());during.abort(rt::makeReason(rt::JsError("cancelled while sleeping")));EXPECT(!(co_await sleeping.wait()));
   co_return;
 }
+TEST("abandoning an embeddings retry timer releases the abort signal") {
+  const rt::AbortController caller;
+  std::weak_ptr<rt::detail::AbortSignalState> signalState;
+  {
+    rt::FakeClock clock;
+    rt::Loop loop(clock);
+    const rt::LoopScope scope(loop);
+    const auto signal = rt::AbortSignal::any({caller.signal()});
+    signalState = signal.state();
+    const auto waiting = v::sleepUnlessAborted(10000, signal);
+    EXPECT(waiting.pending());
+    EXPECT_EQ(loop.timerCount(), 1u);
+  }
+  EXPECT(signalState.expired());
+}
 ASYNC_TEST("embeddings job token seeds prefer stable principals") {
   h::HarnessScope fixture;EXPECT_EQ(v::resolveEmbeddingsJobTokenSeed("job-1",std::nullopt),"job-1");EXPECT_EQ(v::resolveEmbeddingsJobTokenSeed("job-1","bearer-token"),"bearer-token");
   auto context=h::uosIdempotencyUsageContext("x");context.keyId="key-9";EXPECT_EQ(v::resolveEmbeddingsJobTokenSeed("job-1","bearer-token",&context),"uos_api_key_id:key-9");
@@ -196,18 +212,18 @@ ASYNC_TEST("voyage environment and API key lookups fail closed") {
 ASYNC_TEST("embeddings cache writes recover from quota errors and abandon unusable ones") {
   h::HarnessScope fixture;resetStore();const auto profile=h::embeddingsProfileKey();const auto vector=h::testVector(1024);const double deadline=rt::dateNow()+30000;
   h::setFailNextAtomicCommit([](auto&,auto&)->h::CommitFailure{return rt::makeReason(rt::JsError("cache write transport failed"));});
-  AWAIT(abandoned,v::writeEmbeddingsCacheEntryBestEffort(*h::kvStub,profile,"hash-abandoned",vector,rt::dateNow(),deadline));EXPECT(!abandoned.isNew);EXPECT(!row(l::embeddingsCacheKey(profile,"hash-abandoned")));
-  const double old=rt::dateNow()-60000;AWAIT(prior,v::writeEmbeddingsCacheEntryBestEffort(*h::kvStub,profile,"hash-old",vector,old,deadline));EXPECT(prior.isNew);
+  AWAIT(abandoned,v::writeEmbeddingsCacheEntryBestEffort(h::kvStub,profile,"hash-abandoned",vector,rt::dateNow(),deadline));EXPECT(!abandoned.isNew);EXPECT(!row(l::embeddingsCacheKey(profile,"hash-abandoned")));
+  const double old=rt::dateNow()-60000;AWAIT(prior,v::writeEmbeddingsCacheEntryBestEffort(h::kvStub,profile,"hash-old",vector,old,deadline));EXPECT(prior.isNew);
   h::setFailNextAtomicCommit([](auto&,auto&)->h::CommitFailure{return rt::makeReason(rt::JsError("KV storage quota exceeded"));});
-  AWAIT(fresh,v::writeEmbeddingsCacheEntryBestEffort(*h::kvStub,profile,"hash-new",vector,rt::dateNow(),deadline));EXPECT(fresh.isNew);EXPECT(row(l::embeddingsCacheKey(profile,"hash-new")));EXPECT(!row(l::embeddingsCacheKey(profile,"hash-old")));EXPECT(!row(l::embeddingsCacheGlobalIndexKey(old,profile,"hash-old")));
+  AWAIT(fresh,v::writeEmbeddingsCacheEntryBestEffort(h::kvStub,profile,"hash-new",vector,rt::dateNow(),deadline));EXPECT(fresh.isNew);EXPECT(row(l::embeddingsCacheKey(profile,"hash-new")));EXPECT(!row(l::embeddingsCacheKey(profile,"hash-old")));EXPECT(!row(l::embeddingsCacheGlobalIndexKey(old,profile,"hash-old")));
   resetStore();const std::vector<rt::KvKey> invalid{{"embeddings","v2","cache_index_global","not-a-number",profile,"hash-x"},{"embeddings","v2","cache_index_global",1,"","hash-y"},{"embeddings","v2","cache_index_global",1,profile,7}};
   for(const auto& key:invalid) { put(key,1); }
   h::setFailNextAtomicCommit([](auto&,auto&)->h::CommitFailure{return rt::makeReason(rt::JsError("insufficient storage for embeddings cache"));});
-  AWAIT(skipped,v::writeEmbeddingsCacheEntryBestEffort(*h::kvStub,profile,"hash-skipped",vector,rt::dateNow(),deadline));EXPECT(!skipped.isNew);for(const auto& key:invalid)EXPECT(row(key));EXPECT(!row(l::embeddingsCacheKey(profile,"hash-skipped")));
-  AWAIT(late,v::writeEmbeddingsCacheEntryBestEffort(*h::kvStub,profile,"hash-late",vector,rt::dateNow(),rt::dateNow()-1));EXPECT(!late.isNew);
+  AWAIT(skipped,v::writeEmbeddingsCacheEntryBestEffort(h::kvStub,profile,"hash-skipped",vector,rt::dateNow(),deadline));EXPECT(!skipped.isNew);for(const auto& key:invalid)EXPECT(row(key));EXPECT(!row(l::embeddingsCacheKey(profile,"hash-skipped")));
+  AWAIT(late,v::writeEmbeddingsCacheEntryBestEffort(h::kvStub,profile,"hash-late",vector,rt::dateNow(),rt::dateNow()-1));EXPECT(!late.isNew);
   const double legacy=rt::dateNow()-30000;put(l::embeddingsCacheGlobalIndexKey(legacy,profile,"hash-legacy"),1);put(l::embeddingsCacheKey(profile,"hash-legacy"),json::object{{"embedding",json::value_from(vector)},{"created_at",rt::Date(legacy).toISOString()}});
   h::setFailNextAtomicCommit([](auto&,auto&)->h::CommitFailure{return rt::makeReason(rt::JsError("embedded cache quota exceeded"));});
-  AWAIT(after,v::writeEmbeddingsCacheEntryBestEffort(*h::kvStub,profile,"hash-after-legacy",vector,rt::dateNow(),deadline));EXPECT(after.isNew);EXPECT(!row(l::embeddingsCacheKey(profile,"hash-legacy")));EXPECT(row(l::embeddingsCacheKey(profile,"hash-after-legacy")));
+  AWAIT(after,v::writeEmbeddingsCacheEntryBestEffort(h::kvStub,profile,"hash-after-legacy",vector,rt::dateNow(),deadline));EXPECT(after.isNew);EXPECT(!row(l::embeddingsCacheKey(profile,"hash-legacy")));EXPECT(row(l::embeddingsCacheKey(profile,"hash-after-legacy")));
   co_return;
 }
 ASYNC_TEST("float embeddings encode to base64 as little-endian float32") {
@@ -274,7 +290,7 @@ ASYNC_TEST("embedding job polling reports upstream failures and count mismatches
 }
 ASYNC_TEST("embedding job polling serves a cached completion and refuses queued jobs without a provider key") {
   h::HarnessScope fixture;resetStore();h::resetVoyageRateLimit();const std::string token="coverage-cached";AWAIT(job,queuedJob(token,"cached"));const auto vector=h::testVector(1024);
-  AWAIT(written,v::writeEmbeddingsCacheEntryBestEffort(*h::kvStub,job.profile,job.hash,vector,rt::dateNow(),rt::dateNow()+30000));EXPECT(written.isNew);AWAIT(served,poll(job,token));AWAIT(body,served.json());EXPECT_EQ(rt::getString(body,"status"),"succeeded");EXPECT(rt::deepEqual(*rt::get(*rt::get(*rt::getArray(*rt::get(body,"result"),"data"),std::size_t{0}),"embedding"),json::value_from(vector)));
+  AWAIT(written,v::writeEmbeddingsCacheEntryBestEffort(h::kvStub,job.profile,job.hash,vector,rt::dateNow(),rt::dateNow()+30000));EXPECT(written.isNew);AWAIT(served,poll(job,token));AWAIT(body,served.json());EXPECT_EQ(rt::getString(body,"status"),"succeeded");EXPECT(rt::deepEqual(*rt::get(*rt::get(*rt::getArray(*rt::get(body,"result"),"data"),std::size_t{0}),"embedding"),json::value_from(vector)));
   resetStore();h::resetVoyageRateLimit();AWAIT(unconfigured,queuedJob(token,"no-provider"));h::kvStore.delete_(h::keyToString(l::VOYAGE_API_KEY_KV_KEY));AWAIT(noProvider,poll(unconfigured,token));EXPECT_EQ(noProvider.status(),503);
   co_return;
 }
@@ -285,11 +301,11 @@ ASYNC_TEST("embeddings cache entries are addressed by the resolved profile") {
 ASYNC_TEST("embeddings KV access is memoized for the harness stub") {h::HarnessScope fixture;auto pending=uos::kv::getKv();auto store=co_await pending.wait();EXPECT(store==h::kvStub);  co_return;
 }
 ASYNC_TEST("embeddings cache writes treat a negative by-hash pointer as a miss") {
-  h::HarnessScope fixture;resetStore();const auto profile=h::embeddingsProfileKey();put(l::embeddingsCacheIndexByHashKey(profile,"hash-negative"),-7);AWAIT(result,v::writeEmbeddingsCacheEntryBestEffort(*h::kvStub,profile,"hash-negative",h::testVector(1024),rt::dateNow(),rt::dateNow()+30000));EXPECT(result.isNew);EXPECT(row(l::embeddingsCacheKey(profile,"hash-negative")));
+  h::HarnessScope fixture;resetStore();const auto profile=h::embeddingsProfileKey();put(l::embeddingsCacheIndexByHashKey(profile,"hash-negative"),-7);AWAIT(result,v::writeEmbeddingsCacheEntryBestEffort(h::kvStub,profile,"hash-negative",h::testVector(1024),rt::dateNow(),rt::dateNow()+30000));EXPECT(result.isNew);EXPECT(row(l::embeddingsCacheKey(profile,"hash-negative")));
   co_return;
 }
 ASYNC_TEST("embeddings cache writes abandon a ledger that always rejects commits") {
-  h::HarnessScope fixture;resetStore();const auto profile=h::embeddingsProfileKey();AWAIT(initial,v::writeEmbeddingsCacheEntryBestEffort(*h::kvStub,profile,"hash-evictable",h::testVector(1024),rt::dateNow()-1000,rt::dateNow()+30000));EXPECT(initial.isNew);FaultKv stuck("throw");AWAIT(result,v::writeEmbeddingsCacheEntryBestEffort(stuck,profile,"hash-stuck",h::testVector(1024),rt::dateNow(),rt::dateNow()+30000));EXPECT(!result.isNew);EXPECT(!row(l::embeddingsCacheKey(profile,"hash-stuck")));EXPECT(row(l::embeddingsCacheKey(profile,"hash-evictable")));
+  h::HarnessScope fixture;resetStore();const auto profile=h::embeddingsProfileKey();AWAIT(initial,v::writeEmbeddingsCacheEntryBestEffort(h::kvStub,profile,"hash-evictable",h::testVector(1024),rt::dateNow()-1000,rt::dateNow()+30000));EXPECT(initial.isNew);const auto stuck=std::make_shared<FaultKv>("throw");AWAIT(result,v::writeEmbeddingsCacheEntryBestEffort(stuck,profile,"hash-stuck",h::testVector(1024),rt::dateNow(),rt::dateNow()+30000));EXPECT(!result.isNew);EXPECT(!row(l::embeddingsCacheKey(profile,"hash-stuck")));EXPECT(row(l::embeddingsCacheKey(profile,"hash-evictable")));
   co_return;
 }
 ASYNC_TEST("voyage rate limiting tolerates unusable state and a permanently stuck ledger") {
@@ -306,6 +322,6 @@ ASYNC_TEST("voyage transport ignores unusable Retry-After values") {
   co_return;
 }
 ASYNC_TEST("embeddings cache writes give up after repeated create-index CAS losses") {
-  h::HarnessScope fixture;resetStore();FaultKv refusing("cache");const auto profile=h::embeddingsProfileKey();AWAIT(result,v::writeEmbeddingsCacheEntryBestEffort(refusing,profile,"hash-refused",h::testVector(1024),rt::dateNow(),rt::dateNow()+30000));EXPECT(!result.isNew);EXPECT(!row(l::embeddingsCacheKey(profile,"hash-refused")));
+  h::HarnessScope fixture;resetStore();const auto refusing=std::make_shared<FaultKv>("cache");const auto profile=h::embeddingsProfileKey();AWAIT(result,v::writeEmbeddingsCacheEntryBestEffort(refusing,profile,"hash-refused",h::testVector(1024),rt::dateNow(),rt::dateNow()+30000));EXPECT(!result.isNew);EXPECT(!row(l::embeddingsCacheKey(profile,"hash-refused")));
   co_return;
 }

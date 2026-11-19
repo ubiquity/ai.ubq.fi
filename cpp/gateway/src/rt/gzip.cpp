@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <limits>
 #include <list>
 #include <stdexcept>
 #include <utility>
@@ -70,9 +71,6 @@ namespace uos::rt::gzip {
     constexpr std::size_t MAX_SLICE = std::size_t{1} << 30;
     // The output room the compressor asks for per call.
     constexpr std::size_t OUTPUT_STEP = 64 * 1'024;
-    // `new Blob([bytes]).stream()` hands over a first chunk of up to 16 KiB, then chunks of up to 2 MiB.
-    constexpr std::size_t BLOB_FIRST_CHUNK = 16'384;
-    constexpr std::size_t BLOB_CHUNK = 2'097'152;
 
     struct Zlib {
       const char* (*zlibVersion)() = nullptr;
@@ -172,42 +170,31 @@ namespace uos::rt::gzip {
       return std::string("rt::gzip: ") + function + " failed (" + std::to_string(status) + ")";
     }
 
-    // A growing output: an outgrown buffer is wiped before it is freed, and so is an output
-    // abandoned by an exception.
-    class Output {
-    public:
-      Output() = default;
-      Output(const Output&) = delete;
-      Output& operator=(const Output&) = delete;
-      ~Output() { wipe(buffer); }
+    constexpr std::size_t UNBOUNDED = std::numeric_limits<std::size_t>::max();
+    constexpr std::string_view OUTPUT_LIMIT_ERROR = "gzip output exceeds its size limit";
 
-      // At least `extra` writable bytes after the used ones.
-      std::span<std::uint8_t> spare(std::size_t extra) {
-        if (buffer.size() - used < extra) {
-          Bytes larger(std::max(buffer.size() * 2, used + extra));
-          if (used > 0) std::memcpy(larger.data(), buffer.data(), used);
-          wipe(buffer);
-          buffer.swap(larger);
+    // Own input and output across coroutine suspension, including abandoned tasks.
+    struct ScrubbedBuffer {
+      explicit ScrubbedBuffer(Bytes input = {}) noexcept : bytes(std::move(input)) {}
+      ScrubbedBuffer(ScrubbedBuffer&&) noexcept = default;
+      ~ScrubbedBuffer() { wipe(bytes); }
+
+      std::uint8_t* extend(std::size_t extra, std::size_t limit = UNBOUNDED, std::string_view limitMessage = OUTPUT_LIMIT_ERROR) {
+        const std::size_t used = bytes.size();
+        if (used > limit || extra > limit - used) throw JsError(std::string(limitMessage));
+        const std::size_t requested = used + extra;
+        if (const auto capacity = bytes.capacity(); requested > capacity) {
+          Bytes larger;
+          larger.reserve(std::max(requested, capacity + std::min(capacity, limit - capacity)));
+          larger.assign(bytes.begin(), bytes.end());
+          wipe(bytes);
+          bytes.swap(larger);
         }
-        return std::span<std::uint8_t>(buffer).subspan(used);
-      }
-      void commit(std::size_t count) { used += count; }
-      void append(std::span<const std::uint8_t> bytes) {
-        if (bytes.empty()) return;
-        const std::span<std::uint8_t> room = spare(bytes.size());
-        std::memcpy(room.data(), bytes.data(), bytes.size());
-        commit(bytes.size());
-      }
-      // Shrinking keeps the allocation, so nothing is copied or left behind.
-      Bytes take() {
-        buffer.resize(used);
-        used = 0;
-        return std::move(buffer);
+        bytes.resize(requested);
+        return bytes.data() + used;
       }
 
-    private:
-      Bytes buffer;
-      std::size_t used = 0;
+      Bytes bytes;
     };
   }
 
@@ -381,71 +368,76 @@ namespace uos::rt::gzip {
     return !s.failure && s.pending.empty() && (s.atEnd || s.discarding);
   }
 
-  // ---- whole buffers ------------------------------------------------------------------------
-
   Bytes gzipSync(std::span<const std::uint8_t> input) {
     const Zlib& z = zlib();
-    // zlib's state points back at the stream: keep it in one place.
-    const auto stream = std::make_unique<ZStream>();
-    stream->zalloc = allocate;
-    stream->zfree = release;
-    const int initialized = z.deflateInit2(stream.get(), Z_DEFAULT_COMPRESSION, Z_DEFLATED, GZIP_WINDOW_BITS, MEM_LEVEL, Z_DEFAULT_STRATEGY, ZLIB_VERSION,
+    ZStream stream{};
+    stream.zalloc = allocate;
+    stream.zfree = release;
+    const int initialized = z.deflateInit2(&stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, GZIP_WINDOW_BITS, MEM_LEVEL, Z_DEFAULT_STRATEGY, ZLIB_VERSION,
                                            static_cast<int>(sizeof(ZStream)));
     if (initialized != Z_OK) throw std::runtime_error(initFailure("deflateInit2", initialized));
-    const auto finish = scopeExit([&z, &stream] { z.deflateEnd(stream.get()); });
-    Output output;
-    std::size_t offset = 0;
-    for (;;) {
-      if (stream->avail_in == 0 && offset < input.size()) {
-        const std::size_t slice = std::min(input.size() - offset, MAX_SLICE);
-        stream->next_in = input.data() + offset;
-        stream->avail_in = static_cast<unsigned int>(slice);
-        offset += slice;
+    const auto finish = scopeExit([&] { z.deflateEnd(&stream); });
+    ScrubbedBuffer output;
+    for (int status = Z_OK; status != Z_STREAM_END;) {
+      if (stream.avail_in == 0 && !input.empty()) {
+        const std::size_t slice = std::min(input.size(), MAX_SLICE);
+        stream.next_in = input.data();
+        stream.avail_in = static_cast<unsigned int>(slice);
+        input = input.subspan(slice);
       }
-      const bool last = offset == input.size();
-      const std::span<std::uint8_t> room = output.spare(OUTPUT_STEP);
-      stream->next_out = room.data();
-      stream->avail_out = static_cast<unsigned int>(std::min(room.size(), MAX_SLICE));
-      const unsigned int before = stream->avail_out;
-      const int status = z.deflate(stream.get(), last ? Z_FINISH : Z_NO_FLUSH);
-      output.commit(before - stream->avail_out);
-      if (status == Z_STREAM_END) break;
-      if (status != Z_OK && status != Z_BUF_ERROR) throw std::runtime_error("rt::gzip: deflate failed (" + std::to_string(status) + ")");
+      stream.next_out = output.extend(OUTPUT_STEP);
+      stream.avail_out = OUTPUT_STEP;
+      status = z.deflate(&stream, input.empty() ? Z_FINISH : Z_NO_FLUSH);
+      if (status != Z_OK && status != Z_STREAM_END) throw std::runtime_error("rt::gzip: deflate failed (" + std::to_string(status) + ")");
+      output.bytes.resize(output.bytes.size() - stream.avail_out);
     }
-    return output.take();
+    return std::move(output.bytes);
   }
 
   void forEachDecompressedPiece(std::span<const std::uint8_t> input, Format format, const std::function<void(std::span<const std::uint8_t>)>& onPiece) {
     Inflater inflater(format);
-    for (std::size_t offset = 0; offset < input.size();) {
-      const std::size_t size = std::min(offset == 0 ? BLOB_FIRST_CHUNK : BLOB_CHUNK, input.size() - offset);
-      inflater.write(input.subspan(offset, size));
-      offset += size;
-      while (const std::optional<std::span<const std::uint8_t>> piece = inflater.read()) onPiece(*piece);
+    while (!input.empty()) {
+      const std::size_t slice = std::min(input.size(), OUTPUT_STEP);
+      inflater.write(input.first(slice));
+      while (const auto piece = inflater.read()) onPiece(*piece);
+      input = input.subspan(slice);
     }
     inflater.end();
   }
 
-  Bytes gunzipSync(std::span<const std::uint8_t> input) {
-    Output output;
-    forEachDecompressedPiece(input, Format::gzip, [&output](std::span<const std::uint8_t> piece) { output.append(piece); });
-    return output.take();
+  namespace {
+    Bytes inflateBuffer(std::span<const std::uint8_t> input, std::size_t limit = UNBOUNDED, std::string_view limitMessage = OUTPUT_LIMIT_ERROR) {
+      ScrubbedBuffer output;
+      forEachDecompressedPiece(input, Format::gzip, [&](std::span<const std::uint8_t> piece) {
+        std::copy(piece.begin(), piece.end(), output.extend(piece.size(), limit, limitMessage));
+      });
+      return std::move(output.bytes);
+    }
+
+    template <class Codec>
+    Task<Bytes> withTurn(ScrubbedBuffer input, Codec codec, bool deferFailure = false) {
+      ScrubbedBuffer output;
+      std::exception_ptr failure;
+      try {
+        output.bytes = codec(input.bytes);
+      } catch (...) {
+        if (!deferFailure) throw;
+        failure = std::current_exception();
+      }
+      co_await microtask();
+      if (failure) std::rethrow_exception(failure);
+      co_return std::move(output.bytes);
+    }
   }
 
-  // ---- the TS `await` forms ----------------------------------------------------------------
+  Bytes gunzipSync(std::span<const std::uint8_t> input) { return inflateBuffer(input); }
+  Task<Bytes> gzip(Bytes input) { return withTurn(ScrubbedBuffer(std::move(input)), gzipSync); }
+  Task<Bytes> gunzip(Bytes input) { return withTurn(ScrubbedBuffer(std::move(input)), gunzipSync); }
 
-  Task<Bytes> gzip(Bytes input) {
-    const auto scrub = scopeExit([&input] { wipe(input); });
-    Bytes compressed = gzipSync(input);
-    co_await microtask();
-    co_return std::move(compressed);
-  }
-
-  Task<Bytes> gunzip(Bytes input) {
-    const auto scrub = scopeExit([&input] { wipe(input); });
-    Bytes inflated = gunzipSync(input);
-    co_await microtask();
-    co_return std::move(inflated);
+  Task<Bytes> gunzip(Bytes input, std::size_t limit, std::string_view limitMessage) {
+    ScrubbedBuffer owned(std::move(input));
+    auto decode = [limit, message = std::string(limitMessage)](std::span<const std::uint8_t> bytes) { return inflateBuffer(bytes, limit, message); };
+    return withTurn(std::move(owned), std::move(decode), /*deferFailure=*/true);
   }
 
   void setZlibLibraryForTest(std::string library) {

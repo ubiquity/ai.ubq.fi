@@ -261,7 +261,10 @@ namespace uos::optional_telemetry_queue {
       const rt::Promise<bool> progressed = rt::race(std::move(writes)).then([] { return true; });
       const rt::Promise<bool> timedOut = rt::newPromise<bool>([&cancelTimeout, timeoutMs](rt::Resolve<bool> resolve, rt::Reject) {
         const rt::Timeout timer = rt::setTimeout([resolve] { resolve(false); }, timeoutMs);
-        cancelTimeout = [timer] { rt::clearTimeout(timer); };
+        cancelTimeout = [timer, resolve] {
+          rt::clearTimeout(timer);
+          resolve(false);
+        };
       });
       std::vector<rt::Promise<bool>> racers = {progressed, timedOut};
       const rt::Promise<bool> raced = rt::race(std::move(racers));

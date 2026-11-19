@@ -48,7 +48,8 @@ def put_executable(path, text):
 def sdk_identity(sdk):
     if digest(sdk / "manifest.json") != SDK_MANIFEST_SHA256:
         raise RuntimeError("Qualified SDK manifest identity mismatch")
-    required = ["root/usr/bin/aarch64-linux-gnu-g++-12", "root/usr/bin/cmake", "root/usr/bin/ninja", "root/usr/bin/ctest",
+    required = ["root/usr/bin/aarch64-linux-gnu-g++-12", "root/usr/bin/aarch64-linux-gnu-gcc-12",
+                "root/usr/bin/cmake", "root/usr/bin/ninja", "root/usr/bin/ctest",
                 "root/lib/ld-linux-aarch64.so.1", "host-tools/bin/ld", "host-tools/bin/ar", "host-tools/bin/ranlib",
                 "root/usr/lib/aarch64-linux-gnu/libboost_json.a", "root/usr/lib/aarch64-linux-gnu/libboost_container.a",
                 "root/usr/lib/aarch64-linux-gnu/libboost_system.a", "root/usr/lib/aarch64-linux-gnu/libssl.so",
@@ -81,10 +82,11 @@ def tool_view(sdk, view):
         put_executable(view / "bin" / ("uos-" + tool), '#!/bin/sh\nset -eu\nexec ' + shlex.join(command) + ' "$@"\n')
     # CMake's compiler identification does not use COMPILER_LAUNCHER. Make the
     # compiler executable itself bounded, including identification/try_compile.
-    compiler = ["/usr/bin/python3", str(GATEWAY / "tools/compiler-limit.py"),
-                str(sdk / "root/usr/bin/aarch64-linux-gnu-g++-12"),
-                "--sysroot=" + str(sdk / "root"), "-B" + str(sdk / "host-tools/bin") + "/"]
-    put_executable(view / "bin/uos-cxx", '#!/bin/sh\nset -eu\nexec ' + shlex.join(compiler) + ' "$@"\n')
+    for wrapper, driver in (("uos-cc", "gcc"), ("uos-cxx", "g++")):
+        compiler = ["/usr/bin/python3", str(GATEWAY / "tools/compiler-limit.py"),
+                    str(sdk / "root/usr/bin" / ("aarch64-linux-gnu-" + driver + "-12")),
+                    "--sysroot=" + str(sdk / "root"), "-B" + str(sdk / "host-tools/bin") + "/"]
+        put_executable(view / "bin" / wrapper, '#!/bin/sh\nset -eu\nexec ' + shlex.join(compiler) + ' "$@"\n')
     return [str(loader), "--library-path", libraries]
 
 
@@ -265,7 +267,7 @@ def main():
         changed = sorted(path for path in inputs.keys() | after.keys() if inputs.get(path) != after.get(path))
         artifact_paths = [build / name for name in ("libuos_gateway.a", "uos_gateway", "uos_kv_convert", "uos_kv_proof")]
         artifact_paths += [build / target for target in selected]
-        artifact_paths += [build / library.archive for library in vendors if library.source in after]
+        artifact_paths += [build / library.archive for library in vendors if all(source in after for source in library.sources)]
         artifacts = {path.name: {"sha256": digest(path), "bytes": path.stat().st_size}
                      for path in artifact_paths if path.is_file()}
         atomic_json(evidence / ("result-" + stamp + ".json"), {"run_id": stamp, "phase": options.phase, "artifacts": artifacts,

@@ -32,6 +32,11 @@ namespace uos::paid_fallback::ledger_settlement {
     };
     using rt::record::Reader;
     using rt::record::Writer;
+
+    rt::Task<rt::KvEntryMaybe<>> readWithStore(const std::shared_ptr<rt::Kv>& kv, rt::KvKey key, rt::KvGetOptions options) {
+      auto read = kv->get(std::move(key), options);
+      return rt::detail::keepAlive(kv, std::move(read));
+    }
     namespace contracts = authority::native_paid_contracts;
     namespace native_paid = authority::native_paid;
     using contracts::NativePaidProviderLog;
@@ -265,8 +270,8 @@ namespace uos::paid_fallback::ledger_settlement {
     const rt::KvKey pendingKey = native_paid::paidFallbackPendingV3Key(keyId, requestId);
     const rt::KvGetOptions strong = strongRead();
     for (double attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
-      const rt::Promise<rt::KvEntryMaybe<>> requestRead(kv->get(requestKey, strong));
-      const rt::Promise<rt::KvEntryMaybe<>> pendingRead(kv->get(pendingKey, strong));
+      const rt::Promise<rt::KvEntryMaybe<>> requestRead(readWithStore(kv, requestKey, strong));
+      const rt::Promise<rt::KvEntryMaybe<>> pendingRead(readWithStore(kv, pendingKey, strong));
       auto reads = rt::all(requestRead, pendingRead);
       auto readEntries = co_await reads.wait();
       auto& [requestEntry, pendingEntry] = readEntries;
@@ -320,9 +325,9 @@ namespace uos::paid_fallback::ledger_settlement {
     const rt::KvKey gateKey = native_paid::paidFallbackReconciliationGateV3Key();
     const rt::KvGetOptions strong = strongRead();
     for (double attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
-      const rt::Promise<rt::KvEntryMaybe<>> requestRead(kv->get(requestKey, strong));
-      const rt::Promise<rt::KvEntryMaybe<>> pendingRead(kv->get(pendingKey, strong));
-      const rt::Promise<rt::KvEntryMaybe<>> gateRead(kv->get(gateKey, strong));
+      const rt::Promise<rt::KvEntryMaybe<>> requestRead(readWithStore(kv, requestKey, strong));
+      const rt::Promise<rt::KvEntryMaybe<>> pendingRead(readWithStore(kv, pendingKey, strong));
+      const rt::Promise<rt::KvEntryMaybe<>> gateRead(readWithStore(kv, gateKey, strong));
       auto reads = rt::all(requestRead, pendingRead, gateRead);
       auto readEntries = co_await reads.wait();
       auto& [requestEntry, pendingEntry, gateEntry] = readEntries;

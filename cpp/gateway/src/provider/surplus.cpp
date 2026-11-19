@@ -318,38 +318,45 @@ namespace uos::provider::surplus {
     // The settled flag and the abort listener of one awaitWithAbort call. The listener holds
     // the state weakly; the operation's reactions hold it until the operation settles.
     struct AbortRace {
+      rt::AbortSignal signal;
       bool settled = false;
       rt::EventListener onAbort;
+
+      explicit AbortRace(rt::AbortSignal signal_) : signal(std::move(signal_)) {}
+      ~AbortRace() {
+        if (!settled) signal.removeEventListener("abort", onAbort);
+      }
+
+      bool finish() {
+        if (settled) return false;
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        return true;
+      }
     };
 
     template <class T> rt::Promise<T> awaitWithAbort(rt::Promise<T> operation, rt::AbortSignal signal) {
       const rt::Resolvers<T> resolvers = rt::withResolvers<T>();
       const rt::Resolve<T> resolve = resolvers.resolve;
       const rt::Reject reject = resolvers.reject;
-      auto race = std::make_shared<AbortRace>();
-      const auto finish = [signal](AbortRace& state) {
-        if (state.settled) return false;
-        state.settled = true;
-        signal.removeEventListener("abort", state.onAbort);
-        return true;
-      };
+      auto race = std::make_shared<AbortRace>(std::move(signal));
       const std::weak_ptr<AbortRace> weakRace = race;
-      race->onAbort = rt::EventListener([weakRace, signal, finish, reject]() {
+      race->onAbort = rt::EventListener([weakRace, reject]() {
         const std::shared_ptr<AbortRace> state = weakRace.lock();
-        if (!state || !finish(*state)) return;
-        reject(abortRejectionReason(signal.reason()));
+        if (!state || !state->finish()) return;
+        reject(abortRejectionReason(state->signal.reason()));
       });
-      if (signal.aborted()) {
+      if (race->signal.aborted()) {
         race->onAbort();
         return resolvers.promise;
       }
-      signal.addEventListener("abort", race->onAbort, {.once = true});
+      race->signal.addEventListener("abort", race->onAbort, {.once = true});
       (void)operation.then(
-        [race, finish, resolve](T value) {
-          if (finish(*race)) resolve(std::move(value));
+        [race, resolve](T value) {
+          if (race->finish()) resolve(std::move(value));
         },
-        [race, finish, reject](rt::Reason error) {
-          if (finish(*race)) reject(requestFailureReason(std::move(error)));
+        [race, reject](rt::Reason error) {
+          if (race->finish()) reject(requestFailureReason(std::move(error)));
         });
       return resolvers.promise;
     }
@@ -686,15 +693,10 @@ namespace uos::provider::surplus {
       co_return own;
     }
     surplusModelsFetchInFlight = request;
-    std::optional<SurplusModelsSnapshot> result;
-    rt::Reason failure;
-    try {
-      result = co_await request.wait();
-    } catch (...) {
-      failure = std::current_exception();
-    }
-    if (surplusModelsFetchInFlight && *surplusModelsFetchInFlight == request) surplusModelsFetchInFlight.reset();
-    if (failure) std::rethrow_exception(failure);
+    const auto cleanup = rt::scopeExit([request] {
+      if (surplusModelsFetchInFlight && *surplusModelsFetchInFlight == request) surplusModelsFetchInFlight.reset();
+    });
+    auto result = co_await request.wait();
     co_return result;
   }
 

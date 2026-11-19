@@ -9,6 +9,7 @@
 #include "uos/rt/json.hpp"
 #include "uos/rt/number.hpp"
 #include "uos/rt/test_async.hpp"
+#include "helpers/live_allocations.hpp"
 
 #include <deque>
 #include <memory>
@@ -120,6 +121,18 @@ TEST("measureJsonPayloadBytes matches the recorded payload sizes") {
   json::object keyed = rt::jsonParse(R"({"2":1,"b":2,"1":[0]})").as_object();
   keyed["1"].as_array()[0] = rt::Number::POSITIVE_INFINITY;
   EXPECT(rt::Number::isNaN(measureJsonPayloadBytes(json::value(keyed))));
+}
+
+ASYNC_TEST("successful queue waits release their timeout promises on the running loop") {
+  const auto completeWrite = []() -> rt::Task<void> {
+    namespace queue = optional_telemetry_queue::detail;
+    const auto state = std::make_shared<queue::QueueState<int>>();
+    state->inFlight.emplace_back(rt::Promise<void>::resolve(), queue::PendingEntry<int>{.entry = 1});
+    const bool progressed = co_await queue::waitForProgress(state, 60'000);
+    EXPECT(progressed);
+  };
+  auto checking = tests::helpers::expectStableLiveAllocations(completeWrite, 128);
+  co_await std::move(checking);
 }
 
 ASYNC_TEST("queue trace: immediately settling writes with two writers and coalesced flushes") {
