@@ -195,7 +195,6 @@
         "src/release.cpp",
         "src/request.cpp",
         "src/storage/kv.cpp",
-        "src/storage/native_addon.cpp",
         "src/storage/native_kv.cpp",
         "src/storage/sqlite_readonly.cpp",
         "src/utils.cpp"
@@ -214,7 +213,6 @@
         "src/release.cpp",
         "src/storage/sqlite_readonly.cpp",
         "src/storage/native_kv.cpp",
-        "src/storage/native_addon.cpp",
         "src/config.cpp",
         "src/provider/cerebras_rate_limits.cpp"
       ],
