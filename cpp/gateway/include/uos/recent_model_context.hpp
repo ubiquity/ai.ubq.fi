@@ -15,15 +15,13 @@
 #include <optional>
 
 namespace uos::recent_model_context {
-  inline constexpr double CONTEXT_COMPACTION_TRIGGER_RATIO = 0.85;
+  inline constexpr double CONTEXT_COMPACTION_TRIGGER_RATIO = 0.9;
   inline constexpr double CONTEXT_COMPACTION_RESERVED_TOKENS = 50'000;
   inline constexpr double CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT = 95;
 
   /**
-   * Trigger before either 85% of the model window is consumed or fewer than
-   * 50,000 tokens remain, whichever happens first. This mirrors Kimi Code's
-   * conservative long-running-agent defaults and stays below Codex's 90%
-   * derived ceiling.
+   * Trigger before either 90% of the model window is consumed or fewer than
+   * 50,000 tokens remain, whichever happens first. The rule applies to every model.
    *
    * Throws rt::RangeError "contextWindowTokens must be a safe integer greater than
    * the reserved token budget".

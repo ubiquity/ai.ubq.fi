@@ -19,11 +19,10 @@ namespace uos::recent_model_context {
 
   double resolvedAutoCompactTokenLimit(double contextWindowTokens, std::optional<double> configuredLimit) {
     const std::optional<double> configured = positiveSafeInteger(configuredLimit);
-    if (configured && *configured <= contextWindowTokens) return *configured;
-    if (contextWindowTokens > CONTEXT_COMPACTION_RESERVED_TOKENS) {
-      return deriveAutoCompactTokenLimit(contextWindowTokens);
-    }
-    return rt::Math::max(1, rt::Math::min(contextWindowTokens - 1, rt::Math::floor(contextWindowTokens * 0.85)));
+    const double derived = contextWindowTokens > CONTEXT_COMPACTION_RESERVED_TOKENS
+      ? deriveAutoCompactTokenLimit(contextWindowTokens)
+      : rt::Math::max(1, rt::Math::min(contextWindowTokens - 1, rt::Math::floor(contextWindowTokens * CONTEXT_COMPACTION_TRIGGER_RATIO)));
+    return configured && *configured <= contextWindowTokens ? rt::Math::min(*configured, derived) : derived;
   }
 
   // ---------------------------------------------------------------------------

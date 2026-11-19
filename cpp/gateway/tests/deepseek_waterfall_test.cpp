@@ -47,8 +47,7 @@ TEST("waterfall: the synthetic id is versionless and uses provider-owned latest 
   const auto& aliases = uos::deepseek::flash_aliases::DEEPSEEK_FLASH_FALLBACK_ALIASES.models;
   EXPECT_EQ(*waterfall::DEEPSEEK_WATERFALL_PROVIDER_MODEL.get("deepseek"), aliases.deepseek); EXPECT_EQ(*waterfall::DEEPSEEK_WATERFALL_PROVIDER_MODEL.get("lithos"), aliases.lithos); EXPECT_EQ(*waterfall::DEEPSEEK_WATERFALL_PROVIDER_MODEL.get("openrouter"), aliases.openrouter); EXPECT_EQ(*waterfall::DEEPSEEK_WATERFALL_PROVIDER_MODEL.get("surplus"), aliases.surplus); EXPECT_EQ(*waterfall::DEEPSEEK_WATERFALL_PROVIDER_MODEL.get("openlux"), aliases.openlux);
   const std::vector<std::string_view> order(waterfall::DEEPSEEK_WATERFALL_ORDER.begin(), waterfall::DEEPSEEK_WATERFALL_ORDER.end()); EXPECT_EQ(order, (std::vector<std::string_view>{"lithos", "deepseek", "openrouter", "surplus", "openlux"}));
-  EXPECT_EQ(waterfall::DEEPSEEK_WATERFALL_AUTO_COMPACT_PERCENT, 75);
-  EXPECT_EQ(waterfall::DEEPSEEK_WATERFALL_AUTO_COMPACT_TOKEN_LIMIT, 747'110);
+  EXPECT_EQ(waterfall::DEEPSEEK_WATERFALL_CONTEXT_WINDOW_TOKENS, 800'000);
 }
 TEST("waterfall: the plan keeps order and drops switched-off or uncredentialed hops") {
   const waterfall::DeepSeekWaterfallPlanInput all{[](const std::string&) { return true; }, [](const std::string&) { return true; }};
@@ -107,8 +106,9 @@ TEST("waterfall: the Codex catalogue record carries the advertised contract") {
   for (const auto& level : *supported) levels.emplace_back(uos::rt::getString(level, "effort").value_or(""));
   const std::vector<std::string> expected{"low", "high", "max"}; EXPECT_EQ(levels, expected);
   const uos::json::value endpoints = uos::json::array{"openai-response"}; EXPECT(uos::rt::deepEqual(*uos::rt::get(row, "supported_endpoint_types"), endpoints));
-  EXPECT_EQ(uos::rt::getNumber(row, "context_window"), std::optional<double>(1048576));
-  EXPECT_EQ(uos::rt::getNumber(row, "auto_compact_token_limit"), std::optional<double>(747'110));
+  EXPECT_EQ(uos::rt::getNumber(row, "context_window"), 800'000);
+  EXPECT_EQ(uos::rt::getNumber(row, "max_context_window"), 800'000);
+  EXPECT_EQ(uos::rt::getNumber(row, "auto_compact_token_limit"), 720'000);
 }
 TEST("waterfall: allowedPaidProviders pins the Surplus hop without changing the default order") {
   namespace health = uos::paid_fallback::health;

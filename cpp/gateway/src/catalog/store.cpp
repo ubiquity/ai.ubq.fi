@@ -387,8 +387,7 @@ namespace uos::catalog::store {
         json::object& model = entry.as_object();
         const std::optional<double> window = positiveWindowCount(rt::get(model, "context_window"));
         if (!window) continue;
-        const double sourceLimit = recent_model_context::resolvedAutoCompactTokenLimit(*window, positiveWindowCount(rt::get(model, "auto_compact_token_limit")));
-        const double limit = rt::Math::min(sourceLimit, recent_model_context::resolvedAutoCompactTokenLimit(*window, std::nullopt));
+        const double limit = recent_model_context::resolvedAutoCompactTokenLimit(*window, rt::getNumber(model, "auto_compact_token_limit"));
         const std::optional<double> current = rt::getNumber(rt::get(model, "auto_compact_token_limit"));
         if (current && *current == limit) continue;
         rt::objectSet(model, "auto_compact_token_limit", rt::makeNumber(limit));

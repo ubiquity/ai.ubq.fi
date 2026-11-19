@@ -31,7 +31,7 @@ namespace uos::models::metadata {
    * describes resolves to nulls and reports `unknown`, so a gap shows up as a gap
    * instead of as a plausible-looking wrong number. Derivation is still allowed and
    * is labeled as such — the auto-compaction limit is computed from a known
-   * context window by the shared 85%-or-50k-reserve rule, which is arithmetic, not
+   * context window by the shared 90%-or-50k-reserve rule, which is arithmetic, not
    * per-model knowledge.
    */
   // "codex_upload" | "codex_subscription" | "provider_discovery" | "openrouter" | "unknown"

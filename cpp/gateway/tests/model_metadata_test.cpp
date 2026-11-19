@@ -120,7 +120,7 @@ TEST("enrichment is the last resort, and the resolved context derives the auto-c
   const ResolvedModelMetadata resolved = resolveModelMetadata("gpt-5.6-sol", sources);
   EXPECT_EQ(resolved.context_window_tokens, 1'050'000.0);
   EXPECT_EQ(resolved.max_context_window_tokens, 1'050'000.0);
-  EXPECT_EQ(resolved.auto_compact_token_limit_tokens, 892'500.0);
+  EXPECT_EQ(resolved.auto_compact_token_limit_tokens, 945'000.0);
   EXPECT_EQ(resolved.context_source, "openrouter");
   EXPECT_EQ(resolved.effective_context_window_percent, CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT);
   EXPECT_EQ(resolved.default_reasoning_effort, "medium");
@@ -157,7 +157,7 @@ TEST("OpenRouter's window wins when it knows the id, so the gateway advertises t
   const ResolvedModelMetadata resolved = resolveModelMetadata("gpt-5.6-sol", sources);
   EXPECT_EQ(resolved.context_window_tokens, 1'050'000.0);
   EXPECT_EQ(resolved.max_context_window_tokens, 1'050'000.0);
-  EXPECT_EQ(resolved.auto_compact_token_limit_tokens, 892'500.0);
+  EXPECT_EQ(resolved.auto_compact_token_limit_tokens, 945'000.0);
   EXPECT_EQ(resolved.context_source, "openrouter");
   // Tiers still come from the upload, which stays authoritative for them.
   EXPECT_EQ(resolved.reasoning_source, "codex_upload");
