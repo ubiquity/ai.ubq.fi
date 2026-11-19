@@ -26,7 +26,10 @@
 
 TEST("PA2 cluster headers: load-time constants are initialised") {
   namespace provider = uos::provider;
-  EXPECT_EQ(provider::presentation::PROVIDER_PRESENTATION.size(), std::size_t{9});
+  EXPECT_EQ(provider::presentation::PROVIDER_PRESENTATION.size(), std::size_t{10});
+  const auto* gemini = provider::presentation::PROVIDER_PRESENTATION.get(std::string("gemini"));
+  ASSERT(gemini);
+  EXPECT_EQ(gemini->label, "Gemini");
   EXPECT(provider::presentation::PROVIDER_PRESENTATION.get(std::string("ubiquity"))->label == "Ubiquity");
   EXPECT(provider::capacity_contract::SHA256_HEX.test(std::string(64, 'a')));
   EXPECT_EQ(provider::capacity::PROVIDER_CAPACITY_SNAPSHOT_RETENTION_MS, 604'800'000.0);

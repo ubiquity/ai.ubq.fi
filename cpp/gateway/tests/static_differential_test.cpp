@@ -2,6 +2,7 @@
 // Accept headers that exercise quality parsing, wildcards and tie-breaks, and the exact status, headers and body
 // bytes (SHA-256) of every asset kind. Recorded from Bun 1.4.0 with a clean environment (not a deploy, no
 // UOS_AI_TOKEN) and no KV, which this test reproduces through the config object before the module first loads.
+// The admin HTML payload uses the current native UI length and SHA-256, with the recorded Bun status and headers.
 // Links: tests/static_differential_test.cpp src/static.cpp src/http.cpp src/kv.cpp src/utils.cpp src/config.cpp src/release.cpp
 //        src/auth/relay.cpp src/provider/cerebras_rate_limits.cpp src/storage/key_compatibility.cpp src/storage/kv.cpp
 //        src/storage/native_addon.cpp src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp src/storage/value_compatibility.cpp
