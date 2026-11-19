@@ -158,6 +158,128 @@ git ls-files -z cpp/gateway/src cpp/gateway/include cpp/gateway/runtime cpp/gate
   python3 -c 'import pathlib, sys; paths = [pathlib.Path(p.decode()) for p in sys.stdin.buffer.read().split(bytes(1)) if p and pathlib.Path(p.decode()).suffix in {".c", ".h", ".cpp", ".hpp"}]; print(len(paths), sum(len(p.read_bytes().splitlines()) for p in paths))'
 ```
 
-The eight suite shards, five fuzz campaigns, portable package and Debian proofs,
-and paired production comparison are in progress. No host cutover or live-data
-validation has been performed.
+## Portable package and Debian proof
+
+The package and both Debian proofs passed on the qualification commit above.
+The build took 811.74 s with the prepared Buildx cache, including compilation.
+The archive contains 84,268,773 bytes by `stat -c '%s' "$archive"` and passed
+`sha256sum -c SHA256SUMS`. The archive SHA-256 is
+`e901ebcc3aae379a6f36e262a8bb83d8dfb54b8bb530e9921a2d2b57169a95e0`.
+The gateway executable SHA-256 is
+`7ee30a1f59e9595fb0052c8f8d4519e0f55032aa459e41ec4788a982328bd08f`.
+The verifier took 88.38 s. Each container checked ELF dependencies and
+relocations, packaged favicons, confinement, unauthorized rejection and 1,161
+authenticated Chat requests. It counted 1,161 settlements before and after
+SIGTERM and restart, with zero cgroup OOM events. All four runs used two CPUs,
+swap disabled, eight concurrent requests and Landlock ABI 8.
+
+| Runtime   | Memory cap (MiB) | Median mock chat requests/s | cgroup peak (bytes) | Gateway peak with eight in flight (bytes) |
+| --------- | ---------------: | --------------------------: | ------------------: | ----------------------------------------: |
+| Debian 12 |              512 |                      205.73 |          37,277,696 |                                36,147,200 |
+| Debian 12 |              256 |                      208.51 |          36,814,848 |                                36,139,008 |
+| Debian 13 |              512 |                      193.00 |          37,576,704 |                                37,330,944 |
+| Debian 13 |              256 |                      156.48 |          37,322,752 |                                37,339,136 |
+
+The mock throughput is a measurement under concurrent qualification load.
+Read the figures from `verify/evidence/debian-{12,13}/{512,256}MiB.json` using
+`jq '{cap_mib,completed_chat_requests,reopened_accounted_requests,median_requests_per_second,cgroup_memory_peak_bytes,concurrent_peak_rss_bytes:.eight_in_flight.peak_rss_bytes,ooms:.cgroup_memory_events.oom}' "$proof"`.
+The exact package compiler and library versions are in the archive's `VERSION`.
+
+```bash
+# Run from the clean detached qualification checkout.
+q=/tmp/cppgw-final-20261119/final-run.7Q5kEdU9
+archive="$q/package/uos-gateway-linux-arm64.tar.gz"
+/usr/bin/time -f '%e' -o "$q/package/build.seconds" \
+  env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$q/package/home" TMPDIR="$q/package/tmp" \
+  bash cpp/gateway/packaging/portable/build.sh "$archive"
+(cd "$q/package" && sha256sum -c SHA256SUMS)
+/usr/bin/time -f '%e' -o "$q/verify/verify.seconds" \
+  env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$q/verify/home" TMPDIR="$q/verify/tmp" \
+  bash cpp/gateway/packaging/portable/verify.sh "$archive" "$q/verify/evidence"
+```
+
+## Paired production conformance
+
+The pinned production oracle was `9353aa208a336da2c1516d604e0be16dc8af0ade`,
+tree `e349a209c455dad00d5c82579f8f69934c94d6ec`. The seal bound manifest
+`6e7eaa90274f1fb18bca10bb70cba799026b3ad88fa136be45c18290a731b9aa` and
+native KV provenance
+`b27aae214e855f7ebb3f1825b5a57d1f72fc2c6be0fca525ebc25b0b02f1f2e3`.
+Bun 1.4.0 ran the exact pinned source through its `#http` and `ws@8.18.3`.
+The isolated suite verified IPv4 and IPv6 no-route outcomes. It reported 186
+cases, 184 matches, zero wire differences, zero cosmetic differences and two
+shared expectation failures in 15.375 s. Both `chat-invalid-role` and
+`responses-invalid-tool-type` returned HTTP 200 and one `deepseek.success`
+dispatch per gateway. The independent assertions still require HTTP 400 and
+zero dispatch, and the command exited 1 as expected for that baseline.
+
+```bash
+out="$q/conformance"
+tar --no-same-owner --no-same-permissions -xzf "$archive" -C "$out/bundle"
+env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$out/home" TMPDIR="$out/tmp" \
+  python3 -B "$out/bundle/seal.py" "$out/package" > "$out/seal-receipt.json"
+/usr/bin/time -f '%e' -o "$out/compare.seconds" \
+  env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$out/home" TMPDIR="$out/tmp" BUN=/home/runner/.bun/bin/bun \
+  bash cpp/gateway/conformance/run.sh "$out" "$out/seal-receipt.json"
+receipt="$out/run.wVgdjtRz/output/results.json"
+jq '{source_revision,source_tree,suite_revision,suite_tree,network,wall_s,counts,failures:[.cases[]|select(.outcome=="functional")|{id,expectation_failures}]}' "$receipt"
+sha256sum "$receipt"
+```
+
+The command took 24.32 s including Bun installation and comparison setup.
+The completed comparison receipt SHA-256 is
+`9ee029705025a83e1ad4e4a9ce8898d70cd852625964af3a932177fd4932edb2`.
+
+## Isolated side-by-side
+
+The historical supervisor-bound same-binary harness remained blocked at
+preflight. The current paired launcher could start both exact runtimes with
+separate synthetic stores in its supported sudo-backed isolated namespace.
+The runbook's `ops/side-by-side/replay.sh` dry run and `--run` matched
+all four GET and HEAD pairs for `/health` and `/openapi.json`. Both gateways
+returned HTTP 401 for anonymous `GET /health/providers`. The mock saw zero
+upstream calls. The first replay launch refused non-private state because the
+sudo boundary reset umask. The retry set umask 077 after the uid change.
+
+```bash
+out="$q/replay-final"
+env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 HOME="$out/parent-home" TMPDIR="$out/parent-tmp" \
+  timeout -k 5s 120s bash "$out/launch.sh"
+jq '{replay,replay_exit,mock_request_count,bun,native,native_release_matches_build}' "$out/replay.json"
+```
+
+The scratch driver used the same fixture network checks and launch code as
+`conformance/run.py`. It ran the replay script as documented with the four
+public reads, then compared the native health SHA and deployment ID to
+`build-profile.json`. The replay command exited 0. The driver exited 1
+because the package health body and `x-uos-git-sha` both reported `unknown`
+despite `DENO_DEPLOY_BUILD_ID=vps-2507e1229334f21341eb6444cfdb276eceda6f9e`
+successfully supplying the matching deployment ID. The portable build records
+the source identity in its package metadata and the compiled constant in
+`src/release.cpp` remains `unknown`. That artifact cannot pass production
+identity acceptance. Arch systemd, live-data rehearsal and ingress are
+unverified. [Cutover checklist](../CUTOVER.md)
+
+## Committed-diff review
+
+Requested review on exact base `13502438fb2f1a986e61af3456d84611a12eed9e`,
+tree `cb6e0ccf3859245492c5bdff8107157a0dc93350`, and head
+`96a15f5be9326f92a899a135954cbe74d38d99e3`, tree
+`c46d8a1b4a4157be6624b573ea6085c7fe2715aa`, using the configured provider and
+model `ubiquity/deepseek-flash`. The earlier attempt timed out. The resumed
+review and the retry with the exact patch supplied through
+`model_instructions_file` returned an incomplete review. The tool failed with
+`bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`. Its original
+conclusion was "Review could not be performed: every exec_command invocation
+fails before execution with \`bwrap: loopback: Failed RTM_NEWADDR: Operation not
+permitted\`, so the diff against
+13502438fb2f1a986e61af3456d84611a12eed9e could not be inspected." There are
+no ingested review findings.
+
+```bash
+timeout -k 10s 360s codex review --base origin/agent-jobs/cppgw-gemini-merge-20261119-44556239421-1 \
+  -c model=ubiquity/deepseek-flash -c review_model=ubiquity/deepseek-flash \
+  -c sandbox_mode=read-only -c approval_policy=never -c shell_environment_policy.inherit=none
+```
+
+The suite shards and remaining fuzz campaigns are in progress.
