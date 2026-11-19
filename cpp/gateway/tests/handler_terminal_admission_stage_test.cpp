@@ -27,7 +27,7 @@
 // src/authority/native_codex.cpp src/catalog/models.cpp src/kernel/quota_reservations.cpp src/kernel/quota_v2.cpp src/codex/index.cpp src/provider/claude_code_access.cpp src/recent_model_context.cpp src/codex/responses_operations.cpp
 // src/provider/openrouter_web_tools.cpp src/catalog/store.cpp src/lib/jev_compaction/compact.cpp src/deepseek/flash_aliases.cpp src/codex/native_auth_transport.cpp src/kernel/policy_queue.cpp src/authority/native_kernel_contracts.cpp src/cache/prompt_analytics_read.cpp
 // src/deepseek/responses_stream.cpp src/codex/responses_runners.cpp src/lib/jev_compaction/state.cpp src/catalog/types.cpp src/deepseek/waterfall_handler.cpp src/auth/local_development_key.cpp src/lib/jev_compaction/types.cpp src/codex/banked_reset_pool.cpp
-// src/storage/native_addon.cpp src/codex/banked_reset_claim.cpp src/provider/anthropic_chat_stream.cpp src/codex/banked_reset_provider.cpp src/codex/banked_reset_submission.cpp src/codex/responses_state.cpp src/auth/local_admin.cpp src/analytics.cpp
+// src/codex/banked_reset_claim.cpp src/provider/anthropic_chat_stream.cpp src/codex/banked_reset_provider.cpp src/codex/banked_reset_submission.cpp src/codex/responses_state.cpp src/auth/local_admin.cpp src/analytics.cpp
 // src/lib/jev_compaction/request.cpp src/codex/reset_settings.cpp src/codex/overage_settings.cpp src/runtime/websocket.cpp src/provider/lithos_models.cpp
 #include "tests/helpers/terminal_log_harness.hpp"
 #include "uos/handler/terminal_route.hpp"

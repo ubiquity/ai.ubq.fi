@@ -7,7 +7,7 @@ if [[ $# != 1 || $(uname -sm) != 'Linux aarch64' ]]; then
 fi
 cache_options=()
 if [[ ${PORTABLE_REBUILD:-0} == 1 ]]; then
-  cache_options=(--no-cache-filter 'cpp,native' --build-arg FRESH_COMPILE=1)
+  cache_options=(--no-cache-filter cpp --build-arg FRESH_COMPILE=1)
 fi
 root=$(git -C "$(dirname -- "$0")" rev-parse --show-toplevel)
 output=$(realpath -m -- "$1")

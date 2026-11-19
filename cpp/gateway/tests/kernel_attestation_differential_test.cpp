@@ -8,7 +8,7 @@
 // context helpers. Tokens were signed in the oracle with a fixed key, so they replay byte for byte.
 // Links: tests/kernel_attestation_differential_test.cpp src/kernel/attestation.cpp src/http.cpp src/auth/relay.cpp
 //   src/config.cpp src/provider/cerebras_rate_limits.cpp src/kv.cpp src/storage/kv.cpp src/utils.cpp src/release.cpp
-//   src/storage/sqlite_readonly.cpp src/storage/native_kv.cpp src/storage/native_addon.cpp
+//   src/storage/sqlite_readonly.cpp src/storage/native_kv.cpp
 #include "uos/kernel/attestation.hpp"
 #include "uos/kv.hpp"
 

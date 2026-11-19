@@ -27,7 +27,7 @@
 //        src/provider/surplus_claude_chat_request.cpp src/provider/surplus_claude_request.cpp src/release.cpp src/request_policy.cpp
 //        src/responses_failover_stream.cpp src/responses_stream.cpp src/runtime/http.cpp src/runtime/http_body.cpp
 //        src/runtime/http_early_sse.cpp src/runtime/http_tasks.cpp src/runtime/http_upgrade.cpp src/runtime/websocket.cpp
-//        src/runtime_config.cpp src/storage/key_compatibility.cpp src/storage/kv.cpp src/storage/native_addon.cpp
+//        src/runtime_config.cpp src/storage/key_compatibility.cpp src/storage/kv.cpp
 //        src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp src/storage/value_compatibility.cpp src/types.cpp
 //        src/utils.cpp
 // All 58 cyclic cluster implementations and their already-ported dependency closure.

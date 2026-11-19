@@ -14,7 +14,7 @@
 // outcome: status, headers (Bun's iteration order), body, the issuer calls made and the KV keys left behind.
 // Links: tests/passport_differential_test.cpp tests/helpers/admin_auth_harness.cpp src/auth/passport.cpp
 //        src/auth/passport_sessions.cpp src/http.cpp src/kv.cpp src/utils.cpp src/config.cpp src/release.cpp src/auth/relay.cpp
-//        src/provider/cerebras_rate_limits.cpp src/storage/key_compatibility.cpp src/storage/kv.cpp src/storage/native_addon.cpp
+//        src/provider/cerebras_rate_limits.cpp src/storage/key_compatibility.cpp src/storage/kv.cpp
 //        src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp src/storage/value_compatibility.cpp
 #include "tests/helpers/admin_auth_harness.hpp"
 #include "uos/auth/passport.hpp"

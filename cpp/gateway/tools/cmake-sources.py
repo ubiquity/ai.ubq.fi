@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import sys
 
-EXPECTED_PORTED_MODULES = 322
+EXPECTED_PORTED_MODULES = 320
 CUSTOM_MODULE_KEYS = {
     "cpp/gateway/src/admin/gemini_quota.cpp",
     "cpp/gateway/src/provider/gemini.cpp",

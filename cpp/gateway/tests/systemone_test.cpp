@@ -4,7 +4,7 @@
 // src/provider/openrouter.cpp src/models/openrouter_models.cpp src/systemone/handlers.cpp src/kv.cpp src/http.cpp src/runtime/http.cpp src/runtime/http_body.cpp src/responses_stream.cpp
 // src/authority/native_paid_policy.cpp src/codex/quota.cpp src/runtime/http_early_sse.cpp src/provider/cerebras_rate_limits.cpp src/release.cpp src/request.cpp src/provider/removed_provider_telemetry.cpp src/storage/kv.cpp
 // src/storage/sqlite_readonly.cpp src/auth/relay.cpp src/codex/responses_error.cpp src/runtime/http_upgrade.cpp src/upstream_wire.cpp src/runtime/http_tasks.cpp src/runtime/websocket.cpp src/storage/native_kv.cpp
-// src/storage/native_addon.cpp src/deepseek/index.cpp src/bounded_response_body.cpp src/provider/lithos.cpp src/provider/cerebras.cpp src/provider/lithos_rate_limits.cpp
+// src/deepseek/index.cpp src/bounded_response_body.cpp src/provider/lithos.cpp src/provider/cerebras.cpp src/provider/lithos_rate_limits.cpp
 // Port of the direct expired-dispatch case in tests/systemone.test.ts plus bounded decision-transport coverage.
 // Includes the original handler/http route-predicate registration; it makes no ingress claim.
 // The SystemOne handler cases and real ephemeral-loopback deadline case are ported below.

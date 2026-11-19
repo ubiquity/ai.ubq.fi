@@ -15,7 +15,7 @@
 // src/provider/claude_capacity_rollups.cpp src/cache/prompt_analytics_read.cpp src/provider/capacity_rollups.cpp src/cache/prompt_analytics_core.cpp src/provider/capacity_history.cpp
 // src/models/codex_models_availability.cpp src/provider/capacity_parse.cpp src/provider/claude_capacity_history.cpp src/provider/capacity_analytics.cpp src/codex/routing_state.cpp
 // src/provider/health.cpp src/provider/anthropic_chat_stream.cpp src/codex/rate_limit_429.cpp src/paid_fallback/ledger_stats.cpp src/codex/banked_reset_provider.cpp
-// src/storage/native_addon.cpp src/metered_quota.cpp src/authority/native_codex_429.cpp src/codex/reset_settings.cpp src/codex/experiment.cpp
+// src/metered_quota.cpp src/authority/native_codex_429.cpp src/codex/reset_settings.cpp src/codex/experiment.cpp
 // src/codex/account_routing.cpp src/codex/routing_serial.cpp src/authority/native_codex.cpp src/codex/routing_evaluation.cpp src/codex/overage_settings.cpp
 // Original assertions passed under isolated Bun1.4.0; full owned API outputs replay below.
 // The three async/graph cases follow as explicit tests. No higher handler stand-ins.

@@ -3,7 +3,7 @@
 //        src/sentinel/replay_retention_schema.cpp src/sentinel/replay_model.cpp src/sentinel/replay_envelope.cpp
 //        src/sentinel/replay_observation.cpp src/sentinel/upstream_capture.cpp src/sentinel/replay_limits.cpp
 //        src/sentinel/incident_outbox.cpp src/request.cpp src/utils.cpp src/config.cpp src/release.cpp src/kv.cpp
-//        src/storage/key_compatibility.cpp src/storage/kv.cpp src/storage/native_addon.cpp src/storage/native_kv.cpp
+//        src/storage/key_compatibility.cpp src/storage/kv.cpp src/storage/native_kv.cpp
 //        src/storage/sqlite_readonly.cpp src/storage/value_compatibility.cpp
 // Port of tests/sentinel-replay-bootstrap-retry.test.ts, in full (all 25 cases). Storage is `openKv(":memory:")`:
 // rt::MemoryKv. `{ ...kv }` (another handle object on the same store, the shape of another process) is an

@@ -2,7 +2,7 @@
 // Links: tests/kernel_usage_coverage_test.cpp src/kernel/usage.cpp src/kernel/quota_v2.cpp src/kernel/quota_reservations.cpp src/types.cpp
 //        src/authority/native_kernel.cpp src/authority/native_kernel_contracts.cpp src/http.cpp src/auth/relay.cpp src/config.cpp
 //        src/provider/cerebras_rate_limits.cpp src/release.cpp src/utils.cpp src/kv.cpp src/storage/kv.cpp src/storage/sqlite_readonly.cpp
-//        src/storage/native_kv.cpp src/storage/native_addon.cpp tests/helpers/counting_kv.cpp
+//        src/storage/native_kv.cpp tests/helpers/counting_kv.cpp
 //
 // CountingKv is final in C++, so the test's FaultyKv subclass is a ForwardingKv over its own
 // CountingKv. The shared `kv` is installed with setKvForTest at the start of every case and

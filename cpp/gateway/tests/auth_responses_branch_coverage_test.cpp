@@ -2,7 +2,7 @@
 // Deferred: eight api-key-policy cases listed in the TS file; their owner supplies the remaining cases.
 // Links: tests/auth_responses_branch_coverage_test.cpp tests/helpers/passkeys_harness.cpp src/auth/passkeys.cpp src/auth/relay.cpp
 //   src/http.cpp src/request.cpp src/utils.cpp src/kv.cpp src/storage/kv.cpp src/release.cpp src/storage/sqlite_readonly.cpp
-//   src/storage/native_kv.cpp src/storage/native_addon.cpp src/config.cpp src/provider/cerebras_rate_limits.cpp
+//   src/storage/native_kv.cpp src/config.cpp src/provider/cerebras_rate_limits.cpp
 //   src/chat/stream_translation.cpp src/openai_telemetry.cpp src/codex/responses_error.cpp src/inference_deadline.cpp
 //   src/provider/removed_provider_telemetry.cpp src/responses_failover_stream.cpp src/responses_stream.cpp src/types.cpp
 #include "tests/helpers/passkeys_harness.hpp"

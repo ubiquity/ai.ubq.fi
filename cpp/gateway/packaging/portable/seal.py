@@ -93,9 +93,7 @@ def seal(payload, output):
         if stage.exists():
             shutil.rmtree(stage)
 
-    package = json.loads((output / "package.json").read_text())
-    return {"packageRoot": str(output), "packageManifestSha256": runtime.digest(output / "manifest.sha256"),
-            "nativeKvProvenanceSha256": package["nativeKvProvenanceSha256"]}
+    return {"packageRoot": str(output), "packageManifestSha256": runtime.digest(output / "manifest.sha256")}
 
 
 def main():

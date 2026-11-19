@@ -32,7 +32,7 @@
 // src/request.cpp src/responses_attempts.cpp src/responses_buffered.cpp src/responses_failover_stream.cpp src/responses_handler.cpp
 // src/responses_native_headers.cpp src/responses_request.cpp src/responses_stream.cpp src/runtime_config.cpp src/runtime/http_body.cpp
 // src/runtime/http_early_sse.cpp src/runtime/http_tasks.cpp src/runtime/http_upgrade.cpp src/runtime/http.cpp src/runtime/websocket.cpp
-// src/sentinel/upstream_capture.cpp src/storage/key_compatibility.cpp src/storage/kv.cpp src/storage/native_addon.cpp src/storage/native_kv.cpp
+// src/sentinel/upstream_capture.cpp src/storage/key_compatibility.cpp src/storage/kv.cpp src/storage/native_kv.cpp
 // src/storage/sqlite_readonly.cpp src/storage/value_compatibility.cpp src/upstream_wire.cpp src/utils.cpp src/types.cpp
 // src/authority/native_paid_contracts.cpp src/lib/jev_compaction/types.cpp tests/helpers/counting_kv.cpp
 // Source330 prototype read-count/FormData substitution instrumentation has no rt value-type seam;

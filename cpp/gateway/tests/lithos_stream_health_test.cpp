@@ -9,7 +9,7 @@
 // src/deepseek/responses_stream.cpp src/http.cpp src/deepseek/responses_payload.cpp
 // src/storage/kv.cpp src/request_policy.cpp src/bounded_response_body.cpp
 // src/provider/selection.cpp src/storage/sqlite_readonly.cpp src/defaults.cpp
-// src/storage/native_addon.cpp src/provider/surplus.cpp src/codex/responses_error.cpp
+// src/provider/surplus.cpp src/codex/responses_error.cpp
 // src/provider/surplus_claude_request.cpp src/provider/surplus_claude_chat_request.cpp src/models/codex_models_fetch.cpp
 // src/provider/claude_code_models.cpp src/auth/relay.cpp src/provider/metered.cpp
 // src/models/codex_models.cpp src/codex/dispatch.cpp src/runtime_config.cpp

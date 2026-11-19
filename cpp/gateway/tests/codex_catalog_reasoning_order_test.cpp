@@ -16,7 +16,7 @@
 // src/responses_stream.cpp src/provider/capacity_rollups.cpp src/provider/capacity_parse.cpp src/cache/prompt_analytics_read.cpp
 // src/authority/native_codex_429.cpp src/cache/prompt_analytics_core.cpp src/provider/health.cpp src/paid_fallback/ledger_stats.cpp
 // src/codex/experiment.cpp src/codex/banked_reset.cpp src/provider/claude_capacity_history.cpp src/provider/anthropic_chat_responses.cpp
-// src/storage/native_addon.cpp src/provider/anthropic_response_wire.cpp src/storage/native_kv.cpp src/provider/capacity_analytics.cpp
+// src/provider/anthropic_response_wire.cpp src/storage/native_kv.cpp src/provider/capacity_analytics.cpp
 // src/provider/claude_capacity_rollups.cpp src/runtime/websocket.cpp src/codex/banked_reset_provider.cpp src/responses_failover_stream.cpp
 // src/codex/responses_error.cpp src/http.cpp src/codex/account_routing.cpp src/codex/routing_serial.cpp
 // src/provider/lithos_rate_limits.cpp src/codex/routing_evaluation.cpp src/metered_quota.cpp src/provider/cerebras_rate_limits.cpp

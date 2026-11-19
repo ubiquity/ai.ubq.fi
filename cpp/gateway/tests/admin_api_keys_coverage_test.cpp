@@ -12,7 +12,7 @@
 // src/models/codex_models.cpp src/storage/sqlite_readonly.cpp src/codex/auth_refresh.cpp src/storage/native_kv.cpp
 // src/provider/anthropic_chat_responses.cpp src/provider/metered.cpp src/codex/auth.cpp src/codex/native_auth.cpp
 // src/provider/surplus_claude_request.cpp src/paid_fallback/ledger_stats.cpp src/provider/health.cpp src/codex/external_auth.cpp
-// src/provider/capacity_events.cpp src/provider/anthropic_replay.cpp src/storage/native_addon.cpp src/provider/anthropic_response_wire.cpp
+// src/provider/capacity_events.cpp src/provider/anthropic_replay.cpp src/provider/anthropic_response_wire.cpp
 // src/codex/capacity_routing.cpp src/release.cpp src/authority/native_codex_capacity.cpp src/auth/relay.cpp
 // src/provider/capacity.cpp src/provider/anthropic_chat_stream.cpp src/provider/capacity_rollups.cpp src/provider/capacity_contract.cpp
 // src/provider/capacity_parse.cpp src/provider/claude_capacity_rollups.cpp src/bounded_response_body.cpp src/responses_stream.cpp

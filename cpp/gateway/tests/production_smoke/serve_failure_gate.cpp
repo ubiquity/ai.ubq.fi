@@ -1,16 +1,13 @@
-// Focused native lifecycle gate. Invoke in the production-smoke OS namespace with a genuine
-// artifact binding and private TMPDIR; no fake backend, MemoryKv, listener replacement or provider.
+// Native lifecycle gate using a private SQLite store inside the fixture namespace.
 #include "uos/kv.hpp"
 #include "uos/rt/async.hpp"
 #include "uos/rt/error.hpp"
 #include "uos/rt/fs.hpp"
-#include "uos/rt/json.hpp"
 #include "uos/rt/kv.hpp"
 #include "uos/rt/process.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/serve.hpp"
 #include "uos/storage/kv.hpp"
-#include "uos/storage/native_addon.hpp"
 
 #include <arpa/inet.h>
 #include <fcntl.h>
@@ -78,7 +75,7 @@ namespace {
     int descriptor = -1;
   };
 
-  uos::rt::Task<void> gate(std::string bindingPath) {
+  uos::rt::Task<void> gate() {
     using namespace uos;
     const serve::ServeStartupOptions unprepared{"127.0.0.1", 0};
     bool refused = false;
@@ -86,22 +83,14 @@ namespace {
       auto serving = serve::importMetaMain(unprepared);
       co_await std::move(serving);
     } catch (const rt::JsError& error) {
-      refused = rt::includes(error.message, "must be prepared");
+      refused = rt::includes(error.message, "must be initialized");
     }
-    require(refused, "Unprepared typed entry did not fail before storage/listener effects");
+    require(refused, "Uninitialized typed entry did not fail before storage/listener effects");
 
-    const auto raw = rt::jsonParse(rt::fs::readFileSync(bindingPath, "utf8"));
-    require(raw.is_object(), "Genuine native-KV binding must be an object");
-    const auto artifact = rt::getString(raw, "artifactDirectory");
-    const auto provenance = rt::getString(raw, "expectedProvenanceSha256");
-    const auto inputs = rt::getString(raw, "inputsManifest");
-    require(artifact.has_value() && provenance.has_value() && inputs.has_value(), "Native-KV binding fields are missing");
-    storage::native_addon::NativeKvArtifactBinding binding;
-    binding.artifactDirectory = std::string(*artifact);
-    binding.expectedProvenanceSha256 = std::string(*provenance);
-    binding.inputsManifest = std::string(*inputs);
-    storage::native_addon::prepareNativeKvBackend(binding);
+    require(!rt::fs::existsSync(".data"), "Uninitialized startup accessed the default database");
+
     const std::string directory = rt::fs::mkdtempSync(rt::path::join(rt::os::tmpdir(), "uos-serve-failure-"));
+    const auto cleanup = rt::scopeExit([directory] { rt::fs::rmSync(directory, {.recursive = true, .force = true}); });
     const std::string databasePath = directory + "/synthetic-state.sqlite3";
     auto opening = storage::kv::openKv(databasePath);
     auto store = co_await std::move(opening);
@@ -143,15 +132,14 @@ namespace {
 }
 
 int main(int argc, char** argv) {
-  if (argc != 2) {
-    std::fprintf(stderr, "usage: uos-serve-failure-gate genuine-native-kv-binding.json\n");
+  if (argc != 1) {
+    std::fprintf(stderr, "usage: uos-serve-failure-gate\n");
     return 2;
   }
   uos::rt::process::setArgv(argc, argv);
   uos::rt::loop().setUncaughtPolicy(uos::rt::UncaughtPolicy::report);
   try {
-    const std::string bindingPath(argv[1]);
-    auto running = gate(bindingPath);
+    auto running = gate();
     uos::rt::blockOn(std::move(running));
     return 0;
   } catch (const std::exception& error) {

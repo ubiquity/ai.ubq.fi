@@ -12,5 +12,5 @@ if ! test -f "$uos_package/bin/uos-gateway" || test -L "$uos_package/bin/uos-gat
   echo 'Native gateway executable is unavailable or linked' >&2
   exit 78
 fi
-exec /usr/bin/env -u LD_PRELOAD -u LD_LIBRARY_PATH -u LD_AUDIT -u LD_ORIGIN_PATH -u BUN_OPTIONS -u NODE_OPTIONS -u NODE_PATH \
+exec /usr/bin/env -u LD_PRELOAD -u LD_LIBRARY_PATH -u LD_AUDIT -u LD_ORIGIN_PATH \
   "$uos_package/bin/uos-gateway" --runtime-manifest "$1"

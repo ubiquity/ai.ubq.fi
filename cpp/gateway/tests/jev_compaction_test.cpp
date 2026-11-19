@@ -11,7 +11,7 @@
 //        src/provider/surplus_claude_chat_request.cpp src/codex/native_auth_transport.cpp src/codex/external_auth.cpp src/codex/banked_reset.cpp src/authority/native_codex_429.cpp src/provider/anthropic_chat_responses.cpp
 //        src/provider/cerebras_rate_limits.cpp src/runtime/websocket.cpp src/provider/capacity_contract.cpp src/codex/responses_error.cpp src/codex/reset_settings.cpp src/authority/native_codex_evaluation.cpp
 //        src/provider/capacity.cpp src/provider/capacity_analytics.cpp src/provider/capacity_history.cpp src/provider/health.cpp src/provider/capacity_parse.cpp src/provider/capacity_rollups.cpp
-//        src/cache/prompt_analytics_core.cpp src/provider/claude_code_usage_schema.cpp src/codex/experiment.cpp src/codex/account_routing.cpp src/storage/kv.cpp src/storage/native_addon.cpp
+//        src/cache/prompt_analytics_core.cpp src/provider/claude_code_usage_schema.cpp src/codex/experiment.cpp src/codex/account_routing.cpp src/storage/kv.cpp
 //        src/provider/claude_capacity_rollups.cpp src/provider/claude_capacity_history.cpp src/provider/anthropic_chat_stream.cpp src/authority/native_codex.cpp src/codex/banked_reset_provider.cpp src/codex/routing_serial.cpp
 //        src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp src/paid_fallback/ledger_stats.cpp src/cache/prompt_analytics_read.cpp src/codex/routing_evaluation.cpp src/codex/overage_settings.cpp
 //        src/metered_quota.cpp

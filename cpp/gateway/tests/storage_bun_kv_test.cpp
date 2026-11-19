@@ -1,23 +1,9 @@
-// Port of tests/storage-bun-kv.test.ts. The cases of src/storage/native-addon.ts, src/storage/kv.ts
-// (#kv openKv: path checks, codec marker, symlink and legacy refusals, the created marker) and
-// src/kv.ts (the injection seam, coalesced and retried opening) prepare a synthetic verified
-// artifact, as the TS test preload prepares the real one; the ones that observe what openKv hands
-// the @deno/kv opener install an opener serving rt::MemoryKv stores. The native store's own
-// semantics and durability (typed values, CAS, check budgets, facade overrides, TTL across
-// restart, lists and cursors, U64 sums, snapshot reads, key order, cause graphs, two handles,
-// separate processes, SIGKILL) run through the default opener, the durable store linked into the
-// C++ runtime (rt::SqliteKv, docs/rt/kv-durable.md); the processes are this test binary run
-// again as children. Not ported: "portable graph validation handles cycles and refuses getters
-// without invoking them" (rt::KvValue trees hold no cycles or accessor properties; a TS-written
-// cyclic value reads as TypeError "Serialized value cycle has no KvValue representation",
-// tests/rt/kv_jsc_deserialize_test.cpp).
-// Links: tests/storage_bun_kv_test.cpp src/kv.cpp src/storage/kv.cpp src/storage/native_kv.cpp src/storage/native_addon.cpp
+// Exercise the marked SQLite store, its guard, concurrent handles and subprocess durability.
+// Links: tests/storage_bun_kv_test.cpp src/kv.cpp src/storage/kv.cpp src/storage/native_kv.cpp
 //        src/storage/sqlite_readonly.cpp src/storage/value_compatibility.cpp src/storage/key_compatibility.cpp
 #include "uos/kv.hpp"
 #include "uos/storage/kv.hpp"
-#include "uos/storage/native_addon.hpp"
 #include "uos/storage/sqlite_readonly.hpp"
-#include "uos/rt/crypto.hpp"
 #include "uos/rt/env.hpp"
 #include "uos/rt/fs.hpp"
 #include "uos/rt/json.hpp"
@@ -46,8 +32,6 @@
 #include <vector>
 
 using namespace uos;
-using storage::native_addon::NativeKvArtifactBinding;
-using storage::native_addon::verifyNativeKvArtifact;
 
 namespace {
   // The TS keeps fixtures under `.cleanup-evidence/m01-storage` and removes them after
@@ -66,17 +50,6 @@ namespace {
     std::string databasePath() const { return rt::fs::mkdtempSync(root + "/native-") + "/store.sqlite3"; }
   };
 
-  std::string hash(std::string_view value) { return rt::crypto::createHash("sha256").update(value).digest("hex"); }
-  std::string hash(std::span<const std::uint8_t> value) { return rt::crypto::createHash("sha256").update(value).digest("hex"); }
-
-  std::string errorMessage(const NativeKvArtifactBinding& binding) {
-    try {
-      (void)verifyNativeKvArtifact(binding);
-    } catch (const rt::JsError& error) {
-      return error.message;
-    }
-    return "<no error>";
-  }
 }
 
 // scripts/test-runner.ts runs every bun test file with the provider variables removed;
@@ -92,68 +65,6 @@ TEST("storage checks execute without provider credentials") {
   EXPECT(absent);
 }
 
-TEST("native artifact verification requires independent provenance and matching frozen inputs") {
-  const Fixtures fixtures;
-  const std::string path = fixtures.temporaryPath();
-  const std::string directory = path + ".artifact";
-  rt::fs::mkdirSync(directory);
-  const std::vector<std::uint8_t> bytes = {1, 2, 3};
-  json::object inputs = rt::jsonParse(std::string(R"({"schema":1,"sdk":{"name":"@deno/kv","version":"0.14.0"},)") +
-                                      R"("source":{"commit":"9fe65cc138ff56ca5bfe7a1bf8c53e832246f9d5"},"patches":[{"file":"fixture.patch","sha256":")" +
-                                      std::string(64, 'a') + R"("}],"lock":{"sha256":")" + std::string(64, 'b') +
-                                      R"("},"toolchain":{"version":"fixture"},"recipe":{"locked":true}})")
-                          .as_object();
-  json::object artifact;
-  artifact["file"] = "native-kv.node";
-  artifact["platform"] = std::string(rt::process::platform);
-  artifact["architecture"] = std::string(rt::process::arch);
-  artifact["target"] = "fixture-target";
-  artifact["napiVersion"] = 4;
-  inputs["artifact"] = artifact;
-  const std::string inputsText = rt::jsonStringify(json::value(inputs));
-  json::object provenance = rt::objectSpread(inputs);
-  rt::objectDefine(provenance, "inputsSha256", json::value(hash(inputsText)));
-  json::object provenanceArtifact = rt::objectSpread(artifact);
-  rt::objectDefine(provenanceArtifact, "sha256", json::value(hash(bytes)));
-  rt::objectDefine(provenance, "artifact", json::value(provenanceArtifact));
-  json::object build;
-  build["exitCode"] = 0;
-  build["logSha256"] = std::string(64, 'c');
-  rt::objectDefine(provenance, "build", json::value(build));
-  const std::string provenanceText = rt::jsonStringify(json::value(provenance));
-  rt::fs::writeFileSync(directory + "/inputs.json", inputsText);
-  rt::fs::writeFileSync(directory + "/native-kv.provenance.json", provenanceText);
-  rt::fs::writeFileSync(directory + "/native-kv.node", std::span<const std::uint8_t>(bytes));
-  NativeKvArtifactBinding binding;
-  binding.artifactDirectory = directory;
-  binding.expectedProvenanceSha256 = hash(provenanceText);
-  binding.inputsManifest = directory + "/inputs.json";
-  EXPECT_EQ(verifyNativeKvArtifact(binding).artifactSha256, hash(bytes));
-  NativeKvArtifactBinding rebound = binding;
-  rebound.expectedProvenanceSha256 = std::string(64, '0');
-  EXPECT(rt::includes(errorMessage(rebound), "release binding"));
-  const std::vector<std::uint8_t> tampered = {4};
-  rt::fs::writeFileSync(directory + "/native-kv.node", std::span<const std::uint8_t>(tampered));
-  EXPECT(rt::includes(errorMessage(binding), "artifact hash"));
-  rt::fs::writeFileSync(directory + "/native-kv.node", std::span<const std::uint8_t>(bytes));
-  json::object failedProvenance = provenance;
-  json::object failedBuild = build;
-  failedBuild["exitCode"] = 1;
-  failedProvenance["build"] = failedBuild;
-  const std::string failedText = rt::jsonStringify(json::value(failedProvenance));
-  rt::fs::writeFileSync(directory + "/native-kv.provenance.json", failedText);
-  NativeKvArtifactBinding failed = binding;
-  failed.expectedProvenanceSha256 = hash(failedText);
-  EXPECT(rt::includes(errorMessage(failed), "build did not complete"));
-  rt::fs::writeFileSync(directory + "/native-kv.provenance.json", provenanceText);
-  json::object changedInputs = inputs;
-  json::object recipe;
-  recipe["locked"] = false;
-  changedInputs["recipe"] = recipe;
-  rt::fs::writeFileSync(directory + "/inputs.json", rt::jsonStringify(json::value(changedInputs)));
-  EXPECT(rt::includes(errorMessage(binding), "frozen inputs"));
-}
-
 // ---- src/storage/kv.ts and src/kv.ts ------------------------------------------------------------
 namespace {
   using storage::sqlite_readonly::Database;
@@ -163,67 +74,10 @@ namespace {
     if (::symlink(target.c_str(), path.c_str()) != 0) throw std::runtime_error("symlink failed: " + path);
   }
 
-  // The test preload's prepared native backend: a verified synthetic artifact whose exports are
-  // functions the cases never reach (the opener below replaces the SDK that would call them).
-  void prepareFixtureBackend() {
-    if (storage::native_addon::nativeKvBackendIsPrepared()) return;
-    const Fixtures fixtures;
-    const std::string directory = rt::fs::mkdtempSync(fixtures.root + "/backend-");
-    const std::vector<std::uint8_t> bytes = {9, 8, 7};
-    json::object inputs = rt::jsonParse(std::string(R"({"schema":1,"sdk":{"name":"@deno/kv","version":"0.14.0"},)") +
-                                        R"("source":{"commit":"9fe65cc138ff56ca5bfe7a1bf8c53e832246f9d5"},"patches":[],"lock":{"sha256":")" +
-                                        std::string(64, 'b') + R"("},"toolchain":{"version":"fixture"},"recipe":{"locked":true}})")
-                            .as_object();
-    json::object artifact;
-    artifact["file"] = "native-kv.node";
-    artifact["platform"] = std::string(rt::process::platform);
-    artifact["architecture"] = std::string(rt::process::arch);
-    artifact["target"] = "fixture-target";
-    artifact["napiVersion"] = 4;
-    inputs["artifact"] = artifact;
-    const std::string inputsText = rt::jsonStringify(json::value(inputs));
-    json::object provenance = rt::objectSpread(inputs);
-    rt::objectDefine(provenance, "inputsSha256", json::value(hash(inputsText)));
-    json::object provenanceArtifact = rt::objectSpread(artifact);
-    rt::objectDefine(provenanceArtifact, "sha256", json::value(hash(bytes)));
-    rt::objectDefine(provenance, "artifact", json::value(provenanceArtifact));
-    json::object build;
-    build["exitCode"] = 0;
-    build["logSha256"] = std::string(64, 'c');
-    rt::objectDefine(provenance, "build", json::value(build));
-    const std::string provenanceText = rt::jsonStringify(json::value(provenance));
-    rt::fs::writeFileSync(directory + "/inputs.json", inputsText);
-    rt::fs::writeFileSync(directory + "/native-kv.provenance.json", provenanceText);
-    rt::fs::writeFileSync(directory + "/native-kv.node", std::span<const std::uint8_t>(bytes));
-    storage::native_addon::nativeKvRequire() = [](const std::string&) -> std::optional<storage::native_addon::NapiInterface> {
-      storage::native_addon::NapiInterface napi;
-      napi.open = [](std::string, std::optional<bool>, bool) -> double { throw std::logic_error("fixture native export"); };
-      napi.close = [](double, bool) { throw std::logic_error("fixture native export"); };
-      napi.snapshotRead = [](double, std::vector<std::uint8_t>, bool) -> rt::Promise<std::vector<std::uint8_t>> { throw std::logic_error("fixture native export"); };
-      napi.atomicWrite = [](double, std::vector<std::uint8_t>, bool) -> rt::Promise<std::vector<std::uint8_t>> { throw std::logic_error("fixture native export"); };
-      napi.dequeueNextMessage = [](double, bool) -> rt::Promise<std::optional<storage::native_addon::NapiDequeuedMessage>> {
-        throw std::logic_error("fixture native export");
-      };
-      napi.finishMessage = [](double, double, bool, bool) -> rt::Promise<void> { throw std::logic_error("fixture native export"); };
-      napi.startWatch = [](double, std::vector<std::uint8_t>, bool) -> rt::Promise<double> { throw std::logic_error("fixture native export"); };
-      napi.dequeueNextWatchMessage = [](double, double, bool) -> rt::Promise<std::optional<std::vector<std::uint8_t>>> {
-        throw std::logic_error("fixture native export");
-      };
-      napi.endWatch = [](double, double, bool) { throw std::logic_error("fixture native export"); };
-      return napi;
-    };
-    NativeKvArtifactBinding binding;
-    binding.artifactDirectory = directory;
-    binding.expectedProvenanceSha256 = hash(provenanceText);
-    binding.inputsManifest = directory + "/inputs.json";
-    storage::native_addon::prepareNativeKvBackend(binding);
-  }
-
   // What the native store received for one open.
   struct OpenCall {
     std::string path;
     std::string implementation;
-    bool napiComplete = false;
     storage::kv::NativeKvOpenOptions options;
   };
 
@@ -261,7 +115,6 @@ namespace {
     std::shared_ptr<FixtureSdk> sdk = std::make_shared<FixtureSdk>();
     storage::kv::NativeKvOpener saved = storage::kv::openNativeKv();
     SdkScope() {
-      prepareFixtureBackend();
       std::shared_ptr<FixtureSdk> current = sdk;
       storage::kv::openNativeKv() = [current](std::string path, storage::kv::NativeKvOpenOptions options) { return openFixtureStore(current, path, options); };
     }
@@ -273,10 +126,7 @@ namespace {
     SdkScope& operator=(const SdkScope&) = delete;
 
     static rt::Task<std::shared_ptr<rt::Kv>> openFixtureStore(std::shared_ptr<FixtureSdk> sdk, std::string path, storage::kv::NativeKvOpenOptions options) {
-      const storage::native_addon::NapiInterface& napi = options.napi;
-      const bool complete = napi.open && napi.close && napi.snapshotRead && napi.atomicWrite && napi.dequeueNextMessage && napi.finishMessage && napi.startWatch &&
-                            napi.dequeueNextWatchMessage && napi.endWatch;
-      sdk->calls.push_back(OpenCall{path, options.implementation, complete, options});
+      sdk->calls.push_back(OpenCall{path, options.implementation, options});
       if (sdk->beforeOpen) sdk->beforeOpen(path);
       const std::function<double()> now = [] { return rt::dateNow(); };
       if (sdk->nativeArithmeticFailure) co_return std::make_shared<NativeArithmeticFailureKv>(std::make_shared<rt::MemoryKv>(now));
@@ -323,10 +173,7 @@ namespace {
   }
 }
 
-// Before any case prepares a backend: the path checks come first, then the backend check, and an
-// unprepared open leaves no file behind.
-ASYNC_TEST("openKv validates its path and requires the prepared native backend before touching storage") {
-  EXPECT(!storage::native_addon::nativeKvBackendIsPrepared());
+ASYNC_TEST("openKv requires an explicit local SQLite or memory path") {
   std::vector<std::string> remote;
   remote.push_back("");
   remote.push_back("http://example.test/kv");
@@ -335,20 +182,9 @@ ASYNC_TEST("openKv validates its path and requires the prepared native backend b
     const std::string message = co_await rejectionMessage(storage::kv::openKv(path));
     EXPECT_EQ(message, std::string("Bun KV requires an explicit local SQLite path or :memory:"));
   }
-  const Fixtures fixtures;
-  const std::string path = fixtures.databasePath();
-  std::vector<std::string> targets;
-  targets.push_back(":memory:");
-  targets.push_back(path);
-  for (const std::string& target : targets) {
-    const std::string message = co_await rejectionMessage(storage::kv::openKv(target));
-    EXPECT_EQ(message, std::string("Prepare the verified native KV artifact before opening a database"));
-  }
-  EXPECT(!rt::fs::existsSync(path));
 }
 
 ASYNC_TEST("a persisted Bun database reopens with its codec marker and typed values") {
-  prepareFixtureBackend();
   const Fixtures fixtures;
   const std::string path = fixtures.databasePath();
   std::shared_ptr<rt::Kv> first = co_await storage::kv::openKv(path);
@@ -483,7 +319,6 @@ ASYNC_TEST("openKv creates a marked database exclusively and hands the native st
   ASSERT_EQ(scope.sdk->calls.size(), std::size_t{1});
   EXPECT_EQ(scope.sdk->calls[0].path, path);
   EXPECT_EQ(scope.sdk->calls[0].implementation, std::string("sqlite"));
-  EXPECT(scope.sdk->calls[0].napiComplete);
   EXPECT_EQ(rt::fs::lstatSync(path).mode & 0777u, 0600u);
   EXPECT_EQ(metadataValue(path, "codec"), std::optional<std::string>("bun-jsc-v1"));
   EXPECT_EQ(metadataValue(path, "created_bun_version"), std::optional<std::string>("1.4.0"));
@@ -539,7 +374,6 @@ ASYNC_TEST("openKv guards the native store it opened") {
 }
 
 ASYNC_TEST("the default @deno/kv opener is the linked durable store, behind the guard") {
-  prepareFixtureBackend();
   std::shared_ptr<rt::Kv> memory = co_await storage::kv::openKv(":memory:");
   const rt::KvCommitResult written = co_await memory->set(rt::KvKey{"linked"}, rt::KvValue(1));
   EXPECT(written.ok);
@@ -550,7 +384,6 @@ ASYNC_TEST("the default @deno/kv opener is the linked durable store, behind the 
   // What the SDK's openKv checks before opening a SQLite store.
   storage::kv::NativeKvOpenOptions options;
   options.implementation = "sqlite";
-  options.napi = storage::native_addon::preparedNativeKvBackend();
   auto codecOpening = storage::kv::openNativeKv()(std::string(":memory:"), options);
   const std::string codec = co_await rejectionMessage(std::move(codecOpening));
   EXPECT_EQ(codec, std::string("Bun provides v8.serialize/deserialize, but it uses an incompatible format (JavaScriptCore). Provide explicit 'encodeV8' and "
@@ -560,10 +393,6 @@ ASYNC_TEST("the default @deno/kv opener is the linked durable store, behind the 
   const std::string half = co_await rejectionMessage(std::move(halfOpening));
   EXPECT_EQ(half, std::string("Provide both 'encodeV8' or 'decodeV8', or neither"));
   options.decodeV8 = rt::kvJscDeserialize;
-  options.napi.endWatch = nullptr;
-  auto napiOpening = storage::kv::openNativeKv()(std::string(":memory:"), options);
-  const std::string napi = co_await rejectionMessage(std::move(napiOpening));
-  EXPECT_EQ(napi, std::string("Unexpected napi interface for sqlite"));
   options.implementation = "postgres";
   auto implementationOpening = storage::kv::openNativeKv()(std::string(":memory:"), options);
   const std::string implementation = co_await rejectionMessage(std::move(implementationOpening));
@@ -589,10 +418,9 @@ namespace {
   const double NAN_ = std::numeric_limits<double>::quiet_NaN();
   const KvCommitResult conflict{false, ""};
 
-  // `openFixture(path = ":memory:")`: openKv with the prepared backend.
+  // Open the linked store directly.
   rt::Task<std::shared_ptr<rt::Kv>> openFixture(std::string path) {
-    prepareFixtureBackend();
-    std::shared_ptr<rt::Kv> kv = co_await storage::kv::openKv(std::move(path));
+      std::shared_ptr<rt::Kv> kv = co_await storage::kv::openKv(std::move(path));
     co_return kv;
   }
   rt::Task<std::shared_ptr<rt::Kv>> openFixture() { return openFixture(":memory:"); }
@@ -637,54 +465,6 @@ namespace {
     return selector;
   }
 
-  // A verified artifact the child processes prepare (the parent's own fixture is removed after
-  // preparing); kept until the binary exits.
-  const std::string& childBindingJson() {
-    static const Fixtures fixtures;
-    static const std::string binding = [] {
-      const std::string directory = fixtures.root;
-      const std::vector<std::uint8_t> bytes = {5, 4, 3};
-      json::object inputs = rt::jsonParse(std::string(R"({"schema":1,"sdk":{"name":"@deno/kv","version":"0.14.0"},)") +
-                                          R"("source":{"commit":"9fe65cc138ff56ca5bfe7a1bf8c53e832246f9d5"},"patches":[],"lock":{"sha256":")" + std::string(64, 'b') +
-                                          R"("},"toolchain":{"version":"fixture"},"recipe":{"locked":true}})")
-                              .as_object();
-      json::object artifact;
-      artifact["file"] = "native-kv.node";
-      artifact["platform"] = std::string(rt::process::platform);
-      artifact["architecture"] = std::string(rt::process::arch);
-      artifact["target"] = "fixture-target";
-      artifact["napiVersion"] = 4;
-      inputs["artifact"] = artifact;
-      const std::string inputsText = rt::jsonStringify(json::value(inputs));
-      json::object provenance = rt::objectSpread(inputs);
-      rt::objectDefine(provenance, "inputsSha256", json::value(hash(inputsText)));
-      json::object provenanceArtifact = rt::objectSpread(artifact);
-      rt::objectDefine(provenanceArtifact, "sha256", json::value(hash(bytes)));
-      rt::objectDefine(provenance, "artifact", json::value(provenanceArtifact));
-      rt::objectDefine(provenance, "build", rt::jsonParse(R"({"exitCode":0,"logSha256":")" + std::string(64, 'c') + R"("})"));
-      const std::string provenanceText = rt::jsonStringify(json::value(provenance));
-      rt::fs::writeFileSync(directory + "/inputs.json", inputsText);
-      rt::fs::writeFileSync(directory + "/native-kv.provenance.json", provenanceText);
-      rt::fs::writeFileSync(directory + "/native-kv.node", std::span<const std::uint8_t>(bytes));
-      json::object fields;
-      fields["artifactDirectory"] = directory;
-      fields["expectedProvenanceSha256"] = hash(provenanceText);
-      fields["inputsManifest"] = directory + "/inputs.json";
-      return rt::jsonStringify(json::value(fields));
-    }();
-    return binding;
-  }
-
-  // `prepareNativeKvBackend(binding)` in a child, from the binding the parent passed.
-  void prepareChild() {
-    const json::value binding = rt::jsonParse(*rt::env::get("UOS_STORAGE_BUN_KV_BINDING"));
-    NativeKvArtifactBinding prepared;
-    prepared.artifactDirectory = std::string(binding.at("artifactDirectory").as_string());
-    prepared.expectedProvenanceSha256 = std::string(binding.at("expectedProvenanceSha256").as_string());
-    prepared.inputsManifest = std::string(binding.at("inputsManifest").as_string());
-    storage::native_addon::prepareNativeKvBackend(prepared);
-  }
-
   // How this binary was started (the SDK loader, its arguments and the binary).
   std::vector<std::string> selfCommand() {
 #if defined(__APPLE__)
@@ -711,7 +491,6 @@ namespace {
     std::vector<std::pair<std::string, std::string>> environment;
     environment.emplace_back("UOS_STORAGE_BUN_KV_CHILD", test);
     environment.emplace_back("UOS_STORAGE_BUN_KV_PATH", path);
-    environment.emplace_back("UOS_STORAGE_BUN_KV_BINDING", childBindingJson());
     environment.emplace_back("TMPDIR", rt::os::tmpdir());
     rt::process::SpawnOptions options;
     options.env = environment;
@@ -1131,7 +910,6 @@ ASYNC_TEST("two native handles preserve ten caller checks under mixed counter-ty
 // The worker of "separate Bun processes preserve each quota increment under contention".
 TEST("storage child: quota") {
   if (rt::env::get("UOS_STORAGE_BUN_KV_CHILD") != std::optional<std::string>("quota")) return;
-  prepareChild();
   const std::string path = *rt::env::get("UOS_STORAGE_BUN_KV_PATH");
   rt::blockOn(rt::async([path]() -> rt::Task<void> {
     std::shared_ptr<rt::Kv> kv = co_await storage::kv::openKv(path);
@@ -1177,7 +955,6 @@ ASYNC_TEST("separate Bun processes preserve each quota increment under contentio
 // The worker of "an acknowledged transaction survives abrupt writer process termination".
 TEST("storage child: crash") {
   if (rt::env::get("UOS_STORAGE_BUN_KV_CHILD") != std::optional<std::string>("crash")) return;
-  prepareChild();
   const std::string path = *rt::env::get("UOS_STORAGE_BUN_KV_PATH");
   rt::blockOn(rt::async([path]() -> rt::Task<void> {
     std::shared_ptr<rt::Kv> kv = co_await storage::kv::openKv(path);

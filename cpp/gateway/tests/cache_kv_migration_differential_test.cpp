@@ -2,7 +2,7 @@
 //        tests/helpers/counting_kv.cpp src/kv_conversion/profile_json.cpp src/cache/kv_migration_paid_fallback.cpp src/authority/native_paid.cpp
 //        src/cache/kv_migration_projection.cpp src/authority/native_paid_policy.cpp src/config.cpp src/utils.cpp
 //        src/release.cpp src/types.cpp src/paid_fallback/ledger_state.cpp src/authority/native_paid_contracts.cpp
-//        src/kv.cpp src/storage/kv.cpp src/storage/sqlite_readonly.cpp src/storage/native_addon.cpp
+//        src/kv.cpp src/storage/kv.cpp src/storage/sqlite_readonly.cpp
 //        src/storage/native_kv.cpp
 // Credential-free Bun 1.4.0 differentials: 664 guard vectors, five ledger identities and 29 named
 // inventories/projections. Inputs and outputs are profile-json typed values. Network is not used.

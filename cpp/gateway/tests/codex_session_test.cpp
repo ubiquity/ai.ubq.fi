@@ -1,6 +1,6 @@
 // Port of tests/codex-session.test.ts (every case).
 // Links: tests/codex_session_test.cpp src/codex/session.cpp src/utils.cpp src/kv.cpp src/storage/kv.cpp src/storage/sqlite_readonly.cpp
-//        src/storage/native_kv.cpp src/storage/value_compatibility.cpp src/storage/native_addon.cpp src/storage/key_compatibility.cpp
+//        src/storage/native_kv.cpp src/storage/value_compatibility.cpp src/storage/key_compatibility.cpp
 //        tests/helpers/counting_kv.cpp
 #include "uos/codex/session.hpp"
 

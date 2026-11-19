@@ -16,9 +16,8 @@
 //        src/provider/claude_code_usage_schema.cpp src/provider/health.cpp src/provider/selection.cpp src/release.cpp
 //        src/runtime/http.cpp src/runtime/http_body.cpp src/runtime/http_early_sse.cpp src/runtime/http_tasks.cpp
 //        src/runtime/http_upgrade.cpp src/runtime/websocket.cpp src/storage/key_compatibility.cpp src/storage/kv.cpp
-//        src/storage/native_addon.cpp src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp src/storage/value_compatibility.cpp
-//        src/types.cpp src/utils.cpp tests/helpers/linked_native_kv.cpp src/provider/claude_code_usage_refresh.cpp
-#include "tests/helpers/linked_native_kv.hpp"
+// src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp src/storage/value_compatibility.cpp
+//        src/types.cpp src/utils.cpp src/provider/claude_code_usage_refresh.cpp
 #include "uos/config.hpp"
 #include "uos/kv.hpp"
 #include "uos/provider/claude_code_accounts.hpp"
@@ -66,7 +65,7 @@ namespace {
 }
 // Port of all three cases in tests/claude-usage-retry.test.ts; real native reopen uses isolated TMPDIR.
 ASYNC_TEST("legacy usage Retry-After survives native reopen without changing inference state") {
-  Isolated scope; uos::tests::helpers::linked_native_kv::prepareOnce(); const std::string directory = rt::fs::mkdtempSync(rt::path::join(rt::os::tmpdir(), "w05c7-retry-")); const std::string path = rt::path::join(directory, "usage.fixture");
+  Isolated scope; const std::string directory = rt::fs::mkdtempSync(rt::path::join(rt::os::tmpdir(), "w05c7-retry-")); const std::string path = rt::path::join(directory, "usage.fixture");
   std::shared_ptr<rt::Kv> kv; const auto cleanup = rt::scopeExit([&] { uos::kv::setKvForTest(nullptr); if (kv) kv->close(); rt::fs::rmSync(directory, {.recursive = true, .force = true}); });
   auto opening = uos::storage::kv::openKv(path); kv = co_await std::move(opening); uos::kv::setKvForTest(kv); AWAIT(account, binding(kv)); const double now = rt::dateNow();
   const auto initial = options(now - 31'000, success()); AWAIT(first, refresh::refreshClaudeCodeUsage(kv, account, initial)); EXPECT_EQ(kind(first), std::string("completed"));

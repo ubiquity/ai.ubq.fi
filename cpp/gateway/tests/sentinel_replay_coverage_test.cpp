@@ -3,7 +3,7 @@
 //        src/sentinel/replay_read.cpp src/sentinel/replay_retention_schema.cpp src/sentinel/replay_model.cpp
 //        src/sentinel/replay_envelope.cpp src/sentinel/replay_observation.cpp src/sentinel/upstream_capture.cpp
 //        src/sentinel/replay_limits.cpp src/sentinel/incident_outbox.cpp src/request.cpp src/utils.cpp src/config.cpp src/release.cpp
-//        src/kv.cpp src/storage/key_compatibility.cpp src/storage/kv.cpp src/storage/native_addon.cpp src/storage/native_kv.cpp
+//        src/kv.cpp src/storage/key_compatibility.cpp src/storage/kv.cpp src/storage/native_kv.cpp
 //        src/storage/sqlite_readonly.cpp src/storage/value_compatibility.cpp
 // Port of tests/sentinel-replay-coverage.test.ts, in full (all 20 cases). Storage is `openSentinelTestKv()`, the
 // runtime's own `:memory:` KV (rt::MemoryKv), or tests/helpers/sentinel_kv_stub's SentinelKvStub where the TS

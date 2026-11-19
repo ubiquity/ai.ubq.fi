@@ -1,10 +1,10 @@
 // Links: tests/jev_compaction_smoke_test.cpp
 // src/provider/gemini.cpp src/admin/gemini_quota.cpp
 //   src/models/catalog.cpp src/input_normalization.cpp src/provider/selection.cpp src/provider/surplus.cpp src/models/metadata.cpp src/utils.cpp src/authority/native_api_key_policy.cpp src/provider/lithos.cpp src/handler/index.cpp
-//   src/admin/codex.cpp src/authority/native_api_key.cpp src/provider/openrouter.cpp src/http.cpp src/auth/index.cpp src/runtime/native_kv_bootstrap.cpp src/provider/anthropic_chat_responses.cpp src/deepseek/index.cpp src/models/codex_models.cpp
+//   src/admin/codex.cpp src/authority/native_api_key.cpp src/provider/openrouter.cpp src/http.cpp src/auth/index.cpp src/provider/anthropic_chat_responses.cpp src/deepseek/index.cpp src/models/codex_models.cpp
 //   src/handler/admission.cpp src/models/codex_models_fetch.cpp src/admin/kernel.cpp src/codex/dispatch.cpp src/provider/cerebras.cpp src/api_keys.cpp src/types.cpp src/codex/auth.cpp src/auth/passkeys.cpp
 //   src/runtime_config.cpp src/provider/claude_code_credentials.cpp src/agent_messages.cpp src/codex/experiment.cpp src/quota_projection.cpp src/provider/claude_code_accounts.cpp src/admin/claude_code.cpp src/kernel/quota_v2.cpp src/models/openrouter_models.cpp
-//   src/codex/external_auth.cpp src/provider/anthropic_response_wire.cpp src/catalog/index.cpp src/catalog/models.cpp src/provider/surplus_claude_request.cpp src/admin/api_keys.cpp src/live/handler.cpp src/cache/scope_experiment_targets.cpp src/storage/native_addon.cpp
+//   src/codex/external_auth.cpp src/provider/anthropic_response_wire.cpp src/catalog/index.cpp src/catalog/models.cpp src/provider/surplus_claude_request.cpp src/admin/api_keys.cpp src/live/handler.cpp src/cache/scope_experiment_targets.cpp
 //   src/api_key_policy.cpp src/models/codex_models_whitelist.cpp src/runtime/http.cpp src/provider/capacity_events.cpp src/provider/capacity_parse.cpp src/handler/http.cpp src/runtime/http_body.cpp src/cache/scope_experiment_model.cpp src/provider/claude_code_models.cpp
 //   src/paid_fallback/ledger_state.cpp src/authority/native_kernel.cpp src/config.cpp src/admin/defaults.cpp src/provider/health.cpp src/auth/relay.cpp src/admin/api_key_audit.cpp src/static.cpp src/debug_routing.cpp
 //   src/catalog/store.cpp src/authority/native_paid_contracts.cpp src/provider/presentation.cpp src/provider/anthropic_chat_stream.cpp src/provider/lithos_models.cpp src/kernel/quota_write.cpp src/admin/codex_reset.cpp src/kernel/usage.cpp src/provider/claude_code_access.cpp

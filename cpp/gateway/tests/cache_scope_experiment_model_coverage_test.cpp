@@ -6,7 +6,7 @@
 //        src/http.cpp src/codex/external_auth.cpp src/provider/cerebras_rate_limits.cpp src/provider/health.cpp
 //        src/bounded_response_body.cpp src/authority/native_codex_evaluation.cpp src/auth/relay.cpp src/release.cpp
 //        src/runtime/websocket.cpp src/codex/responses_error.cpp src/provider/claude_code_accounts.cpp src/provider/claude_code_credentials.cpp
-//        src/storage/kv.cpp src/storage/native_addon.cpp src/storage/sqlite_readonly.cpp src/storage/native_kv.cpp
+//        src/storage/kv.cpp src/storage/sqlite_readonly.cpp src/storage/native_kv.cpp
 // Port of tests/cache-scope-experiment-model-coverage.test.ts. Additional terminal cases exercise the real SSE reader and Codex response metadata.
 #include "uos/cache/scope_experiment_model.hpp"
 #include "uos/codex/auth.hpp"

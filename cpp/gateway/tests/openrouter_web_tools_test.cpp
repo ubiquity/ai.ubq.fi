@@ -1,7 +1,7 @@
 // Links: tests/openrouter_web_tools_test.cpp
 // src/provider/capacity_events.cpp src/config.cpp src/release.cpp src/kv.cpp
 // src/provider/openrouter_web_tools.cpp src/utils.cpp src/provider/capacity_contract.cpp src/models/openrouter_models.cpp
-// src/provider/health.cpp src/codex/banked_reset.cpp src/storage/kv.cpp src/storage/native_addon.cpp
+// src/provider/health.cpp src/codex/banked_reset.cpp src/storage/kv.cpp
 // src/provider/openrouter_handlers.cpp src/types.cpp src/provider/openrouter.cpp src/openai_telemetry.cpp
 // src/upstream_wire.cpp src/codex/reset_settings.cpp src/provider/capacity.cpp src/provider/capacity_rollups.cpp
 // src/provider/openrouter_streams.cpp src/storage/native_kv.cpp src/http.cpp src/codex/banked_reset_provider.cpp

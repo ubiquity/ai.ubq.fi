@@ -8,7 +8,7 @@
 //        src/storage/kv.cpp src/storage/native_kv.cpp src/provider/surplus_claude_request.cpp src/provider/metered.cpp src/codex/capacity_routing.cpp src/provider/surplus.cpp
 //        src/provider/claude_code_accounts.cpp src/authority/native_codex_mutations.cpp src/auth/relay.cpp src/provider/capacity_events.cpp src/authority/native_codex_contracts.cpp src/provider/cerebras_rate_limits.cpp
 //        src/provider/claude_code_credentials.cpp src/codex/banked_reset.cpp src/storage/sqlite_readonly.cpp src/provider/claude_code.cpp src/codex/rate_limit_429.cpp src/codex/routing_state.cpp
-//        src/provider/anthropic_replay.cpp src/authority/native_codex_evaluation.cpp src/storage/native_addon.cpp src/codex/reset_settings.cpp src/provider/claude_code_quota.cpp src/provider/claude_code_usage_schema.cpp
+//        src/provider/anthropic_replay.cpp src/authority/native_codex_evaluation.cpp src/codex/reset_settings.cpp src/provider/claude_code_quota.cpp src/provider/claude_code_usage_schema.cpp
 //        src/models/codex_models_availability.cpp src/provider/anthropic_chat_responses.cpp src/provider/capacity_contract.cpp src/authority/native_codex_429.cpp src/codex/banked_reset_provider.cpp src/codex/native_auth.cpp
 //        src/provider/anthropic_responses.cpp src/provider/anthropic_response_wire.cpp src/bounded_response_body.cpp src/codex/native_auth_transport.cpp src/codex/external_auth.cpp src/provider/surplus_claude_chat_request.cpp
 //        src/provider/capacity.cpp src/provider/claude_capacity_history.cpp src/provider/capacity_history.cpp src/provider/claude_capacity_rollups.cpp src/provider/capacity_rollups.cpp src/provider/capacity_parse.cpp

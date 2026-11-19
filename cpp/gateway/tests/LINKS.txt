@@ -72,7 +72,6 @@ tests/model_metadata_test.cpp: (header)
     note: w07c4 completed catalog endpoint cases; use its owner-maintained full source closure
 tests/models_metadata_differential_test.cpp: src/models/metadata.cpp src/models/openrouter_models.cpp src/defaults.cpp src/utils.cpp
     src/recent_model_context.cpp
-tests/native_addon_differential_test.cpp: src/storage/native_addon.cpp src/runtime/native_kv_bootstrap.cpp
 tests/native_api_key_differential_test.cpp: src/authority/native_api_key.cpp src/authority/native_contracts.cpp src/types.cpp src/utils.cpp
 tests/native_capture_operator_test.cpp: src/kv_conversion/typed_value.cpp
 tests/native_codex429_conformance_test.cpp: src/authority/native_codex_capacity.cpp src/authority/native_codex_contracts.cpp
@@ -108,7 +107,7 @@ tests/paid_fallback_ledger_stats_differential_test.cpp: src/paid_fallback/ledger
 tests/permissions_linux_test.cpp: src/runtime/permissions_linux.cpp
 tests/prompt_cache_capabilities_test.cpp: src/models/codex_models.cpp src/utils.cpp src/defaults.cpp
 tests/prompt_cache_telemetry_gate_differential_test.cpp: src/cache/telemetry_gate.cpp src/utils.cpp src/release.cpp src/kv.cpp src/storage/kv.cpp
-    src/storage/sqlite_readonly.cpp src/storage/native_kv.cpp src/storage/native_addon.cpp
+    src/storage/sqlite_readonly.cpp src/storage/native_kv.cpp
 tests/prompt_cache_telemetry_gate_test.cpp: (header)
     note: w09c3 completes terminal logging cases; inherit its full real source closure.
 tests/provider_removed_provider_circuit_differential_test.cpp: src/provider/removed_provider_circuit.cpp
@@ -135,12 +134,12 @@ tests/runtime_http_early_sse_differential_test.cpp: src/runtime/http_early_sse.c
 tests/runtime_http_tasks_test.cpp: src/runtime/http_tasks.cpp
 tests/runtime_matrix_compaction_header_test.cpp: (header)
     note: w07c7 completed gateway compaction header cases; use its full owner-maintained source closure
-tests/runtime_native_startup_test.cpp: src/storage/native_addon.cpp src/runtime/native_kv_bootstrap.cpp
+tests/runtime_native_startup_test.cpp: (header)
 tests/runtime_websocket_test.cpp: src/runtime/websocket.cpp
 tests/sentinel_incident_index_test.cpp: (header)
     note: expanded header owns the current replay-capture/replay-store closure; the earlier registry list was stale
 tests/sentinel_incident_outbox_differential_test.cpp: src/sentinel/incident_outbox.cpp src/utils.cpp src/kv.cpp src/storage/kv.cpp src/storage/sqlite_readonly.cpp
-    src/storage/native_kv.cpp src/storage/native_addon.cpp
+    src/storage/native_kv.cpp
 tests/sentinel_replay_limits_differential_test.cpp: src/sentinel/replay_limits.cpp
 tests/sentinel_replay_limits_test.cpp: (header)
     note: expanded header includes replay-store persistence/retention cases
@@ -201,7 +200,7 @@ tests/admin_api_keys_coverage_test.cpp: src/admin/api_keys.cpp src/api_keys.cpp 
     src/codex/auth_refresh.cpp src/storage/native_kv.cpp src/provider/anthropic_chat_responses.cpp
     src/provider/metered.cpp src/codex/auth.cpp src/codex/native_auth.cpp src/provider/surplus_claude_request.cpp
     src/paid_fallback/ledger_stats.cpp src/provider/health.cpp src/codex/external_auth.cpp
-    src/provider/capacity_events.cpp src/provider/anthropic_replay.cpp src/storage/native_addon.cpp
+    src/provider/capacity_events.cpp src/provider/anthropic_replay.cpp
     src/provider/anthropic_response_wire.cpp src/codex/capacity_routing.cpp src/release.cpp
     src/authority/native_codex_capacity.cpp src/auth/relay.cpp src/provider/capacity.cpp
     src/provider/anthropic_chat_stream.cpp src/provider/capacity_rollups.cpp src/provider/capacity_contract.cpp
@@ -230,7 +229,7 @@ tests/harmony_render_test.cpp: (header)
 tests/harmony_tools_schemas_test.cpp: (header)
 
 # This test directly exercises rollups; quota_projection now imports unrelated cluster implementations.
-tests/paid_fallback_rollups_differential_test.cpp: src/authority/native_paid.cpp src/authority/native_paid_contracts.cpp src/kv.cpp src/paid_fallback/rollups.cpp src/storage/kv.cpp src/storage/native_addon.cpp src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp src/utils.cpp
+tests/paid_fallback_rollups_differential_test.cpp: src/authority/native_paid.cpp src/authority/native_paid_contracts.cpp src/kv.cpp src/paid_fallback/rollups.cpp src/storage/kv.cpp src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp src/utils.cpp
     note: symbol closure avoids the stale inherited api_keys/ledger_stats exclusions and unrelated quota-projection cluster
 
 # Verified consumers of the completed admin_auth_harness cache/profile resets.
@@ -274,7 +273,7 @@ tests/admin_codex_coverage_test.cpp: src/admin/codex.cpp src/http.cpp src/provid
     src/authority/native_paid.cpp src/provider/anthropic_responses.cpp src/authority/native_paid_policy.cpp
     src/paid_fallback/ledger_backfill.cpp src/provider/anthropic_response_wire.cpp src/responses_failover_stream.cpp
     src/catalog/promotion.cpp src/storage/sqlite_readonly.cpp src/codex/banked_reset_submission.cpp
-    src/paid_fallback/ledger_settlement.cpp src/authority/native_codex_429.cpp src/storage/native_addon.cpp
+    src/paid_fallback/ledger_settlement.cpp src/authority/native_codex_429.cpp
     src/provider/removed_provider_telemetry.cpp src/codex/banked_reset_provider.cpp src/codex/native_auth_transport.cpp
     src/provider/anthropic_chat_stream.cpp src/storage/native_kv.cpp src/codex/responses_error.cpp
     src/runtime/websocket.cpp src/kv_conversion/profile_json.cpp
@@ -314,7 +313,7 @@ tests/admin_codex_scope_experiment_test.cpp: src/admin/codex.cpp src/http.cpp sr
     src/authority/native_paid.cpp src/provider/anthropic_responses.cpp src/authority/native_paid_policy.cpp
     src/paid_fallback/ledger_backfill.cpp src/provider/anthropic_response_wire.cpp src/responses_failover_stream.cpp
     src/catalog/promotion.cpp src/storage/sqlite_readonly.cpp src/codex/banked_reset_submission.cpp
-    src/paid_fallback/ledger_settlement.cpp src/authority/native_codex_429.cpp src/storage/native_addon.cpp
+    src/paid_fallback/ledger_settlement.cpp src/authority/native_codex_429.cpp
     src/provider/removed_provider_telemetry.cpp src/codex/banked_reset_provider.cpp src/codex/native_auth_transport.cpp
     src/provider/anthropic_chat_stream.cpp src/storage/native_kv.cpp src/codex/responses_error.cpp
     src/runtime/websocket.cpp src/kv_conversion/profile_json.cpp
@@ -354,7 +353,7 @@ tests/claude_code_models_test.cpp: src/health.cpp src/provider/claude_code_acces
     src/authority/native_paid.cpp src/provider/anthropic_responses.cpp src/authority/native_paid_policy.cpp
     src/paid_fallback/ledger_backfill.cpp src/provider/anthropic_response_wire.cpp src/responses_failover_stream.cpp
     src/catalog/promotion.cpp src/storage/sqlite_readonly.cpp src/codex/banked_reset_submission.cpp
-    src/paid_fallback/ledger_settlement.cpp src/authority/native_codex_429.cpp src/storage/native_addon.cpp
+    src/paid_fallback/ledger_settlement.cpp src/authority/native_codex_429.cpp
     src/provider/removed_provider_telemetry.cpp src/codex/banked_reset_provider.cpp src/codex/native_auth_transport.cpp
     src/provider/anthropic_chat_stream.cpp src/storage/native_kv.cpp src/codex/responses_error.cpp
     src/runtime/websocket.cpp src/admin/claude_code.cpp src/kv_conversion/profile_json.cpp
@@ -377,7 +376,7 @@ tests/local_development_key_test.cpp: src/authority/native_api_key_audit.cpp src
     src/models/codex_models_availability.cpp src/provider/surplus_claude_request.cpp src/codex/auth_refresh.cpp
     src/codex/routing_state.cpp src/provider/capacity_contract.cpp src/storage/native_kv.cpp
     src/provider/anthropic_chat_responses.cpp src/codex/external_auth.cpp src/provider/claude_code_usage_schema.cpp
-    src/provider/capacity_parse.cpp src/metered_quota.cpp src/provider/anthropic_replay.cpp src/storage/native_addon.cpp
+    src/provider/capacity_parse.cpp src/metered_quota.cpp src/provider/anthropic_replay.cpp
     src/provider/anthropic_response_wire.cpp src/release.cpp src/codex/rate_limit_429.cpp
     src/authority/native_codex_429.cpp src/provider/anthropic_chat_stream.cpp src/bounded_response_body.cpp
     src/authority/native_codex_evaluation.cpp src/codex/banked_reset.cpp src/provider/cerebras_rate_limits.cpp
@@ -393,7 +392,7 @@ tests/local_development_key_test.cpp: src/authority/native_api_key_audit.cpp src
 tests/passport_differential_test.cpp: tests/helpers/admin_auth_harness.cpp src/auth/passport.cpp
     src/auth/passport_sessions.cpp src/http.cpp src/kv.cpp src/utils.cpp src/config.cpp src/release.cpp
     src/auth/relay.cpp src/provider/cerebras_rate_limits.cpp src/storage/key_compatibility.cpp src/storage/kv.cpp
-    src/storage/native_addon.cpp src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp
+ src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp
     src/storage/value_compatibility.cpp src/codex/auth.cpp src/codex/external_auth.cpp
     src/kv_conversion/profile_json.cpp src/runtime_config.cpp src/codex/native_auth.cpp src/defaults.cpp
     src/codex/capacity_routing.cpp src/authority/native_codex_capacity.cpp src/codex/routing_mutations.cpp
@@ -410,7 +409,7 @@ tests/admin_index_harness_test.cpp: tests/helpers/kv_budget_harness.cpp src/conf
     src/paid_fallback/ledger_state.cpp src/provider/capacity_events.cpp src/storage/kv.cpp
     src/paid_fallback/ledger_settlement.cpp src/paid_fallback/ledger_admission.cpp src/codex/banked_reset.cpp
     src/utils.cpp src/storage/native_kv.cpp src/api_keys.cpp src/types.cpp src/authority/native_api_key_policy.cpp
-    src/storage/native_addon.cpp src/storage/sqlite_readonly.cpp src/api_key_policy.cpp src/provider/metered.cpp
+ src/storage/sqlite_readonly.cpp src/api_key_policy.cpp src/provider/metered.cpp
     src/provider/capacity_contract.cpp src/runtime_config.cpp src/authority/native_contracts.cpp
     src/authority/native_api_key.cpp src/codex/auth.cpp src/provider/anthropic_responses.cpp src/models/codex_models.cpp
     src/codex/capacity_routing.cpp src/provider/surplus.cpp src/authority/native_codex_capacity.cpp
@@ -465,7 +464,7 @@ tests/lithos_wiring_test.cpp: src/catalog/index.cpp src/catalog/models.cpp src/c
     src/codex/banked_reset.cpp src/authority/native_codex_mutations.cpp src/codex/capacity_routing.cpp
     src/authority/native_codex_capacity.cpp src/codex/auth_refresh.cpp src/codex/reset_settings.cpp
     src/runtime_config.cpp src/authority/native_codex_contracts.cpp src/codex/banked_reset_provider.cpp
-    src/storage/native_addon.cpp src/storage/native_kv.cpp src/provider/capacity.cpp src/cache/prompt_analytics_read.cpp
+ src/storage/native_kv.cpp src/provider/capacity.cpp src/cache/prompt_analytics_read.cpp
     src/provider/health.cpp src/cache/prompt_analytics_core.cpp src/codex/native_auth_transport.cpp
     src/provider/capacity_history.cpp src/provider/claude_capacity_history.cpp src/codex/experiment.cpp
     src/provider/capacity_parse.cpp src/provider/claude_capacity_rollups.cpp src/paid_fallback/ledger_stats.cpp
@@ -525,7 +524,7 @@ tests/openai_compat_part11_test.cpp: src/kernel/attestation.cpp src/responses_fa
     src/codex/banked_reset.cpp src/authority/native_codex_mutations.cpp src/codex/capacity_routing.cpp
     src/authority/native_codex_capacity.cpp src/codex/auth_refresh.cpp src/codex/reset_settings.cpp
     src/runtime_config.cpp src/authority/native_codex_contracts.cpp src/codex/banked_reset_provider.cpp
-    src/storage/native_addon.cpp src/storage/native_kv.cpp src/provider/capacity.cpp src/cache/prompt_analytics_read.cpp
+ src/storage/native_kv.cpp src/provider/capacity.cpp src/cache/prompt_analytics_read.cpp
     src/provider/health.cpp src/cache/prompt_analytics_core.cpp src/codex/native_auth_transport.cpp
     src/provider/capacity_history.cpp src/provider/claude_capacity_history.cpp src/codex/experiment.cpp
     src/provider/capacity_parse.cpp src/provider/claude_capacity_rollups.cpp src/paid_fallback/ledger_stats.cpp
@@ -589,7 +588,7 @@ tests/public_provider_cache_controls_test.cpp: src/responses_failover_stream.cpp
     src/codex/banked_reset.cpp src/authority/native_codex_mutations.cpp src/codex/capacity_routing.cpp
     src/authority/native_codex_capacity.cpp src/codex/auth_refresh.cpp src/codex/reset_settings.cpp
     src/runtime_config.cpp src/authority/native_codex_contracts.cpp src/codex/banked_reset_provider.cpp
-    src/storage/native_addon.cpp src/storage/native_kv.cpp src/provider/capacity.cpp src/cache/prompt_analytics_read.cpp
+ src/storage/native_kv.cpp src/provider/capacity.cpp src/cache/prompt_analytics_read.cpp
     src/provider/health.cpp src/cache/prompt_analytics_core.cpp src/codex/native_auth_transport.cpp
     src/provider/capacity_history.cpp src/provider/claude_capacity_history.cpp src/codex/experiment.cpp
     src/provider/capacity_parse.cpp src/provider/claude_capacity_rollups.cpp src/paid_fallback/ledger_stats.cpp

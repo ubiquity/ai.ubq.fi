@@ -4,7 +4,7 @@
 // newest then localeCompare, NaN and Infinity observations) and the catalog merge. The TS results
 // were recorded with JSON.stringify under Bun 1.4.0 (tests/codex_models_availability_differential_vectors.inc).
 // Links: tests/codex_models_availability_differential_test.cpp src/models/codex_models_availability.cpp src/utils.cpp src/kv.cpp src/storage/kv.cpp
-//        src/storage/sqlite_readonly.cpp src/storage/native_kv.cpp src/storage/value_compatibility.cpp src/storage/native_addon.cpp
+//        src/storage/sqlite_readonly.cpp src/storage/native_kv.cpp src/storage/value_compatibility.cpp
 //        src/storage/key_compatibility.cpp src/authority/contracts.cpp
 #include "uos/models/codex_models_availability.hpp"
 

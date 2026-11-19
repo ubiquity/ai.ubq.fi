@@ -7,7 +7,7 @@
 // reconciliation queue (absent, recording, rejecting, throwing) and resolveKv.
 // Links: tests/paid_fallback_ledger_state_differential_test.cpp src/paid_fallback/ledger_state.cpp src/authority/native_paid.cpp
 //   src/authority/native_paid_contracts.cpp src/types.cpp src/utils.cpp src/kv.cpp src/storage/kv.cpp src/release.cpp
-//   src/storage/sqlite_readonly.cpp src/storage/native_kv.cpp src/storage/native_addon.cpp
+//   src/storage/sqlite_readonly.cpp src/storage/native_kv.cpp
 #include "uos/paid_fallback/ledger_state.hpp"
 #include "uos/kv.hpp"
 

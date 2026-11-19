@@ -1,4 +1,4 @@
-// Links: tests/provider_selection_health_differential_test.cpp src/provider/presentation.cpp src/provider/selection.cpp src/provider/health.cpp src/provider/claude_code_accounts.cpp src/provider/claude_code_credentials.cpp src/kv.cpp src/storage/kv.cpp src/storage/key_compatibility.cpp src/storage/native_addon.cpp src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp src/storage/value_compatibility.cpp src/utils.cpp
+// Links: tests/provider_selection_health_differential_test.cpp src/provider/presentation.cpp src/provider/selection.cpp src/provider/health.cpp src/provider/claude_code_accounts.cpp src/provider/claude_code_credentials.cpp src/kv.cpp src/storage/kv.cpp src/storage/key_compatibility.cpp src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp src/storage/value_compatibility.cpp src/utils.cpp
 // Differential cases for src/provider/presentation.ts, src/provider/selection.ts and src/provider/health.ts (no
 // direct bun test of these modules is portable yet). The vectors (tests/provider_selection_health_differential_vectors.inc)
 // were recorded from the TS modules under bun 1.4.0 with an in-memory Deno KV whose operations complete one macrotask

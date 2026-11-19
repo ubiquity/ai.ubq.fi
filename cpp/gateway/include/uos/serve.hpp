@@ -38,7 +38,4 @@ namespace uos::serve {
   // The verified native launcher prepares durable storage and selects the listener explicitly.
   // This entry retains the ordinary authenticated application and source shutdown lifecycle.
   rt::Task<void> importMetaMain(const ServeStartupOptions& options);
-
-  // Source development entry; the native release main never selects this fixed-port wrapper.
-  rt::Task<void> importMetaMain();
 }

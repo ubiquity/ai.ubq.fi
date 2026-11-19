@@ -12,9 +12,9 @@
 //     queue (the dev-time run did the same with a TS and a C++ process, docs/rt/kv-durable.md).
 // The "interop child" cases are the C++ halves of those dev-time runs (no-ops unless
 // UOS_KV_INTEROP_CHILD names them); the TS halves are the scripts kv-durable.md describes.
-// Links: tests/kv_durable_interop_test.cpp src/storage/kv.cpp src/storage/native_kv.cpp src/storage/native_addon.cpp
+// Links: tests/kv_durable_interop_test.cpp src/storage/kv.cpp src/storage/native_kv.cpp
 //        src/storage/sqlite_readonly.cpp src/storage/value_compatibility.cpp src/storage/key_compatibility.cpp
-//        tests/helpers/linked_native_kv.cpp
+//
 #include "uos/rt/crypto.hpp"
 #include "uos/rt/env.hpp"
 #include "uos/rt/fs.hpp"
@@ -31,7 +31,6 @@
 #include "uos/rt/url.hpp"
 #endif
 #include "uos/storage/kv.hpp"
-#include "tests/helpers/linked_native_kv.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -262,15 +261,11 @@ namespace {
     if (!paired.ok) throw JsError("pair commit failed");
   }
 
-  // The child's prepared backend: the binding the parent passes (the linked store's, or the
-  // pinned artifact's in a dev-time run).
-  void prepareFromEnvironment() { tests::helpers::linked_native_kv::prepare(*env::get("UOS_KV_INTEROP_BINDING")); }
-}
+  }
 
 // Dev-time child: what the C++ store (openKv) reads from a database, then its raw rows.
 ASYNC_TEST("interop child: dump") {
   if (env::get("UOS_KV_INTEROP_CHILD") != std::optional<std::string>("dump")) co_return;
-  prepareFromEnvironment();
   const std::string file = *env::get("UOS_KV_INTEROP_PATH");
   std::shared_ptr<Kv> kv = co_await storage::kv::openKv(file);
   KvListSelector all;
@@ -284,7 +279,6 @@ ASYNC_TEST("interop child: dump") {
 // Dev-time child: the interop corpus written through the C++ store (openKv).
 ASYNC_TEST("interop child: write") {
   if (env::get("UOS_KV_INTEROP_CHILD") != std::optional<std::string>("write")) co_return;
-  prepareFromEnvironment();
   const std::string file = *env::get("UOS_KV_INTEROP_PATH");
   std::shared_ptr<Kv> kv = co_await storage::kv::openKv(file);
   const std::vector<SerializedVector> vectors = serializedVectors();
@@ -358,7 +352,6 @@ namespace {
 // Dev-time child: the C++ half of alternate.ts, on the real clock.
 TEST("interop child: alternate") {
   if (env::get("UOS_KV_INTEROP_CHILD") != std::optional<std::string>("alternate")) return;
-  prepareFromEnvironment();
   const std::string summary = blockOn(alternate(*env::get("UOS_KV_INTEROP_PATH"), env::get("UOS_KV_INTEROP_ME").value_or("cpp"),
                                                 env::get("UOS_KV_INTEROP_OTHER").value_or("ts"), std::stoi(*env::get("UOS_KV_INTEROP_ROUNDS")),
                                                 std::stoi(*env::get("UOS_KV_INTEROP_CONTENDED"))));
@@ -368,7 +361,6 @@ TEST("interop child: alternate") {
 // Dev-time child: a row expiring after UOS_KV_INTEROP_TTL ms beside a durable one (expiry.ts write).
 TEST("interop child: ttl") {
   if (env::get("UOS_KV_INTEROP_CHILD") != std::optional<std::string>("ttl")) return;
-  prepareFromEnvironment();
   const double ttl = std::stod(*env::get("UOS_KV_INTEROP_TTL"));
   const std::string file = *env::get("UOS_KV_INTEROP_PATH");
   blockOn(async([file, ttl]() -> Task<void> {
@@ -405,8 +397,6 @@ namespace {
     Directory& operator=(const Directory&) = delete;
   };
 
-  // The release binding the production startup prepares (tests/helpers/linked_native_kv.hpp).
-  void prepareFixture() { tests::helpers::linked_native_kv::prepareOnce(); }
 
   // What the dump script prints: every entry openKv lists, then the raw rows.
   Task<std::vector<std::string>> dumpLines(std::string file) {
@@ -492,7 +482,6 @@ namespace {
 }
 
 ASYNC_TEST("a database the TypeScript store wrote reads back in C++ as TypeScript reads it") {
-  prepareFixture();
   const Directory directory;
   const std::string file = directory.path + "/store.sqlite3";
   // An empty marked store (what openKv creates), then the recorded rows in place of its own.
@@ -599,7 +588,6 @@ ASYNC_TEST("a database the TypeScript store wrote reads back in C++ as TypeScrip
 }
 
 ASYNC_TEST("a database the C++ store writes is the one the TypeScript store read back") {
-  prepareFixture();
   const Directory directory;
   const std::string file = directory.path + "/written.sqlite3";
   std::shared_ptr<Kv> kv = co_await storage::kv::openKv(file);
@@ -613,7 +601,6 @@ ASYNC_TEST("a database the C++ store writes is the one the TypeScript store read
 }
 
 ASYNC_TEST("two C++ processes alternate and contend on one file through cursors, CAS and the queue") {
-  prepareFixture();
   const Directory directory;
   const std::string file = directory.path + "/shared.sqlite3";
   std::shared_ptr<Kv> kv = co_await storage::kv::openKv(file);
@@ -625,7 +612,6 @@ ASYNC_TEST("two C++ processes alternate and contend on one file through cursors,
     std::vector<std::pair<std::string, std::string>> environment;
     environment.emplace_back("UOS_KV_INTEROP_CHILD", "alternate");
     environment.emplace_back("UOS_KV_INTEROP_PATH", file);
-    environment.emplace_back("UOS_KV_INTEROP_BINDING", tests::helpers::linked_native_kv::bindingJson());
     environment.emplace_back("UOS_KV_INTEROP_ME", me);
     environment.emplace_back("UOS_KV_INTEROP_OTHER", me == "a" ? "b" : "a");
     environment.emplace_back("UOS_KV_INTEROP_ROUNDS", std::to_string(rounds));

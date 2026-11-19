@@ -18,7 +18,7 @@
 // src/models/codex_models_availability.cpp src/provider/surplus_claude_request.cpp src/codex/auth_refresh.cpp src/codex/routing_state.cpp
 // src/provider/capacity_contract.cpp src/storage/native_kv.cpp src/provider/anthropic_chat_responses.cpp src/codex/external_auth.cpp
 // src/provider/claude_code_usage_schema.cpp src/provider/capacity_parse.cpp src/metered_quota.cpp src/provider/anthropic_replay.cpp
-// src/storage/native_addon.cpp src/provider/anthropic_response_wire.cpp src/release.cpp src/codex/rate_limit_429.cpp
+// src/provider/anthropic_response_wire.cpp src/release.cpp src/codex/rate_limit_429.cpp
 // src/authority/native_codex_429.cpp src/provider/anthropic_chat_stream.cpp src/bounded_response_body.cpp src/authority/native_codex_evaluation.cpp
 // src/codex/banked_reset.cpp src/provider/cerebras_rate_limits.cpp src/cache/prompt_analytics_read.cpp src/cache/prompt_analytics_core.cpp
 // src/codex/account_routing.cpp src/provider/surplus_claude_chat_request.cpp src/provider/capacity_analytics.cpp src/codex/routing_evaluation.cpp

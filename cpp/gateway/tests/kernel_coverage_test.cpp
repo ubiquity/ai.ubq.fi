@@ -6,7 +6,7 @@
 // includes the prefix row itself and orders keys by their JSON text, as the TS fixture does.
 // Links: tests/kernel_coverage_test.cpp src/kernel/attestation.cpp src/http.cpp src/auth/relay.cpp src/config.cpp
 //   src/provider/cerebras_rate_limits.cpp src/kv.cpp src/storage/kv.cpp src/utils.cpp src/release.cpp
-//   src/storage/sqlite_readonly.cpp src/storage/native_kv.cpp src/storage/native_addon.cpp
+//   src/storage/sqlite_readonly.cpp src/storage/native_kv.cpp
 //   src/kernel/quota_v2.cpp src/authority/native_kernel.cpp tests/helpers/counting_kv.cpp
 #include "uos/kernel/attestation.hpp"
 #include "uos/kernel/quota_v2.hpp"

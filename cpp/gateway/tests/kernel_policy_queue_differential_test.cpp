@@ -3,7 +3,7 @@
 // a fixed Date.now and console.warn recorded; here rt::MemoryKv sits behind a forwarding wrapper that
 // can lose commits or fail reads the same way.
 // Links: tests/kernel_policy_queue_differential_test.cpp src/kernel/policy_queue.cpp src/types.cpp src/kv.cpp src/storage/kv.cpp
-//   src/release.cpp src/storage/sqlite_readonly.cpp src/storage/native_kv.cpp src/storage/native_addon.cpp
+//   src/release.cpp src/storage/sqlite_readonly.cpp src/storage/native_kv.cpp
 #include "uos/kernel/policy_queue.hpp"
 #include "uos/kv.hpp"
 

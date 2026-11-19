@@ -1,4 +1,4 @@
-// Links: tests/admin_capacity_status_test.cpp src/provider/selection.cpp src/kv.cpp src/storage/kv.cpp src/storage/key_compatibility.cpp src/storage/native_addon.cpp src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp src/storage/value_compatibility.cpp src/utils.cpp
+// Links: tests/admin_capacity_status_test.cpp src/provider/selection.cpp src/kv.cpp src/storage/kv.cpp src/storage/key_compatibility.cpp src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp src/storage/value_compatibility.cpp src/utils.cpp
 // Port of tests/admin-capacity-status.test.ts: the cases that call src/provider/selection.ts.
 //
 // Every case of the TS file executes slices of the shipped browser console (static/admin.js) inside node:vm against a

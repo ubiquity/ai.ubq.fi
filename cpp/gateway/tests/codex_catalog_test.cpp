@@ -21,7 +21,7 @@
 // src/codex/banked_reset_provider.cpp src/codex/reset_settings.cpp src/provider/capacity_rollups.cpp src/provider/claude_capacity_rollups.cpp
 // src/cache/prompt_analytics_core.cpp src/provider/capacity_history.cpp src/codex/experiment.cpp src/paid_fallback/ledger_stats.cpp
 // src/codex/account_routing.cpp src/codex/routing_serial.cpp src/provider/anthropic_chat_stream.cpp src/authority/native_codex.cpp
-// src/codex/routing_evaluation.cpp src/storage/sqlite_readonly.cpp src/storage/native_addon.cpp src/metered_quota.cpp
+// src/codex/routing_evaluation.cpp src/storage/sqlite_readonly.cpp src/metered_quota.cpp
 // src/provider/capacity_analytics.cpp src/cache/prompt_analytics_read.cpp src/storage/native_kv.cpp src/codex/overage_settings.cpp
 // Port of every original assertion in tests/codex-catalog.test.ts, in source case order.
 // The two predecessor MemoryKv store cases are preserved verbatim; other cases use the source CAS fixture.

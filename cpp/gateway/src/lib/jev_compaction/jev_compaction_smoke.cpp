@@ -15,9 +15,7 @@
 #include "uos/rt/kv_js.hpp"
 #include "uos/rt/process.hpp"
 #include "uos/rt/string.hpp"
-#include "uos/runtime/native_kv_bootstrap.hpp"
 #include "uos/storage/kv.hpp"
-#include "uos/storage/native_addon.hpp"
 #include "uos/utils.hpp"
 
 #include <algorithm>
@@ -306,21 +304,6 @@ namespace uos::lib::jev_compaction::jev_compaction_smoke {
       Upstream result{"http://127.0.0.1:" + rt::numberToString(address.port), server.shutdown};
       co_return result;
     }
-    rt::Task<void> prepareSmokeKv() {
-      std::optional<storage::native_addon::NativeKvArtifactBinding> binding;
-      try { binding = storage::native_addon::preparedNativeKvArtifactBinding(); }
-      catch (...) {
-        const auto error = std::current_exception();
-        if (!rt::isError(error) || rt::errorMessage(error) != "Prepare the verified native KV artifact before starting a child") throw;
-      }
-      if (binding) {
-        binding->inputsManifest = runtime::native_kv_bootstrap::nativeKvDevelopmentPaths().inputs;
-        storage::native_addon::verifyNativeKvArtifact(*binding);
-      } else {
-        auto prepared = runtime::native_kv_bootstrap::prepareNativeKvForDevelopment();
-        co_await prepared.wait();
-      }
-    }
     std::vector<json::object> terminalRecords(const rt::console::Capture& capture, const std::string& requestId) {
       std::vector<json::object> records;
       for (const auto& entry : capture.calls()) {
@@ -338,8 +321,6 @@ namespace uos::lib::jev_compaction::jev_compaction_smoke {
       co_return rt::storedJsonView(entry.value);
     }
     rt::Task<void> main(std::shared_ptr<Report> report) {
-      rt::Promise<void> prepared(prepareSmokeKv());
-      co_await prepared.wait();
       const auto started = rt::performanceNow();
       const auto inheritedDeepSeekKey = rt::env::get("DEEPSEEK_API_KEY");
       rt::env::set("DEEPSEEK_API_KEY", std::string(DUMMY_DEEPSEEK_KEY));

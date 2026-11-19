@@ -26,8 +26,6 @@ src/storage/value-compatibility.ts
 src/runtime/http-tasks.ts
 src/optional-telemetry-queue.ts
 lib/jev_compaction/types.ts
-src/storage/native-addon.ts
-src/runtime/native-kv-bootstrap.ts
 lib/jev_compaction/request.ts
 lib/jev_compaction/client.ts
 lib/jev_compaction/state.ts

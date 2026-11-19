@@ -3,7 +3,7 @@
 // and removes the stub afterwards, as the TS beforeEach/afterEach do.
 // Links: tests/passkeys_test.cpp tests/helpers/passkeys_harness.cpp src/auth/passkeys.cpp src/auth/relay.cpp src/http.cpp src/request.cpp
 //   src/utils.cpp src/kv.cpp src/storage/kv.cpp src/release.cpp src/storage/sqlite_readonly.cpp src/storage/native_kv.cpp
-//   src/storage/native_addon.cpp src/config.cpp src/provider/cerebras_rate_limits.cpp
+// src/config.cpp src/provider/cerebras_rate_limits.cpp
 //
 // These tests pin the acceptance contract for issue #115: a burst of
 // unauthenticated login-start requests is bounded by a deterministic,

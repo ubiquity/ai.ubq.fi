@@ -1,8 +1,8 @@
 // Links: tests/serve_test.cpp
 // src/provider/gemini.cpp src/admin/gemini_quota.cpp
-//   src/serve.cpp src/kv.cpp src/auth/local_admin.cpp src/runtime/native_kv_bootstrap.cpp src/config.cpp src/auth/local_development_key.cpp src/authority/native_paid.cpp src/types.cpp src/cache/prompt_analytics_queue.cpp
+//   src/serve.cpp src/kv.cpp src/auth/local_admin.cpp src/config.cpp src/auth/local_development_key.cpp src/authority/native_paid.cpp src/types.cpp src/cache/prompt_analytics_queue.cpp
 //   src/optional_telemetry_queue.cpp src/provider/metered.cpp src/utils.cpp src/authority/native_paid_policy.cpp src/api_key_policy.cpp src/authority/native_api_key_policy.cpp src/paid_fallback/index.cpp src/paid_fallback/ledger_settlement.cpp src/paid_fallback/ledger_stats.cpp
-//   src/cache/prompt_analytics_core.cpp src/provider/surplus_claude_request.cpp tests/helpers/counting_kv.cpp src/storage/native_addon.cpp src/authority/native_paid_contracts.cpp src/runtime/http.cpp src/authority/native_api_key.cpp src/runtime/http_body.cpp src/http.cpp
+//   src/cache/prompt_analytics_core.cpp src/provider/surplus_claude_request.cpp tests/helpers/counting_kv.cpp src/authority/native_paid_contracts.cpp src/runtime/http.cpp src/authority/native_api_key.cpp src/runtime/http_body.cpp src/http.cpp
 //   src/api_keys.cpp src/auth/relay.cpp src/paid_fallback/ledger_backfill.cpp src/handler/serve_handler.cpp src/codex/reset_settings.cpp src/release.cpp src/provider/anthropic_responses.cpp src/auth/index.cpp src/codex/auth.cpp
 //   src/bounded_response_body.cpp src/kernel/quota_reservations.cpp src/authority/native_kernel.cpp src/authority/native_kernel_contracts.cpp src/models/catalog.cpp src/provider/surplus.cpp src/input_normalization.cpp src/codex/native_auth.cpp src/models/metadata.cpp
 //   src/auth/passport.cpp src/paid_fallback/ledger_state.cpp src/handler/index.cpp src/models/codex_models_fetch.cpp src/models/codex_models_whitelist.cpp src/runtime/http_early_sse.cpp src/health.cpp src/provider/capacity.cpp src/auth/passport_sessions.cpp
@@ -37,36 +37,15 @@
 #include "uos/cache/prompt_analytics_queue.hpp"
 #include "tests/helpers/counting_kv.hpp"
 #include "uos/rt/console.hpp"
-#include "uos/rt/crypto.hpp"
 #include "uos/rt/fs.hpp"
-#include "uos/rt/json.hpp"
 #include "uos/rt/kv_js.hpp"
 #include "uos/rt/process.hpp"
 #include "uos/rt/test_async.hpp"
-#include "uos/storage/native_addon.hpp"
 namespace rt=uos::rt;
 namespace serve=uos::serve;
 namespace queue=uos::cache::prompt_analytics_queue;
 
 namespace {
-  void prepareStartupFixture(const std::string& directory) {
-    const auto nativeKv = rt::path::resolve(rt::path::dirname(__FILE__), "../packaging/native-kv");
-    const auto inputs = rt::path::join(nativeKv, rt::process::platform == "darwin" ? "inputs-darwin-arm64.json" : "inputs.json");
-    const auto manifest = rt::fs::readFileSync(inputs, "utf8");
-    const auto hash = [](std::string_view value) { return rt::crypto::createHash("sha256").update(value).digest("hex"); };
-    // The C++ loader verifies the binding and uses its already linked KV backend.
-    const std::string artifact = "serve startup test binding";
-    auto provenance = rt::jsonParse(manifest).as_object();
-    provenance["inputsSha256"] = hash(manifest);
-    provenance["build"] = uos::json::object{{"exitCode", 0}, {"logSha256", hash(artifact)}};
-    provenance.at("artifact").as_object()["sha256"] = hash(artifact);
-    const auto receipt = rt::jsonStringify(provenance);
-    rt::fs::writeFileSync(rt::path::join(directory, "native-kv.node"), artifact);
-    rt::fs::writeFileSync(rt::path::join(directory, "native-kv.provenance.json"), receipt);
-    const uos::storage::native_addon::NativeKvArtifactBinding binding{directory, hash(receipt), inputs};
-    uos::storage::native_addon::prepareNativeKvBackend(binding);
-  }
-
   class DelayedMigrationStore final : public rt::ForwardingKv {
   public:
     explicit DelayedMigrationStore(std::shared_ptr<rt::Kv> store) : ForwardingKv(*store), owner(std::move(store)) {}
@@ -99,7 +78,7 @@ TEST("serve module publishes inert application callables without invoking its gu
   EXPECT(static_cast<bool>(serve::application.fetch));
   EXPECT(static_cast<bool>(serve::application.upgrade));
   EXPECT(static_cast<bool>(serve::application.onListen));
-  rt::Task<void> (*volatile entry)()=&serve::importMetaMain;
+  rt::Task<void> (*volatile entry)(const serve::ServeStartupOptions&) = &serve::importMetaMain;
   EXPECT(entry!=nullptr);
   EXPECT(!rt::fs::existsSync(".data"));
 }
@@ -149,10 +128,6 @@ ASYNC_TEST("serve migration initializes only through its explicit callable and u
 }
 
 ASYNC_TEST("serve startup failure waits for its migration before closing KV") {
-  if (rt::process::arch != "arm64") co_return;
-  const auto directory = rt::fs::mkdtempSync(rt::path::join(rt::os::tmpdir(), "uos-serve-migration-"));
-  const auto remove = rt::scopeExit([directory] { rt::fs::rmSync(directory, {.recursive = true, .force = true}); });
-  prepareStartupFixture(directory);
   const auto memory = std::make_shared<rt::MemoryKv>(rt::dateNow);
   const rt::KvValue marker(true);
   co_await memory->set(uos::codex::reset_settings::CODEX_RESET_USAGE_MIGRATION_KEY, marker);

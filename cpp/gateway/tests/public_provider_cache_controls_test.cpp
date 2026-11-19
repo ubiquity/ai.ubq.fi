@@ -11,7 +11,7 @@
 // src/provider/capacity_events.cpp src/provider/claude_code_usage_schema.cpp src/codex/external_auth.cpp src/provider/anthropic_chat_stream.cpp src/provider/metered.cpp
 // src/provider/surplus_claude_chat_request.cpp src/provider/anthropic_replay.cpp src/codex/native_auth.cpp src/provider/capacity_contract.cpp src/codex/routing_mutations.cpp
 // src/codex/banked_reset.cpp src/authority/native_codex_mutations.cpp src/codex/capacity_routing.cpp src/authority/native_codex_capacity.cpp src/codex/auth_refresh.cpp
-// src/codex/reset_settings.cpp src/runtime_config.cpp src/authority/native_codex_contracts.cpp src/codex/banked_reset_provider.cpp src/storage/native_addon.cpp
+// src/codex/reset_settings.cpp src/runtime_config.cpp src/authority/native_codex_contracts.cpp src/codex/banked_reset_provider.cpp
 // src/storage/native_kv.cpp src/provider/capacity.cpp src/cache/prompt_analytics_read.cpp src/provider/health.cpp src/cache/prompt_analytics_core.cpp
 // src/codex/native_auth_transport.cpp src/provider/capacity_history.cpp src/provider/claude_capacity_history.cpp src/codex/experiment.cpp src/provider/capacity_parse.cpp
 // src/provider/claude_capacity_rollups.cpp src/paid_fallback/ledger_stats.cpp src/provider/capacity_analytics.cpp src/provider/capacity_rollups.cpp src/codex/account_routing.cpp

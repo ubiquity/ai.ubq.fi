@@ -4,7 +4,7 @@
 // normalizer at three clock readings, and one scripted sequence of writes, five-second cache hits,
 // direct row edits, validation failures and missing or failing stores, with the rows each step leaves.
 // Links: tests/debug_routing_differential_test.cpp src/debug_routing.cpp src/kv.cpp src/storage/kv.cpp src/release.cpp
-//   src/storage/sqlite_readonly.cpp src/storage/native_kv.cpp src/storage/native_addon.cpp
+//   src/storage/sqlite_readonly.cpp src/storage/native_kv.cpp
 #include "uos/debug_routing.hpp"
 #include "uos/kv.hpp"
 

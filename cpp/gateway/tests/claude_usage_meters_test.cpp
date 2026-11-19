@@ -16,11 +16,9 @@
 //        src/provider/claude_code_usage_schema.cpp src/provider/health.cpp src/provider/selection.cpp src/release.cpp
 //        src/runtime/http.cpp src/runtime/http_body.cpp src/runtime/http_early_sse.cpp src/runtime/http_tasks.cpp
 //        src/runtime/http_upgrade.cpp src/runtime/websocket.cpp src/storage/key_compatibility.cpp src/storage/kv.cpp
-//        src/storage/native_addon.cpp src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp src/storage/value_compatibility.cpp
-//        src/types.cpp src/utils.cpp tests/helpers/linked_native_kv.cpp
+// src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp src/storage/value_compatibility.cpp
+//        src/types.cpp src/utils.cpp
 // Port of tests/claude-usage-meters.test.ts, including the durable native-reopen case.
-// The reopen fixture stays under isolated TMPDIR, has a non-production filename, and uses linked_native_kv.
-#include "tests/helpers/linked_native_kv.hpp"
 #include "uos/config.hpp"
 #include "uos/provider/capacity.hpp"
 #include "uos/provider/claude_capacity_history.hpp"
@@ -162,7 +160,6 @@ ASYNC_TEST("direct snapshots, current readback, history and scoped rollups survi
   const std::string savedSeed = uos::config::config.codexAuthJsonB64;
   uos::config::config.codexAuthJsonB64.clear();
   const auto restoreSeed = rt::scopeExit([&savedSeed] { uos::config::config.codexAuthJsonB64 = savedSeed; });
-  uos::tests::helpers::linked_native_kv::prepareOnce();
   const std::string directory = rt::fs::mkdtempSync(rt::path::join(rt::os::tmpdir(), "c0-claude-usage-"));
   const std::string path = rt::path::join(directory, "usage.fixture");
   std::shared_ptr<rt::Kv> store;

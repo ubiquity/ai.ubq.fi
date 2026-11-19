@@ -26,7 +26,7 @@
 // src/runtime/websocket.cpp src/authority/native_codex_mutations.cpp src/lib/jev_compaction/request.cpp src/codex/account_routing.cpp
 // src/authority/native_codex_429.cpp src/codex/routing_serial.cpp src/codex/routing_evaluation.cpp src/storage/kv.cpp
 // src/provider/anthropic_chat_stream.cpp src/codex/overage_settings.cpp src/storage/sqlite_readonly.cpp src/authority/native_codex.cpp
-// src/storage/native_kv.cpp src/storage/native_addon.cpp
+// src/storage/native_kv.cpp
 // Port of tests/lithos-tier-windows.test.ts. Fixture HTTP uses only task-owned port:0 listeners.
 #include "uos/provider/lithos_handlers.hpp"
 #include "uos/provider/lithos_rate_limits.hpp"

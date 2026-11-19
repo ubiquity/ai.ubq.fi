@@ -7,7 +7,7 @@
 //        src/authority/native_api_key_policy.cpp src/authority/native_api_key.cpp src/authority/native_contracts.cpp
 //        src/authority/native_paid_policy.cpp src/http.cpp src/kv.cpp src/types.cpp src/utils.cpp src/config.cpp src/release.cpp
 //        src/auth/relay.cpp src/provider/cerebras_rate_limits.cpp src/storage/kv.cpp src/storage/key_compatibility.cpp
-//        src/storage/native_addon.cpp src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp src/storage/value_compatibility.cpp
+// src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp src/storage/value_compatibility.cpp
 #include "uos/api_key_policy.hpp"
 
 #include "tests/helpers/counting_kv.hpp"

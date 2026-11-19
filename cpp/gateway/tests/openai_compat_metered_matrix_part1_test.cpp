@@ -30,7 +30,7 @@
 // src/paid_fallback/rollups.cpp src/sentinel/replay_retention.cpp src/codex/native_auth.cpp src/embeddings/ledger.cpp src/sentinel/replay_retention_metadata.cpp src/runtime/http_tasks.cpp src/authority/native_api_key_audit.cpp src/cache/prompt_analytics_queue.cpp
 // src/decisions/handlers.cpp src/sentinel/replay_retention_bootstrap.cpp src/lib/jev_compaction/state.cpp src/sentinel/replay_limits.cpp src/kernel/quota_reserve.cpp src/images.cpp src/admin/error_log.cpp src/codex/native_auth_transport.cpp
 // src/cache/scope_targets.cpp src/codex/index.cpp src/paid_fallback/claude_code_route.cpp src/embeddings/handlers.cpp src/authority/native_codex.cpp src/codex/responses_operations.cpp src/optional_telemetry_queue.cpp src/systemone/handlers.cpp
-// src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp src/lib/jev_compaction/codex_items.cpp src/catalog/promotion.cpp src/runtime/websocket.cpp src/lib/jev_compaction/types.cpp src/codex/responses_runners.cpp src/storage/native_addon.cpp
+// src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp src/lib/jev_compaction/codex_items.cpp src/catalog/promotion.cpp src/runtime/websocket.cpp src/lib/jev_compaction/types.cpp src/codex/responses_runners.cpp
 // src/inference_admission.cpp src/codex/responses_state.cpp src/lib/jev_compaction/compact.cpp src/lib/jev_compaction/request.cpp
 // Partial original parent registration: only the two final-handler sequence steps specified in PLAN.md.
 #include "tests/helpers/metered_routing_matrix_part1.hpp"

@@ -6,7 +6,7 @@
 // Links: tests/prompt_analytics_differential_test.cpp tests/helpers/counting_kv.cpp src/cache/prompt_analytics.cpp
 //        src/cache/prompt_analytics_core.cpp src/cache/prompt_analytics_read.cpp src/cache/prompt_analytics_queue.cpp
 //        src/optional_telemetry_queue.cpp src/release.cpp src/utils.cpp src/kv.cpp src/storage/kv.cpp src/storage/sqlite_readonly.cpp
-//        src/storage/native_kv.cpp src/storage/value_compatibility.cpp src/storage/native_addon.cpp src/storage/key_compatibility.cpp
+//        src/storage/native_kv.cpp src/storage/value_compatibility.cpp src/storage/key_compatibility.cpp
 #include "uos/cache/prompt_analytics.hpp"
 
 #include "tests/helpers/counting_kv.hpp"

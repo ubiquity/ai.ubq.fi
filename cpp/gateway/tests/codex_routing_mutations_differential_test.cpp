@@ -8,7 +8,7 @@
 //        src/authority/native_codex_429.cpp src/authority/native_codex_capacity.cpp src/authority/native_codex_contracts.cpp
 //        src/authority/native_codex_evaluation.cpp src/authority/native_codex_mutations.cpp src/bounded_response_body.cpp src/kv.cpp
 //        src/storage/kv.cpp src/storage/sqlite_readonly.cpp src/storage/native_kv.cpp src/storage/value_compatibility.cpp
-//        src/storage/native_addon.cpp src/storage/key_compatibility.cpp src/utils.cpp src/types.cpp
+// src/storage/key_compatibility.cpp src/utils.cpp src/types.cpp
 #include "tests/helpers/codex_diff_kv.hpp"
 #include "uos/codex/capacity_routing.hpp"
 #include "uos/codex/overage_settings.hpp"

@@ -59,12 +59,6 @@ verify_release() {
         cat /staged/relocations.txt
         if grep -Eq "not found|undefined symbol" /staged/relocations.txt; then exit 1; fi
       done
-      for addon in /staged/package/native/kv/native-kv.node /staged/package/native/permissions/linux-arm64.node; do
-        readelf --wide --file-header --dynamic --version-info "$addon"
-        ldd -v "$addon" > /staged/versions.txt 2>&1
-        cat /staged/versions.txt
-        if grep -Fq "not found" /staged/versions.txt; then exit 1; fi
-      done
     ' sh "$ssl" > "$result/elf.txt" 2>&1 || return 1
   for asset in favicon.png favicon-32.png; do
     cmp -- "$root/$asset" "$staged/package/$asset" || return 1

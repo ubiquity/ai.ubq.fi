@@ -1,8 +1,8 @@
 // Links: tests/kv_runtime_conversion_test.cpp
 //        src/cache/kv_migration_base.cpp src/authority/native_kernel.cpp src/utils.cpp
-//        src/storage/kv.cpp src/storage/native_addon.cpp src/kv_conversion/profile_json.cpp src/config.cpp
+//        src/storage/kv.cpp src/kv_conversion/profile_json.cpp src/config.cpp
 //        src/storage/sqlite_readonly.cpp src/kv_conversion/native_schema.cpp src/kv_conversion/cursors.cpp src/storage/key_compatibility.cpp
-//        src/storage/native_kv.cpp src/kv_conversion/convert.cpp src/kernel/quota_v2.cpp tests/helpers/linked_native_kv.cpp
+//        src/storage/native_kv.cpp src/kv_conversion/convert.cpp src/kernel/quota_v2.cpp
 //        src/authority/native_kernel_contracts.cpp src/kv_conversion/typed_value.cpp src/kv.cpp src/release.cpp
 //        src/storage/value_compatibility.cpp
 // tests/kv-runtime-conversion.test.ts: the cases for src/kv-conversion/cursors.ts,
@@ -43,7 +43,6 @@
 #include "uos/rt/test_async.hpp"
 #include "uos/rt/url.hpp"
 #include "uos/storage/kv.hpp"
-#include "tests/helpers/linked_native_kv.hpp"
 #include <map>
 
 namespace {
@@ -139,7 +138,6 @@ namespace {
 
   // `const kv = await openKv(path); try { await kv.set(key, value); } finally { kv.close(); }`
   rt::Task<void> writeNativeKvFixture(std::string path, rt::KvKey key, rt::KvValue value) {
-    uos::tests::helpers::linked_native_kv::prepareOnce();
     auto opening = uos::storage::kv::openKv(std::move(path));
     const std::shared_ptr<rt::Kv> kv = co_await std::move(opening);
     rt::Reason failure;
@@ -359,10 +357,6 @@ ASYNC_TEST("profile export is NDJSON through actual Bun KV with typed values") {
   const auto scratchRoot = rt::path::resolve(*taskScratch); EXPECT_EQ(rt::path::resolve(rt::os::tmpdir()), scratchRoot);
   const std::string saved = uos::config::config.codexAuthJsonB64; uos::config::config.codexAuthJsonB64.clear();
   const auto restore = rt::scopeExit([saved] { uos::config::config.codexAuthJsonB64 = saved; });
-  uos::tests::helpers::linked_native_kv::prepareOnce();
-  const auto binding = rt::jsonParse(uos::tests::helpers::linked_native_kv::bindingJson());
-  const auto artifactRoot = rt::getString(binding, "artifactDirectory"); EXPECT(artifactRoot);
-  EXPECT_EQ(rt::path::dirname(rt::path::resolve(*artifactRoot)), scratchRoot);
   const std::string memory(":memory:"); auto opening = uos::storage::kv::openKv(memory); const auto kv = co_await std::move(opening);
   const auto closing = rt::scopeExit([kv] { kv->close(); });
   const rt::KvKey key{"uos_ai", "runtime_config", "v2"}; const rt::KvValue value = rt::KvValue::object({{"payload", rt::KvBytes{1, 2}}, {"missing", rt::KvValue()}});

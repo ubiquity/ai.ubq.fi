@@ -42,21 +42,9 @@ RUN --network=none --mount=type=cache,target=/var/cache/ccache \
     && cmake --build /build --parallel "$JOBS" --target uos_gateway \
     && ccache --show-stats
 
-FROM base AS native
-RUN apt-get update && apt-get install -y --no-install-recommends libnode-dev patch unzip xz-utils \
-    && rm -rf /var/lib/apt/lists/*
-COPY cpp/gateway/packaging/portable/native.sh /usr/local/bin/portable-native
-COPY cpp/gateway/packaging/portable/native-receipt.py /usr/local/bin/portable-native-receipt
-COPY cpp/gateway/packaging/portable/licenses /usr/local/share/uos-crate-licenses
-COPY cpp/gateway/packaging/native-kv /source/cpp/gateway/packaging/native-kv
-COPY cpp/gateway/packaging/confinement/permissions-native.c /source/cpp/gateway/packaging/confinement/
-RUN bash /usr/local/bin/portable-native
-
 FROM cpp AS assemble
-COPY --from=native /native /native
 COPY static static
 COPY favicon.png favicon-32.png ./
-COPY cpp/gateway/packaging/native-kv/inputs.json cpp/gateway/packaging/native-kv/
 COPY cpp/gateway/docs/licenses cpp/gateway/docs/licenses
 COPY cpp/gateway/docs/RASPBERRY-PI.md cpp/gateway/docs/
 COPY cpp/gateway/ops/launch-native.sh cpp/gateway/ops/

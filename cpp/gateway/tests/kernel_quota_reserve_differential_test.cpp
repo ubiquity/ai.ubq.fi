@@ -6,7 +6,7 @@
 // Links: tests/kernel_quota_reserve_differential_test.cpp src/kernel/quota_reserve.cpp src/kernel/quota_reservations.cpp
 //        src/kernel/quota_v2.cpp src/authority/native_kernel.cpp src/authority/native_kernel_contracts.cpp src/http.cpp src/auth/relay.cpp
 //        src/config.cpp src/provider/cerebras_rate_limits.cpp src/release.cpp src/utils.cpp src/kv.cpp src/storage/kv.cpp
-//        src/storage/sqlite_readonly.cpp src/storage/native_kv.cpp src/storage/native_addon.cpp tests/helpers/counting_kv.cpp
+//        src/storage/sqlite_readonly.cpp src/storage/native_kv.cpp tests/helpers/counting_kv.cpp
 #include "uos/kernel/quota_reserve.hpp"
 #include "uos/kernel/quota_v2.hpp"
 

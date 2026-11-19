@@ -17,9 +17,7 @@
 #include "uos/rt/fs.hpp"
 #include "uos/rt/process.hpp"
 #include "uos/rt/text_codec.hpp"
-#include "uos/runtime/native_kv_bootstrap.hpp"
 #include "uos/storage/kv.hpp"
-#include "uos/storage/native_addon.hpp"
 #include "uos/utils.hpp"
 
 #include <algorithm>
@@ -639,24 +637,7 @@ namespace uos::lib::jev_compaction::jev_codex_smoke {
         {"fake_jev_calls", report.fake_jev_calls}, {"fake_jev_questions", report.fake_jev_questions}, {"jev_api_requests", report.jev_api_requests},
         {"jev_api_requests_manual", report.jev_api_requests_manual}, {"jev_api_requests_auto", report.jev_api_requests_auto}, {"total_ms", report.total_ms}};
     }
-    rt::Task<void> prepareSmokeKv() {
-      std::optional<storage::native_addon::NativeKvArtifactBinding> binding;
-      try { binding = storage::native_addon::preparedNativeKvArtifactBinding(); }
-      catch (...) {
-        const auto error = std::current_exception();
-        if (!rt::isError(error) || rt::errorMessage(error) != "Prepare the verified native KV artifact before starting a child") throw;
-      }
-      if (binding) {
-        binding->inputsManifest = runtime::native_kv_bootstrap::nativeKvDevelopmentPaths().inputs;
-        storage::native_addon::verifyNativeKvArtifact(*binding);
-      } else {
-        auto prepared = runtime::native_kv_bootstrap::prepareNativeKvForDevelopment();
-        co_await prepared.wait();
-      }
-    }
     rt::Task<void> main(std::shared_ptr<Report> report, double startedAt) {
-      rt::Promise<void> prepared(prepareSmokeKv());
-      co_await prepared.wait();
       require_(BETA_COMMAND.find(BETA_TAIL) == std::string::npos, "the beta command must not embed the dropped tail literal");
       require_(BETA_COMMAND.find(BETA_HEAD) != std::string::npos, "the beta command must still name the call for the Jev decision");
       const auto tmp = rt::fs::promises::mkdtemp(rt::path::join(rt::os::tmpdir(), "jev-codex-smoke-"));

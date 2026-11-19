@@ -1,10 +1,9 @@
 // Port of tests/sqlite-readonly.test.ts.
 // Links: tests/sqlite_readonly_test.cpp src/storage/sqlite_readonly.cpp src/storage/kv.cpp src/storage/native_kv.cpp
-//        src/storage/native_addon.cpp src/storage/value_compatibility.cpp src/storage/key_compatibility.cpp
-//        tests/helpers/linked_native_kv.cpp
+// src/storage/value_compatibility.cpp src/storage/key_compatibility.cpp
+//
 #include "uos/storage/sqlite_readonly.hpp"
 #include "uos/storage/kv.hpp"
-#include "tests/helpers/linked_native_kv.hpp"
 
 #include "uos/rt/clock.hpp"
 #include "uos/rt/fs.hpp"
@@ -167,7 +166,6 @@ TEST("readonly codec inspection sees the latest live WAL marker before native op
     EXPECT_EQ(inspectSqliteReadOnly(created.path, marker), std::optional<std::string>("deno-v8"));
     // `assertBunConvertedStore(root)` rejecting /explicit Bun\/JSC marker/ (ops/assert-bun-store.ts,
     // outside the ported tree) is not checked here.
-    uos::tests::helpers::linked_native_kv::prepareOnce();
     EXPECT(rt::includes(openKvRejection(created.path), "codec is missing or incompatible"));
     EXPECT(rt::fs::readFileSync(created.path) == before);
     EXPECT(rt::fs::readFileSync(created.path + "-wal") == walBefore);

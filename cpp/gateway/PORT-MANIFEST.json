@@ -54,9 +54,7 @@
         "src/jev_compaction/compaction.ts",
         "src/kv.ts",
         "src/runtime/http.ts",
-        "src/runtime/native-kv-bootstrap.ts",
         "src/storage/kv.ts",
-        "src/storage/native-addon.ts",
         "src/types.ts",
         "src/utils.ts"
       ],
@@ -79,9 +77,7 @@
         "src/jev_compaction/compaction.ts",
         "src/kv.ts",
         "src/runtime/http.ts",
-        "src/runtime/native-kv-bootstrap.ts",
         "src/storage/kv.ts",
-        "src/storage/native-addon.ts",
         "src/types.ts",
         "src/utils.ts"
       ],
@@ -135,7 +131,6 @@
         "src/kv.ts",
         "src/paid-fallback/ledger-backfill.ts",
         "src/runtime/http.ts",
-        "src/runtime/native-kv-bootstrap.ts",
         "src/storage/kv.ts"
       ],
       "header": "cpp/gateway/include/uos/serve.hpp",
@@ -5067,14 +5062,6 @@
         "tests/vps-deploy-ingress.test.ts"
       ]
     },
-    "src/runtime/native-kv-bootstrap.ts": {
-      "deps": ["src/storage/native-addon.ts"],
-      "header": "cpp/gateway/include/uos/runtime/native_kv_bootstrap.hpp",
-      "impl": "cpp/gateway/src/runtime/native_kv_bootstrap.cpp",
-      "loc": 103,
-      "ported": true,
-      "tests": ["tests/runtime-native-startup.test.ts"]
-    },
     "src/runtime/permissions-linux.ts": {
       "deps": [],
       "header": "cpp/gateway/include/uos/runtime/permissions_linux.hpp",
@@ -5362,7 +5349,6 @@
     "src/storage/kv.ts": {
       "deps": [
         "src/storage/key-compatibility.ts",
-        "src/storage/native-addon.ts",
         "src/storage/native-kv.ts",
         "src/storage/sqlite-readonly.ts",
         "src/storage/value-compatibility.ts"
@@ -5507,14 +5493,6 @@
         "tests/usage-optimization-measurement.test.ts",
         "tests/vps-deploy-guards.test.ts"
       ]
-    },
-    "src/storage/native-addon.ts": {
-      "deps": [],
-      "header": "cpp/gateway/include/uos/storage/native_addon.hpp",
-      "impl": "cpp/gateway/src/storage/native_addon.cpp",
-      "loc": 126,
-      "ported": true,
-      "tests": ["tests/runtime-native-startup.test.ts", "tests/storage-bun-kv.test.ts"]
     },
     "src/storage/native-kv.ts": {
       "deps": [],
@@ -5712,9 +5690,9 @@
     }
   },
   "summary": {
-    "loc": 113178,
-    "modules": 324,
-    "ported_loc": 113178,
-    "ported_modules": 324
+    "loc": 112949,
+    "modules": 322,
+    "ported_loc": 112949,
+    "ported_modules": 322
   }
 }

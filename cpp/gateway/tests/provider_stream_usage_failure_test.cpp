@@ -18,7 +18,7 @@
 // src/authority/native_codex_mutations.cpp src/provider/metered.cpp src/provider/surplus_claude_request.cpp
 // src/provider/claude_code_credentials.cpp src/provider/health.cpp src/codex/native_auth_transport.cpp
 // src/provider/claude_code_accounts.cpp src/storage/native_kv.cpp src/codex/banked_reset_provider.cpp
-// src/provider/surplus_claude_chat_request.cpp src/storage/native_addon.cpp src/authority/native_codex_evaluation.cpp
+// src/provider/surplus_claude_chat_request.cpp src/authority/native_codex_evaluation.cpp
 // src/codex/reset_settings.cpp src/provider/capacity.cpp src/paid_fallback/ledger_stats.cpp
 // src/provider/anthropic_replay.cpp src/provider/capacity_history.cpp src/cache/prompt_analytics_core.cpp
 // src/provider/capacity_parse.cpp src/provider/anthropic_chat_responses.cpp src/provider/capacity_analytics.cpp

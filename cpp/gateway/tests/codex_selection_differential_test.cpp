@@ -15,7 +15,7 @@
 //        src/provider/claude_code_accounts.cpp src/provider/claude_code_credentials.cpp src/bounded_response_body.cpp src/config.cpp src/release.cpp
 //        src/kv.cpp src/types.cpp src/utils.cpp src/runtime/http_body.cpp src/runtime/http_early_sse.cpp src/runtime/http_tasks.cpp
 //        src/runtime/http_upgrade.cpp src/runtime/http.cpp src/runtime/websocket.cpp src/storage/kv.cpp src/storage/sqlite_readonly.cpp
-//        src/storage/native_kv.cpp src/storage/value_compatibility.cpp src/storage/native_addon.cpp src/storage/key_compatibility.cpp
+//        src/storage/native_kv.cpp src/storage/value_compatibility.cpp src/storage/key_compatibility.cpp
 #include "tests/helpers/codex_diff_kv.hpp"
 #include "uos/codex/account_routing.hpp"
 #include "uos/codex/auth.hpp"

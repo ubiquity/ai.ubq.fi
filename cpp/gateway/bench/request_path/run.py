@@ -131,7 +131,7 @@ def check_terminals(log, ids):
 
 def command_for(args, root, mock_port, identities):
     manifest = {"schema": "uos-gateway-launch-v1", "packageRoot": str(args.package),
-                "packageManifestSha256": identities["package_manifest"], "nativeKvProvenanceSha256": identities["native_kv_provenance"],
+                "packageManifestSha256": identities["package_manifest"],
                 "stateRoot": str(root), "hostname": "127.0.0.1", "port": 0,
                 "fixture": {"syntheticOrigin": f"http://127.0.0.1:{mock_port}"}}
     path = root / "launch.json"
@@ -202,9 +202,7 @@ def trial(args, name, repetition, mock_port, mock_pid, identities):
 
 
 def identities_for(args):
-    package = json.loads((args.package / "package.json").read_text())
-    return {"native": digest(args.package / "bin/uos-gateway"), "package_manifest": digest(args.package / "manifest.sha256"),
-            "native_kv_provenance": package["nativeKvProvenanceSha256"]}
+    return {"native": digest(args.package / "bin/uos-gateway"), "package_manifest": digest(args.package / "manifest.sha256")}
 
 
 def main():

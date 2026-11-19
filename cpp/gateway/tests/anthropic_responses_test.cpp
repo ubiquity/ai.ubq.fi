@@ -14,7 +14,7 @@
 //        src/codex/native_auth_transport.cpp src/provider/claude_code_quota.cpp src/provider/claude_code_credentials.cpp
 //        src/authority/native_codex_429.cpp src/auth/relay.cpp src/paid_fallback/ledger_stats.cpp src/cache/prompt_analytics_read.cpp
 //        src/metered_quota.cpp src/cache/prompt_analytics_core.cpp src/codex/experiment.cpp src/provider/claude_code_usage_schema.cpp
-//        src/storage/native_addon.cpp src/runtime/websocket.cpp src/codex/account_routing.cpp src/codex/routing_serial.cpp
+// src/runtime/websocket.cpp src/codex/account_routing.cpp src/codex/routing_serial.cpp
 //        src/authority/native_codex.cpp src/codex/routing_evaluation.cpp src/provider/selection.cpp src/codex/overage_settings.cpp
 // Port of tests/anthropic-responses.test.ts: all original cases and assertions.
 #include "uos/provider/anthropic_responses.hpp"
