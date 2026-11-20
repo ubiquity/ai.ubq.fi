@@ -2,9 +2,9 @@
 
 ## Checklist
 
-- [ ] Fetch and inspect the three reviewed branches from `claude/cpp-gateway-port` (`0c545781`).
-- [ ] Merge `agent-jobs/cppgw-macos-final-20261119-44637373710-1` (Apple Silicon confirmation).
-- [ ] Merge `agent-jobs/cppgw-stream-retry-20261119-44629153076-1` (pre-output stream retry).
+- [x] Fetch and inspect the three reviewed branches from `claude/cpp-gateway-port` (`0c545781`).
+- [x] Merge `agent-jobs/cppgw-macos-final-20261119-44637373710-1` (Apple Silicon confirmation).
+- [x] Merge `agent-jobs/cppgw-stream-retry-20261119-44629153076-1` (pre-output stream retry).
 - [ ] Merge `agent-jobs/cppgw-build-cache-20261119-44628404886-1` (compiler cache).
 - [ ] Reconcile release commit binding with the compiler launcher in packaging and tooling.
 - [ ] Restrict `UOS_PACKAGE_GIT_COMMIT` to translation units that read it.
@@ -21,3 +21,7 @@ Starting commit: `0c545781` (`claude/cpp-gateway-port`, delivered native gateway
 
 ## Log
 
+
+- `65b4a0a4` started this checklist.
+- Mac final tip `316de915` merged cleanly; the merge commit preserves its ancestry.
+- Stream retry tip `824b181b` merged cleanly; the merge commit preserves its ancestry.
