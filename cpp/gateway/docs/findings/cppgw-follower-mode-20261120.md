@@ -8,8 +8,8 @@ Base `0c545781` on `claude/cpp-gateway-port`.
 - [x] Guard request-time renewal, pool writers and CLI access. Expose follower status and expiry.
 - [x] Register scripted runtime coverage for expired and rejected credentials, admin writes, health and Gemini.
 - [x] Add stopped-state import with the read-only Codex usage probe and document the operator steps.
-- [ ] Run the registration check and focused Release and ASan gates. Bind the results to the tested commit and tree.
-- [ ] Request committed-diff review against `claude/cpp-gateway-port` and leave a clean checkout.
+- [x] Run the registration check and focused Release and ASan gates. Bind the results to the tested commit and tree.
+- [x] Request committed-diff review against `claude/cpp-gateway-port`, address the findings and leave a clean checkout.
 
 ## Credential paths at the base
 
@@ -64,3 +64,39 @@ The same model completed `codex review --commit 3a36e11f338c74d10dd52db872591ee0
 > `auth::needsRefresh(incoming)` runs before the `previousExpiry` comparison, so a leader token already inside the two-minute renewal window aborts the entire import even when that token is older or shorter-lived than the follower's current credential and would be skipped on the next line. This only affects sources containing a near-expiry token that is not selected for adoption, but it contradicts the documented behavior that a rejected replacement aborts the update (`cpp/gateway/docs/CUTOVER.md:22`) and can block otherwise valid imports. Move the freshness check after the newer-token comparison, or perform it only for credentials added to `adopted`; the new regression test uses an expired destination token and does not cover this case.
 
 The import selects newer candidates before checking their renewal window. The mixed-pool regression checks that a newer account is imported while an older source credential is skipped and the follower's fresher credential is retained.
+
+The same model completed `codex review --commit 2c2eea095d6c4b60cf209fde4141059ae3e1c432` against parent `3a36e11f338c74d10dd52db872591ee0e594c7a8` with the same configuration flags. It reported no further findings.
+
+> The change correctly defers the renewal-window rejection until after the superseded-offer comparison, so an older or shorter-lived near-expiry source credential no longer aborts an otherwise valid import. The added regression test exercises that mixed-pool case, and the existing rejection and write-time revalidation paths remain intact.
+
+## Verification
+
+The final code commit is `2c2eea095d6c4b60cf209fde4141059ae3e1c432` and its tree is `250ebe4a6a419fd668dbb3d79baf0c0bd004c4cd`. All 20 CI driver receipts recorded that identity and the same input digest `420682afdb247dbacdd212ec1a0b48e37ace0b65bb7e00c30cdbfe7d83682f6b`. The host was Ubuntu 26.04.1 on Linux ARM64 with Clang 21.1.8, Boost 1.90 and ICU 78.2. SQLite 3.54.0 was built with the workflow's checked source tarball and `-O2 -DSQLITE_DQS=3`. The driver verified that version from inside the fixture boundary.
+
+The following driver commands ran for each filter in the table. The named compiler wrappers invoked the installed Clang through the restored ccache. Tests ran under the driver's Linux network, mount and PID namespace helper via sudo with a fresh home and temp directory, a credential-free environment and loopback mocks.
+
+```sh
+export CC=/var/tmp/cppgw-follower-20261120/clang
+export CXX=/var/tmp/cppgw-follower-20261120/clang++
+export UOS_CI_BUILD_DIR=/var/tmp/cppgw-follower-20261120/build
+UOS_CI_JOBS=2 bash cpp/gateway/tools/ci-build.sh --config release "$filter"
+UOS_CI_JOBS=4 bash cpp/gateway/tools/ci-build.sh --config asan "$filter"
+```
+
+| Filter | Binaries passed per configuration | Cases passed per configuration |
+| --- | ---: | ---: |
+| `codex_auth` | 9 | 135 |
+| `codex_native_auth` | 1 | 31 |
+| `codex_external_native_auth` | 1 | 7 |
+| `routing` | 10 | 121 |
+| `admin` | 19 | 258 |
+| `gemini` | 2 | 31 |
+| `health` | 3 | 35 |
+| `codex_models_fetch` | 1 | 5 |
+| `codex_supervisor` | 9 | 159 |
+| `openai_telemetry` | 1 | 10 |
+| **Total** | **56** | **792** |
+
+The first Release import fixture on `a43b78c0` failed because `readFileSync` supports UTF-8 strings and raw bytes and the fixture requested base64. Commit `1820b39a` compares raw bytes. The final Release and ASan runs passed all four import cases and all six follower HTTP cases. `python3 -B cpp/gateway/tools/links.py --check` resolved all 452 tests. `python3 -B cpp/gateway/tools/cmake-sources.py /var/tmp/cppgw-follower-20261120/registered-sources.cmake` registered 367 sources. `sh -n cpp/gateway/ops/launch-native.sh` and `git diff --check origin/claude/cpp-gateway-port...HEAD` passed.
+
+The bound launcher fixture passed on the same code commit. `env -i PATH=/usr/bin:/bin LANG=C.UTF-8 python3 -B /var/tmp/cppgw-follower-20261120/build-launch-fixture.py` linked the Release objects, native startup, entrypoint and pinned SQLite. The gateway SHA-256 was `7464de26d905102d946ba2a104072afc5f2e258fb92f9fbbbb747cbc994a4508` and the package manifest SHA-256 was `b50fbff51c8aec66bb36aee1c445eef9911ddaab5bc6ca56e9bb106481849d59`. This was a local ARM64 launch fixture. The proof ran `check-import` through `sudo -n unshare --net --mount --pid --fork --mount-proc --propagation private --kill-child=SIGKILL` and `cpp/gateway/cmake/ci/isolate.py`. The fixture's outside-route probe returned `ENETUNREACH` and the gateway reported Landlock ABI 8 and seccomp TSYNC. The sealed launcher refused an import without the switch, rejected one bearer with unchanged database bytes, and adopted the accepted bearer on the next run. It issued two usage GETs and zero OAuth calls, updated one destination KV row plus the global revision, preserved the source snapshot and exposed the new expiry after restart. The running follower returned 409 for the credential upload.
