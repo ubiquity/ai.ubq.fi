@@ -18,6 +18,10 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+      - name: Install ccache
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ccache
       - name: Build the Bookworm package
         shell: bash
         run: |
@@ -25,7 +29,9 @@ jobs:
           scratch=$(mktemp -d "$RUNNER_TEMP/cpp-gateway-build.XXXXXX")
           trap 'rm -rf -- "$scratch"' EXIT
           mkdir "$release" "$scratch/home" "$scratch/tmp"
+          # Published Linux archives always compile from scratch. This job has no cache restore.
           env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$scratch/home" TMPDIR="$scratch/tmp" \
+            PORTABLE_REBUILD=1 UOS_CI_COMPILER_LAUNCHER= \
             bash cpp/gateway/packaging/portable/build.sh "$release/uos-gateway-linux-arm64.tar.gz"
           (cd "$release" && sha256sum uos-gateway-linux-arm64.tar.gz > SHA256SUMS)
       - name: Prove Debian 12 and 13 compatibility

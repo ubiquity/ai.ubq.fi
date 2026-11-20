@@ -25,6 +25,28 @@ apt-get -o Acquire::Retries=3 install -y --no-install-recommends clang-21
 clang++-21 --version
 rm -rf /var/lib/apt/lists/*
 
+# Boost's bootstrap clears CXX. Put compiler wrappers on PATH so both
+# bootstrap and the library builds use the same launcher selection.
+launcher=$(PYTHONPATH=/opt/uos/ci-tools python3 -B -c \
+  'import compiler_cache, shlex; print(shlex.join(compiler_cache.launcher()))')
+if [[ -n "$launcher" ]]; then
+  mkdir "$work/compiler-launchers"
+  for compiler in cc gcc g++ clang-21 clang++-21; do
+    compiler_path=$(command -v "$compiler")
+    cat > "$work/compiler-launchers/$compiler" <<EOF
+#!/bin/sh
+for argument do
+  case "\$argument" in
+    -c|*.c|*.cc|*.cpp|*.cxx|@*) exec $launcher "$compiler_path" "\$@" ;;
+  esac
+done
+exec "$compiler_path" "\$@"
+EOF
+    chmod +x "$work/compiler-launchers/$compiler"
+  done
+  export PATH="$work/compiler-launchers:$PATH"
+fi
+
 download() {
   curl -fsSL --retry 3 --max-time 600 "$1" -o "$2"
   printf '%s  %s\n' "$3" "$2" | sha256sum --check

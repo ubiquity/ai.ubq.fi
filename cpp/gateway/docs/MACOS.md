@@ -7,6 +7,7 @@ The integrated follow-ups compiled **373/373 production sources**, linked **3/3 
 **450/450 binaries and 5,119/5,119 cases** on the `-O0 -g0` profile. The macOS release workflow's packager
 built the archive and the extracted gateway returned the qualified source commit from `--version`.
 
+[Delivered C++-only qualification](findings/cppgw-macos-final-20261119.md) ·
 [Integrated follow-up findings](findings/cppgw-macos-requal-fu1-20261118.md) ·
 [Integrated F1 findings](findings/cppgw-macos-requal-f1-20261118.md) ·
 [Prior qualification, 442 binaries and 5,034 cases](findings/cppgw-macos-requal-20261118.md) ·
@@ -98,9 +99,9 @@ env -i PATH=/opt/homebrew/bin:/usr/bin:/bin HOME="$UOS_MAC_BUILD/full-home" TMPD
   --sqlite-prefix "$UOS_MAC_BUILD/sqlite-3.54.0" --jobs 3 --suite all --require-clean
 ```
 
-The script compiles the production sources once and builds the module archive. The three
-production executables share that archive and the startup object. Darwin's whole-archive
-link keeps the module registrars. Runtime tests execute before the other tests. Each test links
+The script compiles the production sources once and links the gateway with the module archive
+and startup object. Darwin's whole-archive link keeps the module registrars. Runtime tests execute
+before the other tests. Each test links
 all 44 runtime objects and the ordered `Links` source list from `tools/links.py`, which keeps
 the local stand-ins. A cached object requires matching compiler arguments and SHA-256s of its
 tracked dependency closure.
@@ -164,7 +165,7 @@ bash cpp/gateway/tools/macos-build.sh --build-root "$UOS_MAC_BUILD/build" \
   --sqlite-prefix "$UOS_MAC_BUILD/sqlite-3.54.0" --jobs 3 --suite none --require-clean
 ```
 
-## Native results
+## Prior qualification results
 
 | Gate                       | Result                                                        |
 | -------------------------- | ------------------------------------------------------------- |
@@ -185,10 +186,11 @@ regex fixture passed 20. [Receipt hashes](findings/cppgw-macos-requal-fu1-202611
 ## Build the release archive
 
 Run the macOS release workflow's entry point from a clean checkout with the Homebrew dependencies installed.
-It prepares its own SQLite 3.54.0, runs the runtime suite again, and packages three ad-hoc-signed arm64 executables
-with their static library licenses and a `VERSION` manifest. The package verifier checks that each executable
-links only system dylibs. The packager requires the build receipt to cover the complete vendor registry and
-links those archives into the executables. [Release workflow](../../../.github/workflows/cpp-gateway-release.yml)
+It prepares its own SQLite 3.54.0, runs the runtime suite again, and packages the ad-hoc-signed arm64 gateway
+with its static library licenses and a `VERSION` manifest. The package verifier checks that the gateway links
+only system dylibs. The packager requires a build receipt for the complete vendor registry and links those
+archives into the executable. The build binds the source commit through `UOS_PACKAGE_GIT_COMMIT` for both
+`--version` and the health handler's release identity. [Release workflow](../../../.github/workflows/cpp-gateway-release.yml)
 
 ```sh
 mkdir "$UOS_MAC_BUILD"/release "$UOS_MAC_BUILD"/package-home "$UOS_MAC_BUILD"/package-tmp

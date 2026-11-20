@@ -34,6 +34,9 @@ namespace uos::responses_stream {
     std::weak_ptr<const void> weakIdentity() const noexcept { return identityToken; }
   };
 
+  /** The error payload in a flat error, nested error or failed response. */
+  const json::object* responsesFailurePayload(const ResponsesStreamEvent& event);
+
   // "malformed_event" | "premature_eof" | "read_error" | "inactivity_timeout" | "event_too_large"
   // | "upstream_http_4xx" | "upstream_http_5xx" | "upstream_http_error" | "empty_upstream_completion"
   using ResponsesStreamFailureKind = std::string;
@@ -136,6 +139,7 @@ namespace uos::responses_stream {
     std::optional<double> inactivityTimeoutMs = std::nullopt;
     /** Runs for every non-empty raw read, including comments and partial SSE frames. */
     MaybeAsyncCallback<> onActivity = {};
+    std::function<void(const ResponsesStreamEvent&)> onEvent = {};
   };
 
   ResponsesStreamIterator readResponsesStream(rt::ByteStream stream, std::optional<rt::AbortSignal> signal = std::nullopt, ReadResponsesStreamOptions options = {});

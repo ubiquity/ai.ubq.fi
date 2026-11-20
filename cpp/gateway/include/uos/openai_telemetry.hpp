@@ -21,6 +21,7 @@
 #include "uos/sentinel/upstream_capture.hpp"
 #include "uos/types.hpp"
 
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -153,6 +154,8 @@ namespace uos::openai_telemetry {
     std::optional<std::string> removedProviderSemanticCommitment;
     std::optional<double> removedProviderLatencyMs;
     std::optional<std::string> removedProviderTerminalStatus;
+    std::size_t inStreamRetries = 0;
+    json::array upstreamFailureEvents{};
     bool upstreamAuthFollowerStale = false;
     friend bool operator==(const ResponseTelemetry&, const ResponseTelemetry&) = default;
   };
@@ -206,6 +209,8 @@ namespace uos::openai_telemetry {
     std::optional<std::string> removedProviderSemanticCommitment;
     std::optional<double> removedProviderLatencyMs;
     std::optional<std::string> removedProviderTerminalStatus;
+    std::size_t inStreamRetries = 0;
+    json::array upstreamFailureEvents{};
     bool upstreamAuthFollowerStale = false;
     friend bool operator==(const ResponseTelemetryState&, const ResponseTelemetryState&) = default;
   };
@@ -284,6 +289,7 @@ namespace uos::openai_telemetry {
   std::optional<std::string> responseIncompleteFailureKind(const responses_stream::ResponsesStreamEvent& event);
 
   void recordResponsesEventTelemetry(const UsageContext* context, const responses_stream::ResponsesStreamEvent& event);
+  void recordUpstreamResponsesFailure(ResponseTelemetryState& telemetry, const responses_stream::ResponsesStreamEvent& event);
 
   // `error: unknown` is the caught reason; `details?`: nullptr is undefined.
   void recordResponsesFailureTelemetry(const UsageContext* context, const rt::Reason& error,

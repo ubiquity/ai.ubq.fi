@@ -354,6 +354,13 @@ namespace uos::codex::responses_state {
     bool probeUnavailable;
     std::optional<routing_state::CodexProbeCircuit> probeUnavailableCircuit;
     double attemptNumber;
+    struct StreamAttempt {
+      json::object log;
+      std::string accountId;
+      bool retryAllowed;
+    };
+    std::optional<StreamAttempt> streamAttempt{};
+    bool streamRetryPending = false;
     TransportState transportState;
     // `Set<number>` of 0-based slots.
     rt::OrderedSet<double> refreshedSlots;

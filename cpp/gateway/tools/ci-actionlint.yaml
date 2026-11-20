@@ -1,0 +1,3 @@
+# actionlint 1.7.12's hosted runner list predates this GitHub runner image.
+self-hosted-runner:
+  labels: [ubuntu-26.04-arm]

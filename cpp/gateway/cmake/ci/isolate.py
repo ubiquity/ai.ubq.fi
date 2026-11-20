@@ -17,6 +17,8 @@ def main():
     parser.add_argument("scratch", type=Path)
     parser.add_argument("binary_directory", type=Path)
     parser.add_argument("binary")
+    parser.add_argument("checkout", type=Path)
+    parser.add_argument("checkout_alias")
     parser.add_argument("parent_namespace")
     parser.add_argument("uid", type=int)
     parser.add_argument("gid", type=int)
@@ -36,6 +38,9 @@ def main():
     # Keep scratch and binary paths short while hiding all other host /tmp state.
     (options.scratch / "b").mkdir()
     subprocess.run(["mount", "--bind", str(options.binary_directory), str(options.scratch / "b")], env=commands, check=True)
+    fixture_source = options.scratch / options.checkout_alias
+    fixture_source.mkdir()
+    subprocess.run(["mount", "-o", "bind,ro", str(options.checkout), str(fixture_source)], env=commands, check=True)
     subprocess.run(["mount", "--rbind", str(options.scratch), "/tmp"], env=commands, check=True)
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as control:
         flags = fcntl.ioctl(control, 0x8913, struct.pack("16sH14x", b"lo", 0))

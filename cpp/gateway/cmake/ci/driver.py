@@ -19,7 +19,11 @@ import time
 
 sys.dont_write_bytecode = True
 GATEWAY = Path(__file__).resolve().parents[2]
+ROOT = GATEWAY.parents[1]
+SOURCE_PREFIX = GATEWAY.relative_to(ROOT)
+FIXTURE_CHECKOUT = Path("/tmp/source")
 sys.path.insert(0, str(GATEWAY / "tools"))
+import compiler_cache
 import links
 import vendor_sources
 
@@ -78,7 +82,7 @@ def boundary_command(prefix, scratch, build, binary, environment):
     # real host uid/gid and the helper drops privileges after namespace setup.
     mapped = "--map-root-user" in prefix
     return prefix + [sys.executable, str(Path(__file__).with_name("isolate.py")), str(scratch),
-                     str(build / "bin"), binary, os.readlink("/proc/self/ns/net"),
+                     str(build / "bin"), binary, str(ROOT), FIXTURE_CHECKOUT.name, os.readlink("/proc/self/ns/net"),
                      str(0 if mapped else os.getuid()), str(0 if mapped else os.getgid()),
                      json.dumps(environment)]
 
@@ -174,16 +178,19 @@ def ninja_compile_rule(name, argv, description):
 
 def write_ninja(build, sources, compiler, flags, c_compiler, c_flags, vendors):
     # Ninja's depfiles track transitive headers; a failed rebuild removes stale output.
-    lines = ["ninja_required_version = 1.10", *ninja_compile_rule("cxx", compiler + flags, "CXX")]
+    # Run from the checkout so relative inputs (including cached depfiles) resolve
+    # identically at any checkout depth. Keep all Ninja state in the output tree.
+    lines = ["ninja_required_version = 1.10", "builddir = " + ninja_escape(build),
+             *ninja_compile_rule("cxx", compiler + flags, "CXX")]
     json_sources = vendor_sources.simdjson_consumers(vendors)
     vendor_headers = {}
     for library in vendors:
-        headers = [ninja_escape(GATEWAY / path) for path in library.headers]
+        headers = [ninja_escape(SOURCE_PREFIX / path) for path in library.headers]
         for source in (*library.consumers, *library.sources):
             vendor_headers.setdefault(source, []).extend(headers)
     if json_sources:
-        lines += ninja_compile_rule("selected_json", compiler + flags + vendor_sources.simdjson_flags(), "CXX")
-    includes = {library.name: vendor_sources.include_flags(library) for library in vendors}
+        lines += ninja_compile_rule("selected_json", compiler + flags + vendor_sources.simdjson_flags(SOURCE_PREFIX), "CXX")
+    includes = {library.name: vendor_sources.include_flags(library, SOURCE_PREFIX) for library in vendors}
     vendor_c_options = {library.name: includes[library.name] + vendor_sources.c_dialect_flags(library.sources[0])
                         for library in vendors}
     include_consumers = {source: library for library in vendors if includes[library.name] for source in library.consumers}
@@ -208,7 +215,7 @@ def write_ninja(build, sources, compiler, flags, c_compiler, c_flags, vendors):
         # -MMD omits system headers, including QCBOR's nested includes.
         headers = vendor_headers.get(source)
         dependency = " | " + " ".join(headers) if headers else ""
-        lines.append("build " + ninja_escape(target) + ": " + rule + " " + ninja_escape(GATEWAY / source) + dependency)
+        lines.append("build " + ninja_escape(target) + ": " + rule + " " + ninja_escape(SOURCE_PREFIX / source) + dependency)
     for library in vendors:
         members = []
         for source in library.sources:
@@ -219,7 +226,7 @@ def write_ninja(build, sources, compiler, flags, c_compiler, c_flags, vendors):
                 rule += "_" + library.name
             members.append(ninja_escape(target))
             headers = " | " + " ".join(vendor_headers[source])
-            lines.append("build " + members[-1] + ": " + rule + " " + ninja_escape(GATEWAY / source) + headers)
+            lines.append("build " + members[-1] + ": " + rule + " " + ninja_escape(SOURCE_PREFIX / source) + headers)
         lines.append("build " + ninja_escape(build / library.archive) + ": vendor_archive " + " ".join(members))
     (build / "build.ninja").write_text("\n".join(lines) + "\n")
 
@@ -231,7 +238,7 @@ def result(test, status, note="", *, built=False, **extra):
 def input_digest(vendors=()):
     digest = hashlib.sha256()
     paths = [GATEWAY / "tools" / name for name in ("ci-build.sh", "links.py")]
-    paths.extend([GATEWAY / "tools/vendor_sources.py", GATEWAY / vendor_sources.REGISTRY])
+    paths.extend([GATEWAY / "tools/compiler_cache.py", GATEWAY / "tools/vendor_sources.py", GATEWAY / vendor_sources.REGISTRY])
     paths.extend(GATEWAY / relative for library in vendors for relative in library.inputs)
     for directory in ("src", "include", "tests", "cmake/ci"):
         paths.extend(path for path in (GATEWAY / directory).rglob("*") if path.is_file())
@@ -295,12 +302,18 @@ def run_test(selected, runtime, build, compiler, flags, libraries, environment, 
         binary.unlink(missing_ok=True)
 
 
-def verify_sqlite(build, compiler, flags, libraries, environment, boundary):
+def verify_sqlite(build, launcher, compiler, flags, path_flags, libraries, build_env, environment, boundary):
     source = Path(__file__).with_name("sqlite-version.cpp")
     binary = build / "bin" / "sqlite-version"
+    obj = build / "sqlite-version.o"
     try:
+        log = build / "sqlite-version-compile.log"
+        command = launcher + compiler + flags + path_flags + ["-c", str(source.relative_to(ROOT)), "-o", str(obj)]
+        code, _, _ = execute(command, log, cwd=ROOT, environment=build_env, timeout=60)
+        if code:
+            raise RuntimeError("SQLite version probe failed to compile; see " + str(log))
         log = build / "sqlite-version-build.log"
-        command = compiler + flags + [str(source)] + libraries + ["-o", str(binary)]
+        command = compiler + flags + [str(obj)] + libraries + ["-o", str(binary)]
         code, _, _ = execute(command, log, cwd=build, environment=environment, timeout=60)
         if code:
             raise RuntimeError("SQLite version probe failed to build; see " + str(log))
@@ -317,6 +330,7 @@ def verify_sqlite(build, compiler, flags, libraries, environment, boundary):
         raise RuntimeError("SQLite version probe failed; see " + str(log))
     finally:
         binary.unlink(missing_ok=True)
+        obj.unlink(missing_ok=True)
 
 
 def main():
@@ -347,6 +361,10 @@ def main():
         timeout = positive(os.environ.get("UOS_CI_TIMEOUT", "300"))
     except ValueError as error:
         parser.error("invalid UOS_CI_JOBS/UOS_CI_TIMEOUT: " + str(error))
+    try:
+        launcher = compiler_cache.launcher()
+    except ValueError as error:
+        parser.error(str(error))
     compiler = shlex.split(os.environ.get("CXX", "g++"))
     if not compiler or not shutil.which(compiler[0]):
         parser.error("CXX compiler not found")
@@ -373,14 +391,21 @@ def main():
     package_flags = shlex.split(subprocess.check_output(["pkg-config", "--cflags", "--libs"] + packages, text=True))
     flags = ["-std=c++20", "-Wall", "-Wextra", "-Wshadow", "-Wconversion", "-Werror",
              "-DBOOST_JSON_NO_LIB", "-DBOOST_CONTAINER_NO_LIB", "-DBOOST_SYSTEM_NO_LIB",
-             "-DUOS_GATEWAY_NATIVE_LIBRARIES=1", "-I" + str(GATEWAY / "include"), "-I" + str(GATEWAY), "-I" + str(sqlite_include)]
+             "-DUOS_GATEWAY_NATIVE_LIBRARIES=1", "-I" + str(SOURCE_PREFIX / "include"), "-I" + str(SOURCE_PREFIX), "-I" + str(sqlite_include)]
     if clang:
         # Some consumers include vendor headers relative to the gateway root.
         flags.append("--system-header-prefix=third_party/")
+    extra_cxx_flags = shlex.split(os.environ.get("UOS_CI_CXXFLAGS", ""))
+    extra_c_flags = vendor_sources.vendor_flags(shlex.split(os.environ.get("UOS_CI_CFLAGS", "")))
     flags += CONFIGS[options.config] + [flag for flag in package_flags if flag.startswith(("-I", "-D"))]
-    flags += shlex.split(os.environ.get("UOS_CI_CXXFLAGS", ""))
+    flags += extra_cxx_flags
     c_flags = ["-std=c11"] + [flag for flag in CONFIGS[options.config] if not flag.startswith("-D")]
-    c_flags += vendor_sources.vendor_flags(shlex.split(os.environ.get("UOS_CI_CFLAGS", "")))
+    c_flags += extra_c_flags
+    # Some fixtures use __FILE__ to read repository assets. Give those paths a
+    # stable absolute name that the fixture namespace binds to this checkout.
+    path_flags = [f"-fdebug-prefix-map={ROOT}=.",
+                  f"-fmacro-prefix-map={ROOT}={FIXTURE_CHECKOUT}",
+                  f"-fmacro-prefix-map={SOURCE_PREFIX}={FIXTURE_CHECKOUT / SOURCE_PREFIX}"]
     libraries = ["-lboost_json", "-lboost_container", str(sqlite_library)]
     libraries += [flag for flag in package_flags if not flag.startswith(("-I", "-D"))] + ["-pthread"]
     if sys.platform.startswith("linux"):
@@ -389,7 +414,10 @@ def main():
         if shutil.which("mold"):
             libraries += ["-fuse-ld=mold", "-Wl,--threads=1"]
     libraries += shlex.split(os.environ.get("UOS_CI_LDFLAGS", ""))
-    identity = hashlib.sha256(json.dumps([compiler, version, flags, c_compiler, c_version, c_flags, libraries]).encode()).hexdigest()[:12]
+    compiler_hash, c_compiler_hash = (hashlib.sha256(Path(command[0]).read_bytes()).hexdigest()
+                                      for command in (compiler, c_compiler))
+    identity = hashlib.sha256(json.dumps([str(ROOT), compiler, compiler_hash, version, flags, c_compiler,
+                                         c_compiler_hash, c_version, c_flags, path_flags, libraries]).encode()).hexdigest()[:12]
     build_root = Path(os.environ.get("UOS_CI_BUILD_DIR", "/tmp/uos-gateway-build")).resolve()
     if build_root.is_relative_to(GATEWAY.parents[1]):
         parser.error("UOS_CI_BUILD_DIR must be outside the repository checkout")
@@ -407,7 +435,7 @@ def main():
         archive = build / "history" / run_id
         archive.mkdir(parents=True)
         (build / "logs").rename(archive / "logs")
-        for name in ("results.tsv", "receipt.json", "compile.log"):
+        for name in ("results.tsv", "receipt.json", "compile.log", "ccache.log"):
             if (build / name).exists():
                 (build / name).rename(archive / name)
     (build / "bin").mkdir(exist_ok=True)
@@ -431,17 +459,31 @@ def main():
     git_identity = subprocess.check_output(["git", "-C", str(GATEWAY), "rev-parse", "HEAD", "HEAD^{tree}"], text=True).splitlines()
     announce("Compiler: " + version.splitlines()[0])
     announce("C compiler: " + c_version.splitlines()[0])
+    announce("Compiler launcher: " + (shlex.join(launcher) if launcher else "none"))
     announce("Build: %s; %d production sources (%d runtime), %d tests, jobs=%d" % (build, len(production), len(runtime), len(tests), jobs))
-    write_ninja(build, sorted(sources), compiler, flags, c_compiler, c_flags, vendors)
+    write_ninja(build, sorted(sources), launcher + compiler, flags + path_flags,
+                launcher + c_compiler, c_flags + path_flags, vendors)
     environment = clean_environment()
+    build_env = dict(environment, **{name: os.environ[name] for name in ("HOME", "TMPDIR", "XDG_CACHE_HOME") if name in os.environ})
+    cache_log = build / "ccache.log"
+    if launcher:
+        build_env = compiler_cache.environment(build_env, ROOT, options.config)
+        # Ccache intentionally omits path-map options from its hash. Explicit
+        # arguments can change their destinations, unlike our fixed path maps.
+        extra_arguments = [compiler[1:], c_compiler[1:], extra_cxx_flags, extra_c_flags]
+        if any(extra_arguments):
+            build_env["CCACHE_NAMESPACE"] += "-" + hashlib.sha256(json.dumps(extra_arguments).encode()).hexdigest()
+    if compiler_cache.is_ccache(launcher):
+        cache_log.unlink(missing_ok=True)
+        build_env.update(CCACHE_STATS="1", CCACHE_STATSLOG=str(cache_log))
     boundary = find_boundary(build, environment)
-    sqlite_version = verify_sqlite(build, compiler, flags, libraries, environment, boundary)
-    environment["NINJA_STATUS"] = "[%f/%t %es] "
+    sqlite_version = verify_sqlite(build, launcher, compiler, flags, path_flags, libraries, build_env, environment, boundary)
+    build_env["NINJA_STATUS"] = "[%f/%t %es] "
     compile_started = time.monotonic()
     with (build / "compile.log").open("w") as log:
-        process = subprocess.Popen(["ninja", "-C", str(build), "-k", "0", "-j", str(jobs)],
+        process = subprocess.Popen(["ninja", "-f", str(build / "build.ninja"), "-k", "0", "-j", str(jobs)], cwd=ROOT,
                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                                   env=environment, start_new_session=True)
+                                   env=build_env, start_new_session=True)
         NINJA = process
         with CHILD_LOCK:
             CHILDREN.add(process.pid)
@@ -478,8 +520,11 @@ def main():
     after_hash = input_digest(vendors)
     vendor_archives = {library.archive: hashlib.sha256((build / library.archive).read_bytes()).hexdigest()
                        for library in vendors if (build / library.archive).is_file()}
+    cache_stats = compiler_cache.stats(cache_log) if compiler_cache.is_ccache(launcher) else None
     receipt = dict(config=options.config, compiler=compiler, compiler_version=version, flags=flags, sqlite_version=sqlite_version,
                    c_compiler=c_compiler, c_compiler_version=c_version, c_flags=c_flags,
+                   compiler_sha256=compiler_hash, c_compiler_sha256=c_compiler_hash, compile_path_flags=path_flags,
+                   compiler_launcher=launcher, ccache=cache_stats,
                    libraries=libraries, vendor_archives=vendor_archives, source_sha256=source_hash, after_source_sha256=after_hash,
                    inputs_unchanged=source_hash == after_hash, git_commit=git_identity[0], git_tree=git_identity[1], selected=tests,
                    production_sources=len(production), runtime_sources=len(runtime),
@@ -491,6 +536,8 @@ def main():
     announce("\nTEST\tSTATUS\tRUN\tPASSED\tFAILED")
     for row in rows:
         announce("%s\t%s\t%d\t%d\t%d" % tuple(row[key] for key in ("test", "status", "run", "passed", "failed")))
+    if cache_stats is not None:
+        announce("ccache --show-stats delta: %(hits)d hits, %(misses)d misses, %(uncacheable)d uncacheable" % cache_stats)
     announce("TOTAL " + json.dumps({"tests": statuses, "cases": receipt["cases"], "seconds": receipt["elapsed_seconds"]}))
     announce("Evidence: " + str(build / "receipt.json"))
     if source_hash != after_hash:
