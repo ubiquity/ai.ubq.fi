@@ -26,6 +26,8 @@
 #include "uos/rt/json.hpp"
 #include "uos/rt/limits.hpp"
 #include "uos/rt/string.hpp"
+
+#include <utility>
 namespace uos::chat::envelope {
 namespace {
   namespace tel = openai_telemetry;
@@ -158,12 +160,19 @@ namespace {
     co_return tel::attachResponseTelemetry(normalized, context && context->responseTelemetry ? context->responseTelemetry : tel::createResponseTelemetryState());
   }
   struct Dispatched { rs::PreflightedResponsesStream preflight; std::string provider; tel::MeteredTransportLifecycle lifecycle; rt::AbortSignal signal; std::function<void(std::string)> resolveCodexProbe; std::vector<std::string> combinedWarnings; };
+  rt::Task<void> cancelPreparedChatSource(rs::ResponsesStreamIterator iterator, std::function<void(rt::Reason)> abort, rt::Reason reason) {
+    abort(std::move(reason));
+    try { co_await iterator.return_(); } catch (...) {}
+    co_await rt::microtask();
+  }
   rt::Task<Step<Dispatched>> dispatchAndPreflightChatCompletions(json::object body, rt::Request req, Model model, Options options, std::optional<std::string> clientVersion, std::string reasoning, std::vector<std::string> warnings, const tel::UsageContext* context, rt::AbortSignal downstream) {
     const auto deadline = options.stream ? std::optional(inference_deadline::createStreamFirstEventDeadline(downstream)) : std::nullopt;
     const auto signal = deadline ? deadline->signal : openai::inferenceSignal(req, context); std::function<void()> clear = [deadline] { if (deadline) deadline->clear(); };
+    const auto codexPreflight = options.stream ? std::make_shared<paid_fallback::routing::CodexStreamPreflight>() : nullptr;
     std::optional<tel::RoutedResponsesUpstream> routed; rt::Reason dispatchError;
     try {
       paid_fallback::routing::FetchResponsesWithPaidFallbackOptions fetchOptions{.model = model.model, .route = "chat.completions", .stream = options.stream, .reasoning = reasoning, .usageContext = context, .clientVersion = rt::orUndefined(clientVersion), .signal = signal};
+      fetchOptions.codexStreamPreflight = codexPreflight;
       auto task = paid_fallback::routing::fetchResponsesWithPaidFallback(body, fetchOptions); rt::Promise<tel::RoutedResponsesUpstream> pending(std::move(task)); routed = co_await pending.wait();
     } catch (...) { dispatchError = std::current_exception(); }
     if (dispatchError) { clear(); auto task = respondChatCompletionsDispatchFailure(dispatchError, signal, downstream, context); rt::Promise<rt::Response> pending(std::move(task)); const auto response = co_await pending.wait(); co_return NotOk{response}; }
@@ -181,16 +190,33 @@ namespace {
     if (!upstream.body()) { clear(); resolve("error"); lifecycle.ambiguous(); tel::recordStreamTerminalType(context, "error"); co_await tel::recordErrorUsage(context).wait(); co_return NotOk{tel::streamErrorResponse(502, "Codex upstream response missing body.", "codex_upstream_missing_body", provider, warnings)}; }
     std::optional<rs::PreflightedResponsesStream> preflight; rt::Reason preflightError;
     try {
-      const rs::PreflightResponsesStreamOptions preflightOptions; auto firstTask = rs::preflightResponsesStream(*upstream.body(), signal, preflightOptions); rt::Promise<rs::PreflightedResponsesStream> firstPending(std::move(firstTask)); const auto first = co_await firstPending.wait(); tel::recordFirstUpstreamSseEvent(context);
-      rs::ResponsesStreamIterator replay([first](rt::Yield<rs::ResponsesStreamEvent> yield) -> rt::Task<void> {
-        rt::Reason failure; try { co_await yield(first.first); for (;;) { auto next = co_await first.iterator.next(); if (next.done) break; co_await yield(*next.value); } } catch (...) { failure = std::current_exception(); }
-        try { (void)co_await first.iterator.return_(); } catch (...) {} co_await rt::microtask(); if (failure) std::rethrow_exception(failure);
-      });
-      const fs::PrepareResponsesStreamForCommitOptions prepareOptions{.releaseOnProgress = options.stream && tel::supportsReasoningProgressRelease(provider)};
-      auto prepareTask = fs::prepareResponsesStreamForCommit(replay, prepareOptions); rt::Promise<fs::PreparedResponsesStream> preparedPending(std::move(prepareTask)); const auto prepared = co_await preparedPending.wait(); clear();
-      const auto usage = completedTerminalUsageOf(prepared);
-      if (chatCompletionPreflightIsEmpty(prepared, usage, context)) { auto task = rejectEmptyChatCompletion(prepared, usage, context, lifecycle, resolve, provider, warnings); rt::Promise<rt::Response> pending(std::move(task)); const auto response = co_await pending.wait(); co_return NotOk{response}; }
-      preflight = stream_translation::chatSourceFromPrepared(first, prepared);
+      std::optional<rs::PreflightedResponsesStream> first;
+      std::optional<fs::PreparedResponsesStream> prepared;
+      if (provider == "chatgpt_codex" && codexPreflight && codexPreflight->error) rt::rethrow(codexPreflight->error);
+      if (provider == "chatgpt_codex" && codexPreflight && codexPreflight->prepared) {
+        prepared = std::exchange(codexPreflight->prepared, std::nullopt);
+        const auto iterator = prepared->iterator;
+        auto cancel = [iterator, abort = deadline->abort](rt::Reason reason) { return cancelPreparedChatSource(iterator, abort, std::move(reason)); };
+        first = rs::PreflightedResponsesStream{prepared->buffered.front(), iterator, cancel};
+      } else {
+        const rs::PreflightResponsesStreamOptions preflightOptions;
+        auto firstTask = rs::preflightResponsesStream(*upstream.body(), signal, preflightOptions);
+        rt::Promise<rs::PreflightedResponsesStream> firstPending(std::move(firstTask));
+        first = co_await firstPending.wait();
+        tel::recordFirstUpstreamSseEvent(context);
+        rs::ResponsesStreamIterator replay([source = *first](rt::Yield<rs::ResponsesStreamEvent> yield) -> rt::Task<void> {
+          rt::Reason failure; try { co_await yield(source.first); for (;;) { auto next = co_await source.iterator.next(); if (next.done) break; co_await yield(*next.value); } } catch (...) { failure = std::current_exception(); }
+          try { (void)co_await source.iterator.return_(); } catch (...) {} co_await rt::microtask(); if (failure) std::rethrow_exception(failure);
+        });
+        const fs::PrepareResponsesStreamForCommitOptions prepareOptions{.releaseOnProgress = options.stream && tel::supportsReasoningProgressRelease(provider)};
+        auto prepareTask = fs::prepareResponsesStreamForCommit(replay, prepareOptions);
+        rt::Promise<fs::PreparedResponsesStream> preparedPending(std::move(prepareTask));
+        prepared = co_await preparedPending.wait();
+      }
+      clear();
+      const auto usage = completedTerminalUsageOf(*prepared);
+      if (chatCompletionPreflightIsEmpty(*prepared, usage, context)) { auto task = rejectEmptyChatCompletion(*prepared, usage, context, lifecycle, resolve, provider, warnings); rt::Promise<rt::Response> pending(std::move(task)); const auto response = co_await pending.wait(); co_return NotOk{response}; }
+      preflight = stream_translation::chatSourceFromPrepared(std::move(*first), std::move(*prepared));
     } catch (...) { preflightError = std::current_exception(); }
     if (preflightError) {
       clear(); const auto type = tel::classifyStreamFailure(preflightError, signal, downstream); resolve(type); tel::recordStreamTerminalType(context, type);

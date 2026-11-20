@@ -2,6 +2,7 @@
 #include "uos/paid_fallback/routing.hpp"
 #include "uos/paid_fallback/health.hpp"
 #include "uos/paid_fallback/claude_code_route.hpp"
+#include "uos/authority/native_codex_429.hpp"
 #include "uos/codex/index.hpp"
 #include "uos/provider/selection.hpp"
 #include "uos/provider/metered.hpp"
@@ -12,10 +13,21 @@
 #include "uos/openai.hpp"
 #include "uos/request_policy.hpp"
 #include "uos/upstream_wire.hpp"
+#include "uos/rt/clock.hpp"
+#include "uos/rt/fetch_transport.hpp"
 #include "uos/rt/json.hpp"
+#include "uos/rt/number.hpp"
+#include "uos/rt/string.hpp"
+
+#include <algorithm>
+#include <initializer_list>
+#include <string_view>
+
 namespace uos::paid_fallback::routing {
 namespace {
   namespace tel = openai_telemetry;
+  namespace fs = responses_failover_stream;
+  namespace rs = responses_stream;
   namespace metered = provider::metered;
   namespace surplus = provider::surplus;
   using Options = FetchResponsesWithPaidFallbackOptions;
@@ -39,6 +51,124 @@ namespace {
     if (!context || !context->beforeProviderDispatch) co_return std::nullopt;
     auto task = context->beforeProviderDispatch(provider); rt::Promise<std::optional<api_key_policy::ApiKeyProviderDispatch>> pending(std::move(task)); auto awaitedResult1 = co_await pending.wait(); co_return awaitedResult1;
   }
+
+  bool isOneOf(std::string_view value, std::initializer_list<std::string_view> choices) {
+    return std::find(choices.begin(), choices.end(), value) != choices.end();
+  }
+
+  // SSE carries a provider code where a failed HTTP request has a status. Only
+  // explicit transient categories can stand in for a retryable HTTP failure.
+  int codexStreamErrorStatus(std::string_view value) {
+    if (value.starts_with("invalid_") || value.starts_with("context_") || value.starts_with("content_policy") ||
+        isOneOf(value, {"authentication_error", "authorization_error", "permission_error", "permission_denied", "forbidden", "unauthorized",
+                        "insufficient_quota", "policy_violation", "model_not_found", "unsupported_value"})) return 400;
+    if (isOneOf(value, {"rate_limit_error", "rate_limit_exceeded", "rate_limited", "too_many_requests", "usage_limit_reached"})) return 429;
+    if (isOneOf(value, {"server_error", "internal_error", "internal_server_error", "upstream_error", "transient_error", "timeout", "server_timeout",
+                        "upstream_timeout"})) return 502;
+    if (isOneOf(value, {"overloaded", "overloaded_error", "server_overloaded", "server_is_overloaded", "provider_overloaded", "model_overloaded",
+                        "service_unavailable", "temporarily_unavailable"})) return 503;
+    return 0;
+  }
+
+  std::optional<double> retryAfterMillis(const json::value* value, double scale) {
+    auto number = rt::getNumber(value);
+    if (const auto text = rt::getString(value); text && !rt::trim(*text).empty()) number = rt::stringToNumber(*text);
+    if (!number || *number < 0 || !rt::Number::isSafeInteger(*number * scale)) return std::nullopt;
+    return *number * scale;
+  }
+
+  std::optional<double> codexHeaderRetryAfter(const rt::Headers& headers) {
+    const double now = rt::dateNow();
+    const auto header = authority::native_codex_429::futureRetryAfterDeadline(headers, now);
+    std::optional<double> delay = header ? std::optional(header->deadlineMs - now) : std::nullopt;
+    if (headers.get("retry-after") == "0") delay = 0;
+    if (const auto headerMs = headers.get("retry-after-ms")) {
+      const json::value value(*headerMs);
+      if (const auto hint = retryAfterMillis(&value, 1)) delay = std::max(delay.value_or(0), *hint);
+    }
+    return delay;
+  }
+
+  std::optional<double> codexStreamRetryAfter(const rs::ResponsesStreamEvent& event, const json::object& error, const rt::Headers& headers) {
+    auto delay = codexHeaderRetryAfter(headers);
+    const auto useHint = [&delay](std::optional<double> hint) { if (hint) delay = std::max(delay.value_or(0), *hint); };
+    for (const auto* payload : {&error, &event.value}) {
+      useHint(retryAfterMillis(rt::get(*payload, "retry_after_ms"), 1));
+      useHint(retryAfterMillis(rt::get(*payload, "retry_after"), 1000));
+    }
+    return delay;
+  }
+
+  std::optional<codex::dispatch::CodexStreamRetry> classifyCodexStreamTerminal(const rs::ResponsesStreamEvent& event, const rt::Headers& headers) {
+    const auto* error = rs::responsesFailurePayload(event);
+    if (!error) return std::nullopt;
+    const int codeStatus = codexStreamErrorStatus(rt::getString(*error, "code").value_or(""));
+    const int typeStatus = codexStreamErrorStatus(rt::getString(*error, "type").value_or(""));
+    if (codeStatus == 400 || typeStatus == 400) return std::nullopt;
+    const int status = codeStatus == 429 || typeStatus == 429 ? 429 : codeStatus ? codeStatus : typeStatus;
+    if (!status) return std::nullopt;
+    const auto delay = codexStreamRetryAfter(event, *error, headers);
+    if (status == 429 && !delay) return std::nullopt;
+    return codex::dispatch::CodexStreamRetry{status, delay.value_or(0)};
+  }
+
+  std::optional<int> codexStreamReadFailureStatus(const rt::Reason& error) {
+    const auto* streamError = rs::responsesStreamErrorOf(error);
+    if (streamError && streamError->kind == "premature_eof") return 502;
+    if (streamError && streamError->kind == "inactivity_timeout") return 504;
+    try { std::rethrow_exception(error); }
+    catch (const rt::FetchError& fetchError) {
+      if (fetchError.code == "ECONNRESET") return 502;
+    }
+    catch (...) {}
+    return std::nullopt;
+  }
+
+  rt::Task<std::optional<codex::dispatch::CodexStreamRetry>> preflightCodexStream(rt::Response response, std::shared_ptr<CodexStreamPreflight> preflight,
+      std::optional<rt::AbortSignal> signal, std::optional<tel::UsageContext> context) {
+    if (signal && signal->aborted()) co_return std::nullopt;
+    const auto body = response.body();
+    if (!body) {
+      if (response.status() == 200) co_return codex::dispatch::CodexStreamRetry{502, codexHeaderRetryAfter(response.headers()).value_or(0)};
+      co_return std::nullopt;
+    }
+    rs::ReadResponsesStreamOptions readOptions;
+    if (context && context->responseTelemetry) {
+      readOptions.onEvent = [telemetry = context->responseTelemetry](const rs::ResponsesStreamEvent& event) { tel::recordUpstreamResponsesFailure(*telemetry, event); };
+    }
+    auto iterator = rs::readResponsesStream(*body, signal, readOptions);
+    fs::PrepareResponsesStreamForCommitOptions prepareOptions{
+      .onEvent = [&context](const rs::ResponsesStreamEvent& event) {
+        const auto* usage = context ? &*context : nullptr;
+        tel::recordFirstUpstreamSseEvent(usage);
+        tel::recordResponsesEventTelemetry(usage, event);
+      },
+      .releaseOnProgress = true,
+    };
+    auto preparing = fs::prepareResponsesStreamForCommit(iterator, prepareOptions);
+    try { preflight->prepared = co_await std::move(preparing); }
+    catch (...) { preflight->error = std::current_exception(); }
+    if (signal && signal->aborted()) co_return std::nullopt;
+    if (preflight->error) {
+      if (const auto status = codexStreamReadFailureStatus(preflight->error)) {
+        co_return codex::dispatch::CodexStreamRetry{*status, codexHeaderRetryAfter(response.headers()).value_or(0)};
+      }
+      co_return std::nullopt;
+    }
+    if (preflight->prepared->semantic || !preflight->prepared->terminal) co_return std::nullopt;
+    co_return classifyCodexStreamTerminal(*preflight->prepared->terminal, response.headers());
+  }
+
+  rt::Task<void> discardCodexStream(std::shared_ptr<CodexStreamPreflight> preflight) {
+    if (preflight->prepared) {
+      auto iterator = preflight->prepared->iterator;
+      try { co_await iterator.return_(); } catch (...) {}
+      co_await rt::microtask();
+      preflight->prepared.reset();
+    }
+    preflight->error = nullptr;
+  }
+
   rt::Task<rt::Response> dispatchCodexPrimaryResponse(json::object body, Options options, std::optional<rt::Response> directPaidPrimary) {
     auto config = co_await debug_routing::loadDebugRoutingConfig(); co_await rt::microtask();
     const auto forcedStatus = health::forcedDebugCodexStatus(config.scenario);
@@ -52,6 +182,16 @@ namespace {
       fetchOptions.timing = codex::dispatch::CodexResponseTimingHooks{[context = options.usageContext] { tel::recordFirstCodexDispatch(context); }, [context = options.usageContext] { tel::recordFirstCodexHeaders(context); }};
       fetchOptions.beforeDispatch = std::function<rt::Task<std::optional<api_key_policy::ApiKeyProviderDispatch>>()>([context = options.usageContext] { return beforeDispatch(context, "chatgpt_codex"); });
       fetchOptions.bankedReset = openai::codexBankedResetOptionsForTest; if (options.usageContext) fetchOptions.sentinelUpstreamRecorder = options.usageContext->sentinelUpstreamRecorder;
+      if (options.codexStreamPreflight) {
+        const auto context = options.usageContext ? std::optional(*options.usageContext) : std::nullopt;
+        fetchOptions.streamRetry = codex::dispatch::CodexStreamRetryHooks{
+          .preflight = [state = options.codexStreamPreflight, signal = options.signal, context](rt::Response response) {
+            return preflightCodexStream(std::move(response), state, signal, context);
+          },
+          .discard = [state = options.codexStreamPreflight] { return discardCodexStream(state); },
+          .onRetry = [telemetry = context ? context->responseTelemetry : nullptr] { if (telemetry) ++telemetry->inStreamRetries; },
+        };
+      }
       const json::value raw = body; auto task = codex::index::fetchCodexResponses(raw, fetchOptions); rt::Promise<rt::Response> pending(std::move(task)); response = co_await pending.wait();
     } catch (...) { error = std::current_exception(); }
     if (error) { const auto* codexError = codex::index::codexErrorOf(error); if (!codexError || codexError->status != 401) std::rethrow_exception(error); co_return http::openaiError(codexError->status, codexError->message, codexError->code); }

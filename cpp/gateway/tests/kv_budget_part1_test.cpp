@@ -46,6 +46,7 @@
 #include "uos/rt/fetch.hpp"
 #include "uos/rt/console.hpp"
 #include "uos/rt/kv_js.hpp"
+#include "uos/rt/regex.hpp"
 #include "uos/rt/test_async.hpp"
 using namespace uos;
 namespace h=tests::helpers::kv_budget_harness;
@@ -158,4 +159,347 @@ ASYNC_TEST("Kernel quota renews an active reservation and aborts if renewal cann
 ASYNC_TEST("Kernel quota lease expiry aborts independently while a renewal read hangs") {Scope scope;h::kv->resetCounts();h::seedKernelDefaultLimit(1,h::KERNEL_QUOTA_RESERVATION_LEASE_MS*2);kernel::quota_reserve::ReserveKernelUsageLimitOptions options;options.kv=h::kv;options.nowMs=rt::dateNow()-h::KERNEL_QUOTA_RESERVATION_LEASE_MS+80;options.renewalIntervalMs=5;AWAIT(decision,h::reserveKernelOrgUsageLimit("kernel-hung-renewal-org","kernel-hung-renewal-request","responses",options));const auto active=reservation(decision);const auto gate=h::deferred();bool readUnblocked=false;h::kv->kernelQuotaReadGate=gate.promise;auto aborted=[active]{return active.signal.aborted();};auto waiting=h::waitFor(aborted,"Kernel hung-renewal lease expiry abort");co_await std::move(waiting);EXPECT(!readUnblocked);h::kv->kernelQuotaReadGate.reset();readUnblocked=true;gate.resolve();auto release=active.release(std::string("test_cleanup"));co_await release.wait();}
 ASYNC_TEST("first bounded paid fallback response exposes settled spend and consumes one V3 dispatch") {
   Scope scope;put(h::RUNTIME_CONFIG_V2_KEY,h::runtime());const auto pool=h::codexAuthPool(2);put(h::CODEX_AUTH_POOL_KV_KEY,pool);for(const auto& account:pool.at("accounts").as_array()){const auto id=std::string(*rt::getString(account,"account_id"));AWAIT(hash,h::sha256Hex(id));put(codex::reset_settings::codexResetUsageKey(hash),json::object{{"enabled",false}});}const std::string token="u_"+std::string(64,'8'),keyId="first-fallback-quota";AWAIT(seeded,h::seedPaidFallbackKey(token,keyId));const auto policy=h::apiKeyPolicyFromHashRecord(seeded.hash,json::value(seeded.record),rt::dateNow());ASSERT(policy);int calls=0;std::vector<std::string> accountIds;rt::env::set("METERED_API_KEY","metered-test-key");rt::GlobalFetchOverride fetch(rt::Fetch([&](rt::RequestInfo input,rt::RequestInit init){++calls;const rt::Request request=std::holds_alternative<rt::Request>(input)?rt::Request(std::get<rt::Request>(input),init):rt::Request(h::fetchInputUrl(input),init);if(request.url()=="https://api.openlux.ai/v1/responses"){const auto response=h::sse();auto headers=response.headers();headers.set("X-Oneapi-Request-Id","first-fallback-provider-request");return rt::Response(rt::bodyInit(response.body()),rt::ResponseInit{.status=200,.headers=headers});}accountIds.push_back(request.headers().get("chatgpt-account-id").value_or(""));return h::authoritativeCodexQuotaResponse();}));h::kv->resetCounts();const rt::Request request("https://ai.ubq.fi/v1/responses",rt::RequestInit{.method="POST",.headers=rt::Headers{{"Authorization","Bearer "+token},{"Content-Type","application/json"}},.body=R"({"input":"ping","stream":true})"});AWAIT(response,h::handler(request));EXPECT_EQ(response.status(),200);EXPECT_EQ(response.headers().get("x-codex-primary-used-percent"),"0");EXPECT_EQ(calls,3);const std::vector<std::string> expected{"acct-1","acct-2"};EXPECT_EQ(accountIds,expected);EXPECT_EQ(rt::getNumber(h::usageWindow(*policy),"committed_requests"),1);EXPECT_EQ(rt::getNumber(h::usageWindow(*policy),"reserved_requests"),0);if(auto body=response.body()){auto cancel=body->cancel();co_await std::move(cancel);}auto backfill=paid_fallback::ledger_backfill::scheduledPaidFallbackBackfillForTest();if(backfill)co_await backfill->wait();
+}
+
+namespace {
+  std::string retryFixtureEvent(const json::object& event) {
+    return "data: " + rt::jsonStringify(event) + "\n\n";
+  }
+
+  std::string retryFixturePreamble(const std::string& id) {
+    const json::object response{{"id", id}, {"status", "in_progress"}, {"output", json::array{}}};
+    return retryFixtureEvent({{"type", "response.created"}, {"sequence_number", 0}, {"response", response}})
+         + retryFixtureEvent({{"type", "response.in_progress"}, {"sequence_number", 1}, {"response", response}});
+  }
+
+  std::string retryFixtureFailure(const std::string& code, int sequence = 2) {
+    return retryFixtureEvent({{"type", "error"}, {"sequence_number", sequence}, {"code", code},
+                              {"message", "fixture upstream failure detail"}, {"param", nullptr}});
+  }
+
+  std::string retryFixtureDelta() {
+    return retryFixtureEvent({{"type", "response.output_text.delta"}, {"sequence_number", 2}, {"delta", "finished"}});
+  }
+
+  std::string retryFixtureSuccess(const std::string& id) {
+    const json::object response{{"id", id}, {"status", "completed"}, {"usage", json::object{{"input_tokens", 3}, {"output_tokens", 4}, {"total_tokens", 7}}}};
+    return retryFixturePreamble(id) + retryFixtureDelta()
+         + retryFixtureEvent({{"type", "response.completed"}, {"sequence_number", 3}, {"response", response}});
+  }
+
+  std::string retryFixtureRateLimit(double retryAfterMs) {
+    const json::object error{{"type", "rate_limit_error"}, {"code", "rate_limit_exceeded"}, {"retry_after_ms", retryAfterMs},
+                             {"message", "fixture upstream failure detail"}};
+    const json::object response{{"id", "resp_rate_limited"}, {"status", "failed"}, {"error", error}, {"output", json::array{}},
+                                {"usage", json::object{{"input_tokens", 99}, {"output_tokens", 0}, {"total_tokens", 99}}}};
+    return retryFixturePreamble("resp_rate_limited")
+         + retryFixtureEvent({{"type", "response.failed"}, {"sequence_number", 2}, {"response", response}});
+  }
+
+  struct ScriptedCodexStream {
+    struct Attempt {
+      double atMs;
+      std::string requestBody;
+      std::optional<std::string> conversation;
+      std::optional<std::string> account;
+    };
+    std::vector<Attempt> attempts;
+    std::vector<rt::Response> replies;
+    rt::GlobalFetchOverride mock;
+
+    explicit ScriptedCodexStream(std::vector<rt::Response> script) : replies(std::move(script)),
+      mock(rt::Fetch([this](rt::RequestInfo input, rt::RequestInit init) {
+        EXPECT_EQ(h::fetchInputUrl(input), config::config.codexBaseUrl + "/responses");
+        ASSERT(init.body && init.headers);
+        attempts.push_back({rt::performanceNow(), std::get<std::string>(*init.body),
+                            init.headers->get("conversation_id"), init.headers->get("chatgpt-account-id")});
+        ASSERT(attempts.size() <= replies.size());
+        return replies[attempts.size() - 1];
+      })) {}
+  };
+
+  std::vector<json::value> retryFixtureLogs(const rt::console::Capture& logs, const std::string& label) {
+    std::vector<json::value> records;
+    for (const auto& call : logs.calls()) {
+      if (call.args.size() < 2 || call.args[0] != label) continue;
+      auto record = rt::jsonParse(call.args[1].string());
+      if (label != "[ai.ubq.fi] codex_routing" || rt::getString(record, "event") == "codex_attempt") records.push_back(std::move(record));
+    }
+    return records;
+  }
+
+  void expectStreamRetryAttempts(const rt::console::Capture& logs, const std::vector<double>& statuses) {
+    const auto attempts = retryFixtureLogs(logs, "[ai.ubq.fi] codex_routing");
+    ASSERT_EQ(attempts.size(), statuses.size());
+    for (std::size_t index = 0; index < attempts.size(); ++index) {
+      const auto& attempt = attempts[index];
+      EXPECT_EQ(rt::getNumber(attempt, "attempt"), static_cast<double>(index + 1));
+      EXPECT_EQ(rt::getNumber(attempt, "status"), statuses[index]);
+      EXPECT_EQ(rt::getString(attempt, "phase"), index == 0 ? "initial" : "stream_retry");
+      EXPECT_EQ(rt::getNumber(attempt, "slot"), 1);
+      if (statuses[index] != 200) EXPECT_EQ(rt::getNumber(attempt, "http_status"), 200);
+    }
+  }
+
+  struct DeliveredRetryReply {
+    int status;
+    std::string body;
+    json::value terminal;
+  };
+
+  rt::Task<DeliveredRetryReply> deliverStreamRetryRequest(const rt::console::Capture& logs, rt::Request request) {
+    const auto delivered = h::deferred();
+    const handler::http::RequestDeliveryInfo info{delivered.promise, request.signal()};
+    AWAIT(response, h::handler(request, info));
+    AWAIT(body, response.text());
+    delivered.resolve();
+    auto waiting = h::waitFor([&logs] { return terminalPayloads(logs).size() == 1; }, "stream retry terminal delivery");
+    co_await std::move(waiting);
+    co_return DeliveredRetryReply{response.status(), std::move(body), terminalPayloads(logs).front()};
+  }
+
+  json::array retryFailureEvents(const json::value& terminal) {
+    const auto* failures = rt::getArray(terminal, "upstream_failure_events");
+    ASSERT(failures);
+    for (const auto& failure : *failures) EXPECT(!rt::get(failure, "message"));
+    return *failures;
+  }
+
+  void expectSelectedStream(const std::string& body, const std::string& id) {
+    std::vector<json::value> events;
+    for (const auto& match : rt::matchAll(body, rt::Regex("^data: (.+)$", "gm"))) events.push_back(rt::jsonParse(*match[1]));
+    ASSERT_EQ(events.size(), 4U);
+    const std::vector<std::string_view> types{"response.created", "response.in_progress", "response.output_text.delta", "response.completed"};
+    for (std::size_t index = 0; index < events.size(); ++index) {
+      EXPECT_EQ(rt::getString(events[index], "type"), types[index]);
+      EXPECT_EQ(rt::getNumber(events[index], "sequence_number"), static_cast<double>(index));
+      if (const auto* response = rt::get(events[index], "response")) EXPECT_EQ(rt::getString(*response, "id"), id);
+    }
+  }
+}
+
+ASYNC_TEST("Codex retries an early error and delivers one Responses stream and one quota debit") {
+  Scope scope;
+  AWAIT(key, h::prepareApiKeyInference("1", "codex-stream-retry", 5));
+  auto seeding = h::seedKernelTestPublicKey();
+  co_await std::move(seeding);
+  h::seedKernelDefaultLimit(1);
+  const std::string org = "stream-retry-success-org";
+  const auto unknown = retryFixtureEvent({{"type", "response.fixture_unknown"}, {"sequence_number", 2}});
+  ScriptedCodexStream upstream({
+    closedSse(retryFixturePreamble("resp_discarded") + unknown + unknown + retryFixtureFailure("server_error", 3), "failed-attempt"),
+    closedSse(retryFixtureSuccess("resp_selected"), "selected-attempt"),
+  });
+
+  const auto request = h::streamingRequest(key.token, "responses");
+  AWAIT(signedRequest, h::withKernelTestToken(request, key.token, org, "stream-retry"));
+  AWAIT(result, deliverStreamRetryRequest(scope.logs, signedRequest));
+  EXPECT_EQ(result.status, 200);
+  EXPECT(!rt::includes(result.body, "resp_discarded"));
+  expectSelectedStream(result.body, "resp_selected");
+  expectStreamRetryAttempts(scope.logs, {502, 200});
+  ASSERT_EQ(upstream.attempts.size(), 2U);
+  EXPECT_EQ(upstream.attempts[0].requestBody, upstream.attempts[1].requestBody);
+  EXPECT_EQ(upstream.attempts[0].conversation, upstream.attempts[1].conversation);
+  EXPECT_EQ(upstream.attempts[0].account, upstream.attempts[1].account);
+  EXPECT(upstream.attempts[1].atMs - upstream.attempts[0].atMs >= 250);
+  const auto unknownLogs = retryFixtureLogs(scope.logs, "[ai.ubq.fi] unrecognized_responses_event");
+  ASSERT_EQ(unknownLogs.size(), 1U);
+  EXPECT_EQ(rt::getString(unknownLogs[0], "type"), "response.fixture_unknown");
+  EXPECT_EQ(rt::getNumber(result.terminal, "in_stream_retries"), 1);
+  EXPECT_EQ(rt::getString(result.terminal, "stream_terminal_type"), "response.completed");
+  EXPECT_EQ(rt::getString(result.terminal, "delivery_outcome"), "delivered");
+  EXPECT_EQ(rt::getString(result.terminal, "provider_request_id"), "selected-attempt");
+  EXPECT_EQ(rt::getNumber(result.terminal, "total_tokens"), 7);
+  const json::array providers{"chatgpt_codex"};
+  EXPECT(rt::deepEqual(*rt::get(result.terminal, "attempted_providers"), providers));
+  const json::array failures = retryFailureEvents(result.terminal);
+  ASSERT_EQ(failures.size(), 1U);
+  EXPECT_EQ(rt::getString(failures[0], "type"), "error");
+  EXPECT_EQ(rt::getString(failures[0], "code"), "server_error");
+  expectWindow(key, 1, 0);
+  const auto kernelWindow = value(h::kernelOrgWindowKey(org));
+  EXPECT_EQ(rt::getNumber(kernelWindow, "usage_requests"), 1);
+  EXPECT_EQ(rt::getNumber(kernelWindow, "reserved_requests"), 0);
+  const auto failedHealth = value(rt::KvKey{"uos_ai", "provider_health", "v1", "codex", "acct-1", "upstream_error"});
+  EXPECT_EQ(rt::getNumber(failedHealth, "status"), 502);
+}
+
+ASYNC_TEST("Codex delivers the last pre-output error after three stream retries") {
+  Scope scope;
+  AWAIT(key, h::prepareApiKeyInference("2", "codex-stream-retry-bound", 5));
+  std::vector<rt::Response> script;
+  for (const std::string id : {"resp_first", "resp_second", "resp_third", "resp_last"}) {
+    script.push_back(closedSse(retryFixturePreamble(id) + retryFixtureFailure("overloaded_error"), id));
+  }
+  ScriptedCodexStream upstream(std::move(script));
+  const auto request = h::streamingRequest(key.token, "responses");
+  AWAIT(result, deliverStreamRetryRequest(scope.logs, request));
+  EXPECT_EQ(result.status, 200);
+  EXPECT_EQ(result.body, retryFixturePreamble("resp_last") + retryFixtureFailure("overloaded_error"));
+  expectStreamRetryAttempts(scope.logs, {503, 503, 503, 503});
+  ASSERT_EQ(upstream.attempts.size(), 4U);
+  EXPECT_EQ(rt::getNumber(result.terminal, "in_stream_retries"), 3);
+  EXPECT_EQ(rt::getString(result.terminal, "stream_terminal_type"), "error");
+  EXPECT(rt::get(result.terminal, "first_semantic_commitment_ms")->is_null());
+  const json::array failures = retryFailureEvents(result.terminal);
+  ASSERT_EQ(failures.size(), 4U);
+  for (const auto& failure : failures) EXPECT_EQ(rt::getString(failure, "code"), "overloaded_error");
+  AWAIT(health, h::getCodexProviderHealth("acct-1"));
+  EXPECT_EQ(health.state, "degraded");
+  EXPECT_EQ(health.last_status, 503);
+  expectWindow(key, 1, 0);
+}
+
+ASYNC_TEST("Codex passes through early deterministic error codes") {
+  const std::vector<std::string> codes{"invalid_request_error", "authorization_error", "content_policy_violation", "fixture_not_retryable", "rate_limit_exceeded"};
+  for (const auto& code : codes) {
+    Scope scope;
+    AWAIT(key, h::prepareApiKeyInference("3", "codex-stream-no-retry", 5));
+    const auto original = retryFixturePreamble("resp_deterministic") + retryFixtureFailure(code);
+    ScriptedCodexStream upstream({closedSse(original)});
+    const auto request = h::streamingRequest(key.token, "responses");
+    AWAIT(result, deliverStreamRetryRequest(scope.logs, request));
+    EXPECT_EQ(result.body, original);
+    expectStreamRetryAttempts(scope.logs, {200});
+    EXPECT_EQ(upstream.attempts.size(), 1U);
+    EXPECT_EQ(rt::getNumber(result.terminal, "in_stream_retries"), 0);
+    const json::array failures = retryFailureEvents(result.terminal);
+    ASSERT_EQ(failures.size(), 1U);
+    EXPECT_EQ(rt::getString(failures[0], "code"), code);
+    expectWindow(key, 1, 0);
+  }
+}
+
+ASYNC_TEST("Codex relays a server error after the first output delta without retrying") {
+  Scope scope;
+  AWAIT(key, h::prepareApiKeyInference("4", "codex-stream-committed", 5));
+  const auto original = retryFixturePreamble("resp_committed") + retryFixtureDelta() + retryFixtureFailure("server_error", 3);
+  ScriptedCodexStream upstream({closedSse(original)});
+  const auto request = h::streamingRequest(key.token, "responses");
+  AWAIT(result, deliverStreamRetryRequest(scope.logs, request));
+  EXPECT_EQ(result.body, original);
+  expectStreamRetryAttempts(scope.logs, {200});
+  EXPECT_EQ(upstream.attempts.size(), 1U);
+  EXPECT_EQ(rt::getNumber(result.terminal, "in_stream_retries"), 0);
+  EXPECT_EQ(rt::getString(result.terminal, "stream_terminal_type"), "error");
+  EXPECT(rt::getNumber(result.terminal, "first_semantic_commitment_ms").has_value());
+  const json::array failures = retryFailureEvents(result.terminal);
+  ASSERT_EQ(failures.size(), 1U);
+  EXPECT_EQ(rt::getString(failures[0], "code"), "server_error");
+  expectWindow(key, 1, 0);
+}
+
+ASYNC_TEST("Codex retries a stream that ends silently before output") {
+  const std::vector<bool> withPreamble{true, false};
+  for (const bool hasPreamble : withPreamble) {
+    Scope scope;
+    AWAIT(key, h::prepareApiKeyInference("5", "codex-stream-eof-retry", 5));
+    auto ended = hasPreamble ? closedSse(retryFixturePreamble("resp_eof"))
+      : rt::Response(nullptr, {.headers = rt::Headers{{"Content-Type", "text/event-stream"}}});
+    ended.headers().set("Retry-After", "1");
+    ScriptedCodexStream upstream({ended, closedSse(retryFixtureSuccess("resp_after_eof"))});
+    const auto request = h::streamingRequest(key.token, "responses");
+    AWAIT(result, deliverStreamRetryRequest(scope.logs, request));
+    EXPECT_EQ(result.status, 200);
+    expectSelectedStream(result.body, "resp_after_eof");
+    expectStreamRetryAttempts(scope.logs, {502, 200});
+    ASSERT_EQ(upstream.attempts.size(), 2U);
+    EXPECT(upstream.attempts[1].atMs - upstream.attempts[0].atMs >= 1000);
+    EXPECT_EQ(rt::getNumber(result.terminal, "in_stream_retries"), 1);
+    expectWindow(key, 1, 0);
+  }
+}
+
+ASYNC_TEST("Codex retries a failed response in Chat Completions after the longer Retry-After hint") {
+  Scope scope;
+  AWAIT(key, h::prepareApiKeyInference("6", "codex-chat-stream-retry", 5));
+  auto refused = closedSse(retryFixtureRateLimit(600));
+  refused.headers().set("Retry-After", "1");
+  ScriptedCodexStream upstream({refused, closedSse(retryFixtureSuccess("resp_chat"))});
+  const auto request = h::streamingRequest(key.token, "chat");
+  AWAIT(result, deliverStreamRetryRequest(scope.logs, request));
+  EXPECT_EQ(result.status, 200);
+  EXPECT(rt::includes(result.body, "\"content\":\"finished\""));
+  EXPECT(rt::includes(result.body, "data: [DONE]"));
+  EXPECT(!rt::includes(result.body, "rate_limit_exceeded"));
+  expectStreamRetryAttempts(scope.logs, {429, 200});
+  ASSERT_EQ(upstream.attempts.size(), 2U);
+  EXPECT(upstream.attempts[1].atMs - upstream.attempts[0].atMs >= 1000);
+  EXPECT_EQ(rt::getNumber(result.terminal, "in_stream_retries"), 1);
+  EXPECT_EQ(rt::getNumber(result.terminal, "total_tokens"), 7);
+  const json::array failures = retryFailureEvents(result.terminal);
+  ASSERT_EQ(failures.size(), 1U);
+  EXPECT_EQ(rt::getString(failures[0], "type"), "response.failed");
+  EXPECT_EQ(rt::getString(failures[0], "code"), "rate_limit_exceeded");
+  EXPECT_EQ(rt::getString(failures[0], "error_type"), "rate_limit_error");
+  expectWindow(key, 1, 0);
+}
+
+ASYNC_TEST("Client abort during the Codex stream retry wait releases the pending kernel reservation") {
+  Scope scope;
+  AWAIT(key, h::prepareApiKeyInference("7", "codex-stream-retry-abort", 5));
+  auto seeding = h::seedKernelTestPublicKey();
+  co_await std::move(seeding);
+  h::seedKernelDefaultLimit(1);
+  const std::string org = "stream-retry-abort-org";
+  const auto window = h::kernelOrgWindowKey(org);
+  const auto request = h::streamingRequest(key.token, "responses");
+  AWAIT(signedRequest, h::withKernelTestToken(request, key.token, org, "stream-retry"));
+  const rt::AbortController client;
+  const rt::Request cancellable(signedRequest, rt::RequestInit{.signal = client.signal()});
+  constexpr double retryAfter = 2345;
+  ScriptedCodexStream upstream({closedSse(retryFixtureRateLimit(retryAfter))});
+  const auto timer = rt::globalSetTimeout();
+  const auto restore = rt::scopeExit([timer] { rt::globalSetTimeout() = timer; });
+  const auto sleeping = h::deferred();
+  rt::globalSetTimeout() = [timer, sleeping](std::function<void()> callback, double ms) {
+    auto handle = timer(std::move(callback), ms);
+    if (ms == retryAfter) sleeping.resolve();
+    return handle;
+  };
+
+  const rt::Promise<rt::Response> pending(h::handler(cancellable));
+  const auto watchdog = rt::setTimeout([sleeping] { sleeping.reject(rt::makeReason(rt::JsError("retry wait was never scheduled"))); }, 100);
+  const auto clearWatchdog = rt::scopeExit([watchdog] { rt::clearTimeout(watchdog); });
+  co_await sleeping.promise.wait();
+  rt::clearTimeout(watchdog);
+  EXPECT_EQ(rt::getNumber(value(window), "reserved_requests"), 1);
+  client.abort(rt::makeReason(rt::DOMException("fixture downstream disconnect", "AbortError")));
+  const auto response = co_await pending.wait();
+  EXPECT_EQ(response.status(), 499);
+  auto reading = response.text();
+  (void)co_await std::move(reading);
+  co_await rt::sleep(retryAfter + 1);
+  expectStreamRetryAttempts(scope.logs, {429});
+  EXPECT_EQ(upstream.attempts.size(), 1U);
+  EXPECT_EQ(rt::getNumber(value(window), "reserved_requests"), 0);
+  EXPECT_EQ(rt::getNumber(value(window), "usage_requests"), 0);
+  expectWindow(key, 1, 0);
+  const auto terminals = terminalPayloads(scope.logs);
+  ASSERT_EQ(terminals.size(), 1U);
+  EXPECT_EQ(rt::getNumber(terminals[0], "in_stream_retries"), 0);
+  EXPECT_EQ(rt::getString(terminals[0], "stream_terminal_type"), "cancelled");
+}
+
+ASYNC_TEST("The original request deadline interrupts Codex stream retries") {
+  Scope scope;
+  AWAIT(key, h::prepareApiKeyInference("8", "codex-stream-retry-deadline", 5));
+  h::setStreamFirstEventDeadlineMsForTest(1000);
+  const auto restore = rt::scopeExit([] { h::setStreamFirstEventDeadlineMsForTest(std::nullopt); });
+  ScriptedCodexStream upstream({
+    closedSse(retryFixturePreamble("resp_first") + retryFixtureFailure("server_error")),
+    closedSse(retryFixtureRateLimit(3000)),
+  });
+  const auto request = h::streamingRequest(key.token, "responses");
+  AWAIT(result, deliverStreamRetryRequest(scope.logs, request));
+  EXPECT_EQ(result.status, 504);
+  EXPECT_EQ(rt::getString(*rt::get(rt::jsonParse(result.body), "error"), "code"), "gateway_timeout");
+  expectStreamRetryAttempts(scope.logs, {502, 429});
+  EXPECT_EQ(upstream.attempts.size(), 2U);
+  EXPECT_EQ(rt::getNumber(result.terminal, "in_stream_retries"), 1);
+  EXPECT_EQ(rt::getString(result.terminal, "stream_terminal_type"), "deadline");
+  EXPECT_EQ(retryFailureEvents(result.terminal).size(), 2U);
+  EXPECT(rt::get(result.terminal, "first_semantic_commitment_ms")->is_null());
+  expectWindow(key, 1, 0);
 }

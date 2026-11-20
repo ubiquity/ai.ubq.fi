@@ -5,6 +5,7 @@
 #include "uos/provider/removed_provider_circuit.hpp"
 #include "uos/responses_failover_stream.hpp"
 #include <variant>
+namespace uos::paid_fallback::routing { struct CodexStreamPreflight; }
 namespace uos::responses_attempts {
   using ResponsesAttemptTrigger = std::string;
   struct PreparedResponsesAttempt {
@@ -37,6 +38,7 @@ namespace uos::responses_attempts {
     std::optional<bool> rejectFailedTerminal{};
     std::optional<bool> rejectPresemanticFailureTerminal{};
     std::optional<bool> releaseOnProgress{};
+    std::shared_ptr<paid_fallback::routing::CodexStreamPreflight> codexStreamPreflight{};
   };
   rt::Task<ResponsesAttemptResult> prepareResponsesAttempt(rt::Response response, std::string provider,
     inference_deadline::StreamDeadline deadline, rt::AbortSignal requestSignal, std::vector<std::string> warnings);

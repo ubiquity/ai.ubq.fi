@@ -9,6 +9,8 @@
 #include "uos/upstream_wire.hpp"
 #include "uos/utils.hpp"
 #include "uos/rt/number.hpp"
+
+#include <utility>
 namespace uos::responses_attempts {
 namespace {
   namespace tel = openai_telemetry;
@@ -93,17 +95,25 @@ rt::Task<ResponsesAttemptResult> prepareResponsesAttempt(rt::Response response, 
     auto normalized = co_await std::move(task); co_await rt::microtask(); deadline.clear(); co_return fail(trigger, normalized);
   }
   if (!response.body()) { deadline.clear(); co_return fail("missing_body", response); }
-  rs::ReadResponsesStreamOptions readOptions; readOptions.firstEventTimeoutMs = rt::Math::ceil(deadline.remainingMs());
-  auto iterator = rs::readResponsesStream(*response.body(), deadline.signal, readOptions);
   std::optional<fs::PreparedResponsesStream> preparedStream;
   rt::Reason error;
   try {
-    fs::PrepareResponsesStreamForCommitOptions prepareOptions;
-    prepareOptions.onEvent = [context = options.usageContext](const rs::ResponsesStreamEvent& event) { tel::recordFirstUpstreamSseEvent(context); tel::recordResponsesEventTelemetry(context, event); };
-    prepareOptions.releaseOnProgress = options.releaseOnProgress;
-    auto task = fs::prepareResponsesStreamForCommit(iterator, prepareOptions);
-    preparedStream = co_await std::move(task); co_await rt::microtask();
+    if (options.codexStreamPreflight && options.codexStreamPreflight->error) rt::rethrow(options.codexStreamPreflight->error);
+    if (options.codexStreamPreflight && options.codexStreamPreflight->prepared) {
+      preparedStream = std::exchange(options.codexStreamPreflight->prepared, std::nullopt);
+    } else {
+      rs::ReadResponsesStreamOptions readOptions;
+      readOptions.firstEventTimeoutMs = rt::Math::ceil(deadline.remainingMs());
+      auto iterator = rs::readResponsesStream(*response.body(), deadline.signal, readOptions);
+      fs::PrepareResponsesStreamForCommitOptions prepareOptions;
+      prepareOptions.onEvent = [context = options.usageContext](const rs::ResponsesStreamEvent& event) { tel::recordFirstUpstreamSseEvent(context); tel::recordResponsesEventTelemetry(context, event); };
+      prepareOptions.releaseOnProgress = options.releaseOnProgress;
+      auto task = fs::prepareResponsesStreamForCommit(iterator, prepareOptions);
+      preparedStream = co_await std::move(task);
+    }
+    co_await rt::microtask();
     auto& prepared = *preparedStream;
+    auto iterator = prepared.iterator;
     if (prepared.terminal && prepared.terminal->type == "response.completed" && !prepared.semantic) {
       auto closeTask = closeIterator(iterator); co_await std::move(closeTask); co_return fail("empty_upstream_completion", response, *prepared.terminal);
     }
@@ -171,6 +181,7 @@ tel::ResponseStreamTerminalType responseFailureTerminalType(const ResponsesAttem
 }
 rt::Task<PrimaryResponsesResult> fetchAndPreparePrimaryResponses(json::object body, PrimaryResponsesOptions options) {
   auto deadline = options.attemptDeadline;
+  const auto codexPreflight = options.clientWantsStream ? std::make_shared<paid_fallback::routing::CodexStreamPreflight>() : nullptr;
   std::optional<tel::RoutedResponsesUpstream> routed;
   rt::Reason error;
   try {
@@ -179,6 +190,7 @@ rt::Task<PrimaryResponsesResult> fetchAndPreparePrimaryResponses(json::object bo
     routeOptions.reasoning = options.reasoning; routeOptions.usageContext = options.usageContext; routeOptions.clientVersion = options.clientVersion;
     routeOptions.signal = deadline.signal; routeOptions.fallbackSignal = options.fallbackSignal;
     routeOptions.allowedPaidProviders = options.allowedPaidProviders; routeOptions.deepSeekWaterfallPaidHop = options.deepSeekWaterfallPaidHop;
+    routeOptions.codexStreamPreflight = codexPreflight;
     auto task = paid_fallback::routing::fetchResponsesWithPaidFallback(body, routeOptions); routed = co_await std::move(task); co_await rt::microtask();
   } catch (...) { error = std::current_exception(); }
   if (error) {
@@ -210,6 +222,10 @@ rt::Task<PrimaryResponsesResult> fetchAndPreparePrimaryResponses(json::object bo
     PrepareResponsesAttemptOptions prepareOptions;
     prepareOptions.usageContext = options.usageContext; prepareOptions.rejectPresemanticFailureTerminal = options.rejectPresemanticFailureTerminal;
     prepareOptions.releaseOnProgress = options.releaseOnProgress.value_or(false) && tel::supportsReasoningProgressRelease(routed->provider);
+    if (routed->provider == "chatgpt_codex" && codexPreflight) {
+      prepareOptions.codexStreamPreflight = codexPreflight;
+      if (codexPreflight->prepared) prepareOptions.rejectPresemanticFailureTerminal = false;
+    }
     auto task = prepareResponsesAttempt(routed->response, routed->provider, preparationDeadline, options.requestSignal, warnings, prepareOptions);
     prepared = co_await std::move(task); co_await rt::microtask();
   } catch (...) { error = std::current_exception(); }

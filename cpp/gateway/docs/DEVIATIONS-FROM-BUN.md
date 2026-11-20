@@ -367,3 +367,9 @@ The C++ runtime drops the unused `codePointAt` and `trimStart` wrappers.
 Their fixture vectors use `charAt`, `slice`, code-point iteration and the
 existing whitespace predicate to check the same ranges, surrogates and
 whitespace behavior.
+
+## Codex stream retries before output
+
+The TypeScript gateway can end a streamed Responses request when Codex sends an error after HTTP 200 and before any output. The C++ gateway retries an explicitly transient error, a rate limit with a retry hint, or an early disconnect through the existing Codex dispatcher. The same behavior applies when Chat Completions uses the Codex Responses stream upstream.
+
+The gateway holds each attempt's lifecycle events until it can deliver them with that attempt's output or final terminal. A successful retry therefore delivers one response ID and one event sequence. Once output or the existing reasoning progress is released, a later failure follows the same stream behavior as before. The dispatcher gives ordinary Codex requests up to three extra attempts under the original deadline and admission. [Code path, accounting, and verification](findings/cppgw-stream-retry-20261119.md)

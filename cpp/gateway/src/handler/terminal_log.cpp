@@ -144,6 +144,8 @@ namespace uos::handler::terminal_log {
         putTelemetry("fallback_reason", &ResponseTelemetry::fallbackReason);
         putTelemetry("semantic_output_observed", &ResponseTelemetry::semanticOutputObserved);
         terminal.emplace("upstream_event_kinds", telemetry ? json::value_from(telemetry->upstreamEventKinds, &storage) : json::value(json::array_kind, &storage));
+        terminal.emplace("in_stream_retries", telemetry ? telemetry->inStreamRetries : 0);
+        terminal.emplace("upstream_failure_events", telemetry ? json::value(telemetry->upstreamFailureEvents, &storage) : json::value(json::array_kind, &storage));
         putOptional("stream", stream);
         putOptional("stream_terminal_type", terminalType);
         putOptional("failure_kind", failureKind);
