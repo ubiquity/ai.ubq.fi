@@ -117,12 +117,12 @@ ASYNC_TEST("stopped-state auth import adopts the newer account and preserves unr
   const std::string rowSql = "SELECT v, version, seq, expiration_ms FROM kv WHERE k = ?";
   const auto before = checkpoint(fixture.destination).query(rowSql).get(key);
   ASSERT(before);
-  const auto sourceBytes = rt::fs::readFileSync(fixture.source, "base64");
+  const auto sourceBytes = rt::fs::readFileSync(fixture.source);
   EXPECT_EQ(co_await fixture.run(), 1U);
   EXPECT_EQ(co_await fixture.run(), 0U);
   EXPECT_EQ(fixture.probes, 1);
   EXPECT_EQ(fixture.otherCalls, 0);
-  EXPECT_EQ(rt::fs::readFileSync(fixture.source, "base64"), sourceBytes);
+  EXPECT_EQ(rt::fs::readFileSync(fixture.source), sourceBytes);
   const auto db = checkpoint(fixture.destination);
   const auto after = db.query(rowSql).get(key);
   ASSERT(after);
@@ -140,14 +140,14 @@ ASYNC_TEST("stopped-state auth import aborts the whole update on a rejected or r
   Fixture fixture;
   auto preparing = fixture.prepare(true);
   co_await std::move(preparing);
-  const auto before = rt::fs::readFileSync(fixture.destination, "base64");
+  const auto before = rt::fs::readFileSync(fixture.destination);
   for (const int status : {401, 302}) {
     fixture.statusB = status;
     bool rejected = false;
     try { co_await fixture.run(); }
     catch (const rt::JsError& error) { rejected = error.message == "The Codex usage probe did not accept a leader access token."; }
     EXPECT(rejected);
-    EXPECT_EQ(rt::fs::readFileSync(fixture.destination, "base64"), before);
+    EXPECT_EQ(rt::fs::readFileSync(fixture.destination), before);
   }
   EXPECT_EQ(fixture.probes, 4);
   EXPECT_EQ(fixture.otherCalls, 0);
