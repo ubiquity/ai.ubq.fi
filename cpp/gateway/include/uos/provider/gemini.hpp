@@ -10,6 +10,7 @@
 #include "uos/rt/fs.hpp"
 #include "uos/rt/prelude.hpp"
 #include "uos/rt/process.hpp"
+#include "uos/upstream_auth.hpp"
 
 #include <array>
 #include <functional>
@@ -30,7 +31,7 @@ namespace uos::provider::gemini {
 
   std::optional<std::string> geminiUpstreamModelFor(std::string_view model);
   bool isGeminiModel(std::string_view model);
-  inline bool geminiOperatorOptIn() { return rt::env::get(GEMINI_OPT_IN_ENV) == std::optional<std::string>("1"); }
+  inline bool geminiOperatorOptIn() { return !upstream_auth::followerMode() && rt::env::get(GEMINI_OPT_IN_ENV) == "1"; }
   inline bool geminiCliConfigured() {
     try {
       if (!geminiOperatorOptIn()) return false;

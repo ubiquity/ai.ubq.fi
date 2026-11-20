@@ -16,6 +16,7 @@
 #include "uos/runtime/permissions_linux.hpp"
 #include "uos/serve.hpp"
 #include "uos/storage/kv.hpp"
+#include "uos/upstream_auth.hpp"
 
 #include <openssl/evp.h>
 
@@ -321,6 +322,8 @@ namespace uos::runtime::startup {
 
     void enforce(const fs::path& package, const fs::path& state, int port,
                  const std::optional<std::string>& origin) {
+      if (upstream_auth::followerMode())
+        std::fprintf(stderr, "%s=1: Antigravity disabled because its CLI manages OAuth refresh.\n", upstream_auth::FOLLOWER_ENV.data());
       auto profiles = permissions_linux::gatewayLinuxPermissions(package.string(), state.string());
       auto& permissions = profiles.gateway;
       if (const char* optIn = std::getenv("UOS_GATEWAY_ALLOW_REDUCED_CONFINEMENT"); optIn && std::string_view(optIn) == "1") {

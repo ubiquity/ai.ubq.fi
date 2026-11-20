@@ -16,6 +16,7 @@
 #include "uos/rt/record.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/rt/text_codec.hpp"
+#include "uos/upstream_auth.hpp"
 #include "uos/utils.hpp"
 
 #include <algorithm>
@@ -334,6 +335,7 @@ namespace uos::codex::auth {
       rt::Promise<std::shared_ptr<rt::Kv>> opening = ::uos::kv::getKv();
       const std::shared_ptr<rt::Kv> kv = co_await opening.wait();
       if (!kv) {
+        if (upstream_auth::followerMode()) throw CodexError("Codex follower requires a stored auth pool.", "codex_auth_missing", 503);
         std::optional<CodexAuthPoolState> pool = cachedAuthPool;
         if (!pool) {
           const std::optional<CodexAuthState> seed = getConfiguredCodexAuthSeed();
@@ -363,6 +365,7 @@ namespace uos::codex::auth {
         co_return loadedAuthPoolEntry(nativeEntry.pool, generationAtStart, kv, nativeEntry.entry);
       }
 
+      if (upstream_auth::followerMode()) throw CodexError("Codex follower requires a stored auth pool.", "codex_auth_missing", 503);
       const std::optional<CodexAuthState> seed = getConfiguredCodexAuthSeed();
       if (!seed) {
         throw CodexError("Codex auth missing: CODEX_AUTH_JSON_B64 unset and no KV entry.", "codex_auth_missing", 503);
@@ -381,6 +384,10 @@ namespace uos::codex::auth {
       const CodexAuthPoolEntry nativeEntry = co_await binding.wait();
       co_return loadedAuthPoolEntry(nativeEntry.pool, generationAtStart, kv, nativeEntry.entry);
     }
+  }
+
+  void requireCodexAuthRefreshAllowed() {
+    if (upstream_auth::followerMode()) throw CodexAuthFollowerStaleError();
   }
 
   std::optional<std::string> getCodexRoutingError(const rt::Response& response) { return codexRoutingErrors.get(response); }

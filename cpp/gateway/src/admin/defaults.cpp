@@ -4,6 +4,7 @@
 #include "uos/admin/codex.hpp"
 #include "uos/cache/kv_migration_base.hpp"
 #include "uos/cache/kv_migration_validation.hpp"
+#include "uos/codex/auth.hpp"
 #include "uos/defaults.hpp"
 #include "uos/http.hpp"
 #include "uos/kernel/quota_reservations.hpp"
@@ -16,7 +17,9 @@
 #include "uos/rt/regex.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/rt/text_codec.hpp"
+#include "uos/upstream_auth.hpp"
 #include "uos/utils.hpp"
+#include <algorithm>
 #include <tuple>
 
 namespace uos::admin::defaults {
@@ -45,6 +48,13 @@ namespace {
   rt::Task<std::shared_ptr<rt::Kv>> databaseForRequest() { auto p = kv::getKv(); auto database = co_await p.wait(); co_return database; }
   json::object defaultsBody(const std::string& model, const std::string& reasoning, double limit, double window) { return {{"defaults", json::object{{"model", model}, {"reasoning_effort", reasoning}, {"kernel_policy_limit_requests", limit}, {"kernel_policy_window_ms", window}}}}; }
   rt::Response invalid(const std::string& message, double status = 400, const std::string& code = "invalid_request_error") { return http::openaiError(status, message, code); }
+  bool importsCodexAuth(const std::string& line) {
+    try {
+      return migration::parseKvMigrationEntryLine(line).key == ::uos::codex::auth::CODEX_AUTH_POOL_KV_KEY;
+    } catch (...) {
+      return false; // Invalid lines cannot write a record.
+    }
+  }
   struct AdminDefaultsIntent {
     bool writesModel; bool writesReasoning; bool wantsModelUpdate; bool writesKernelLimit; bool writesKernelWindow;
     std::optional<double> requestedKernelLimit; std::optional<double> requestedKernelWindow;
@@ -136,6 +146,8 @@ rt::Task<rt::Response> handleAdminKvMigrationImport(rt::Request req) {
   const bool includeCache = parseBooleanParam(url, "include_cache").value_or(false), includeLegacy = parseBooleanParam(url, "include_legacy").value_or(migration::defaultIncludeLegacyForProfile(*profile)), overwrite = parseBooleanParam(url, "overwrite").value_or(false), write = parseBooleanParam(url, "write").value_or(false);
   if (write && parseBooleanParam(url, "dry_run").value_or(false)) co_return invalid("dry_run and write are mutually exclusive");
   migration::KvMigrationImportOptions options{{*profile, includeCache, includeLegacy}, overwrite, !write}; const auto lines = splitNdjsonLines(body);
+  if (write && *profile == "local" && upstream_auth::followerMode() && std::any_of(lines.begin(), lines.end(), importsCodexAuth))
+    co_return invalid(std::string(upstream_auth::FOLLOWER_READ_ONLY), 409, "upstream_auth_follower");
   auto task = migration::importKvMigrationLines(database, lines, options); const auto result = co_await std::move(task); const auto encoded = json::value_from(result);
   json::object summary{{"profile", *profile}, {"include_cache", includeCache}, {"include_legacy", includeLegacy}, {"overwrite", overwrite}, {"dry_run", !write}}; rt::objectAssign(summary, encoded.as_object());
   co_return http::json(result.errors > 0 ? 422 : 200, summary);

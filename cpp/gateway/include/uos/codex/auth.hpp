@@ -87,6 +87,14 @@ namespace uos::codex::auth {
     }
   };
 
+  // Follower staleness uses the ordinary credential failure on the wire.
+  class CodexAuthFollowerStaleError : public CodexError {
+  public:
+    CodexAuthFollowerStaleError() : CodexError(std::string(CODEX_AUTH_REAUTH_MESSAGE), "codex_auth_invalid", 401) {}
+  };
+
+  void requireCodexAuthRefreshAllowed();
+
   // `reason instanceof CodexError` (C++ addition): the CodexError a Reason holds, or nullptr.
   // The pointer lives as long as the Reason.
   inline const CodexError* codexErrorOf(const rt::Reason& reason) noexcept {

@@ -12,6 +12,7 @@
 #include "uos/runtime/http_tasks.hpp"
 #include "uos/sentinel/incident_outbox.hpp"
 #include "uos/sentinel/replay_store.hpp"
+#include "uos/upstream_auth.hpp"
 
 #include <boost/json/monotonic_resource.hpp>
 
@@ -147,6 +148,7 @@ namespace uos::handler::terminal_log {
         putOptional("stream", stream);
         putOptional("stream_terminal_type", terminalType);
         putOptional("failure_kind", failureKind);
+        if (telemetry && telemetry->upstreamAuthFollowerStale) terminal.emplace("upstream_auth_reason", upstream_auth::FOLLOWER_STALE);
         terminal.emplace("response_created_observed", telemetry ? telemetry->responseCreatedObserved : false);
         putTelemetry("synthetic_terminal_type", &ResponseTelemetry::syntheticTerminalType);
         terminal.emplace("attempted_providers", telemetry ? json::value_from(telemetry->attemptedProviders, &storage) : json::value(json::array_kind, &storage));

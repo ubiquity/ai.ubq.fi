@@ -295,6 +295,7 @@ namespace uos::openai_telemetry {
     aggregate->streamTerminalType = aggregate->completed ? std::optional<std::string>("response.completed")
                                                          : commonTelemetryValue(telemetryValues(states, &ResponseTelemetryState::streamTerminalType));
     aggregate->failureKind = commonTelemetryValue(telemetryValues(states, &ResponseTelemetryState::failureKind));
+    aggregate->upstreamAuthFollowerStale = std::any_of(states.begin(), states.end(), [](const auto& state) { return state->upstreamAuthFollowerStale; });
     aggregate->responseCreatedObserved =
       states.size() == sources.size() &&
       std::all_of(states.begin(), states.end(), [](const std::shared_ptr<ResponseTelemetryState>& state) { return state->responseCreatedObserved; });
@@ -378,6 +379,7 @@ namespace uos::openai_telemetry {
       .removedProviderSemanticCommitment = state.removedProviderSemanticCommitment,
       .removedProviderLatencyMs = state.removedProviderLatencyMs,
       .removedProviderTerminalStatus = state.removedProviderTerminalStatus,
+      .upstreamAuthFollowerStale = state.upstreamAuthFollowerStale,
     };
   }
 

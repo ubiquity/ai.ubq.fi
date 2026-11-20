@@ -14,6 +14,7 @@
 #include "uos/rt/process.hpp"
 #include "uos/rt/regex.hpp"
 #include "uos/rt/string.hpp"
+#include "uos/upstream_auth.hpp"
 #include "uos/utils.hpp"
 
 #include <algorithm>
@@ -324,6 +325,7 @@ namespace uos::codex::native_auth {
 
   /** Equality is the only bootstrap proof; a file never overlays uploaded siblings. */
   rt::Task<auth::CodexAuthPoolEntry> bindNativeCodexAuthPool(auth::CodexAuthPoolEntry input) {
+    if (upstream_auth::followerMode()) co_return input;
     const std::optional<std::string> home = nativeHome();
     if (!rt::truthy(home) || !input.kv || !input.entry) co_return input;
     NativeDocument document;
@@ -422,6 +424,7 @@ namespace uos::codex::native_auth {
 
   /** Returns null only for an unrelated, unbound account. Never falls open for an owner. */
   rt::Task<std::optional<CodexAuthState>> refreshNativeCodexAuthIfOwned(CodexAuthState input, bool rejectStaleReplacement) {
+    auth::requireCodexAuthRefreshAllowed();
     rt::Promise<std::optional<NativeAccountContext>> loading(loadNativeOwnedAccount(input));
     const std::optional<NativeAccountContext> context = co_await loading.wait();
     if (!context) co_return std::nullopt;

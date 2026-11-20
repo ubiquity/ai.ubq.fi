@@ -153,6 +153,7 @@ namespace uos::openai_telemetry {
     std::optional<std::string> removedProviderSemanticCommitment;
     std::optional<double> removedProviderLatencyMs;
     std::optional<std::string> removedProviderTerminalStatus;
+    bool upstreamAuthFollowerStale = false;
     friend bool operator==(const ResponseTelemetry&, const ResponseTelemetry&) = default;
   };
 
@@ -205,6 +206,7 @@ namespace uos::openai_telemetry {
     std::optional<std::string> removedProviderSemanticCommitment;
     std::optional<double> removedProviderLatencyMs;
     std::optional<std::string> removedProviderTerminalStatus;
+    bool upstreamAuthFollowerStale = false;
     friend bool operator==(const ResponseTelemetryState&, const ResponseTelemetryState&) = default;
   };
 
