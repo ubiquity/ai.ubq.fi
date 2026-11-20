@@ -7,6 +7,7 @@ The integrated follow-ups compiled **373/373 production sources**, linked **3/3 
 **450/450 binaries and 5,119/5,119 cases** on the `-O0 -g0` profile. The macOS release workflow's packager
 built the archive and the extracted gateway returned the qualified source commit from `--version`.
 
+[Delivered C++-only qualification](findings/cppgw-macos-final-20261119.md) ·
 [Integrated follow-up findings](findings/cppgw-macos-requal-fu1-20261118.md) ·
 [Integrated F1 findings](findings/cppgw-macos-requal-f1-20261118.md) ·
 [Prior qualification, 442 binaries and 5,034 cases](findings/cppgw-macos-requal-20261118.md) ·
@@ -164,7 +165,7 @@ bash cpp/gateway/tools/macos-build.sh --build-root "$UOS_MAC_BUILD/build" \
   --sqlite-prefix "$UOS_MAC_BUILD/sqlite-3.54.0" --jobs 3 --suite none --require-clean
 ```
 
-## Native results
+## Prior qualification results
 
 | Gate                       | Result                                                        |
 | -------------------------- | ------------------------------------------------------------- |

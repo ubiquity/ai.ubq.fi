@@ -10,14 +10,14 @@ The runner uses macOS 26.7.2 (25G332), arm64, Xcode 26.6 and Apple Clang 21.0.0 
 - [x] Check all 450 registrations with `python3 -B cpp/gateway/tools/links.py --check`.
 - [x] Build all 368 production sources, link the arm64 gateway and pass 37 runtime binaries and 524 cases.
 - [x] Pass the whole registered suite on the fixed commit and record binary and case counts.
-- [ ] Run the release workflow's macOS packager and check the extracted version and health identity.
-- [ ] Record the final source identity, receipts and any remaining failures.
+- [x] Build the release workflow's macOS archive and check the extracted version and health identity.
+- [x] Record the final source identity and receipts. All build, test and package gates passed.
 
 The clean verification worktree is at `/private/tmp/cppgw-macos-final-20261119.2vuBKt/source`.
 The sibling `build` directory contains compile and test receipts. The detached launcher writes each job's exit
 status beside its log. `runtime-final.log`, `full-final.log` and `package-final.log` run in that order from
 commit `99c2969bf83d883a01f1858d61319bbd656c19d6`, tree `56db4224b562e0795b2240c7a36256862dabc3d5`.
-`verify-final.log` checks the extracted archive and `package-health-final.log` checks the offline health handler
+`verify-final-retry.log` checks the extracted archive and `package-health-final.log` checks the offline health handler
 using the packaging inputs. Use this checklist and `git log` to resume.
 
 ## Runtime checkpoint
@@ -85,5 +85,46 @@ and linked the arm64 gateway. The test roster matched the 450 entries from `link
 | `1795132384072967000` | `1e36d133417e5d075be699f19258f6340a03493cf7540906f983685c39e9d012` | `40371a2db49ec71fef97c56e56c3f77dad27a96a9fc9e92e685cff99c7ae196b` |
 | `1795132546666757000` | `8492d08805138f738de504595cbcd2a431aa6ddb1829e68912ae4ed4948a3196` | `0be86e902ea961aa0566c6b8e80baaed64a0612570c9fc20258ef251d00eef32` |
 
-The release workflow's `python3 -B cpp/gateway/packaging/macos/build.py "$scratch/release/uos-gateway-macos-arm64.tar.gz"`
-command started after the full suite passed. It uses a separate empty home and temporary directory in the scratch root.
+## Release package and health identity
+
+After the full suite passed, the release job's command ran from the same clean commit with separate empty
+home and temporary directories.
+
+```sh
+env -i PATH=/opt/homebrew/bin:/usr/bin:/bin HOME="$scratch/package-final-home" TMPDIR="$scratch/package-final-tmp" \
+  python3 -B cpp/gateway/packaging/macos/build.py "$scratch/release/uos-gateway-macos-arm64.tar.gz"
+```
+
+The packager exited 0. Its release-commit build passed 37/37 runtime binaries and 524/524 cases, and the arm64
+executable passed the packager's system dylib and code-signature checks. Run `1795133292623980000` used
+`-DUOS_PACKAGE_GIT_COMMIT="99c2969bf83d883a01f1858d61319bbd656c19d6"`. Its retained `provenance.json` and
+`runtime-results.json` are under `packaged-health-final/` with SHA-256 values
+`1431f6835e8c3434e31a153bd298bf2e37604f75646f44dd6c15709e1b1a776c` and
+`3e974b2f78425a8b7f9cad4f43da09c1f1a04da5a07190ae84fe95115d0009c1`, respectively.
+
+`shasum -a 256 -c SHA256SUMS` passed for the 47,748,175-byte archive. A fresh extraction's `VERSION` matched
+the source commit and tree and records macOS 26.0 as the minimum. Under Seatbelt with networking denied,
+`./bin/uos-gateway --version` printed `uos-gateway 99c2969bf83d883a01f1858d61319bbd656c19d6`.
+
+| Artifact | SHA-256 |
+| --- | --- |
+| `release/uos-gateway-macos-arm64.tar.gz` | `4736a724e1114968d27e6434fed7a6f2a713e88ed2ed498ea66018f3075c1361` |
+| Extracted `bin/uos-gateway` | `c091ae502d5e382408f961f37c4db56220828dc24c51006eeba3dd06e1023c90` |
+| Package build's `libuos_gateway.a` | `d6b84a2ea558209ca3dc0e8f36020d6835282148cb616195431b31710a2fa84a` |
+
+The health proof is offline because serving uses the sealed Linux startup path. A probe linked against the
+packager's verified application and vendor archives called `uos::health::handleHealth()` under network-denying
+Seatbelt. It returned HTTP 200 with the following identity in both the JSON body and response headers.
+
+| Body field | Header | Value |
+| --- | --- | --- |
+| `release.git_sha` | `x-uos-git-sha` | `99c2969bf83d883a01f1858d61319bbd656c19d6` |
+| `release.deployment_id` | `x-uos-deployment-id` | `mac-99c2969bf83d883a01f1858d61319bbd656c19d6` |
+
+`xcrun nm -nm` and `xcrun dyld_info -fixups` located the release string used by the health handler in the
+extracted Mach-O. Reading the `uos::release::RELEASE_GIT_SHA` string view from the executable resolved to the
+same 40-character commit. The first inspection script accepted lowercase addresses only and raised
+`ValueError: not enough values to unpack (expected 1, got 0)` on `dyld_info`'s uppercase addresses. The corrected
+inspection passed on a fresh extraction of the same archive.
+
+The commits after the verified SHA contain qualification documentation only. `git diff --check` passed.
