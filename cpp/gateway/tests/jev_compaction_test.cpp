@@ -29,8 +29,10 @@
 #include "uos/rt/json.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/rt/test_async.hpp"
+#include "helpers/advancing_regex_clock.hpp"
 #include "helpers/live_allocations.hpp"
 
+#include <chrono>
 #include <map>
 #include <memory>
 #include <optional>
@@ -303,7 +305,9 @@ ASYNC_TEST("renderer applies Jev decisions verbatim and degrades dropped content
 
 ASYNC_TEST("floor-bound summary ships for a roughly 1.5-million-token input that cannot shrink further") {
   const Isolation isolation; rt::console::Capture capture({rt::console::Method::info}); const auto input = largeTranscript(5'100'000, 3'000'000);
+  uos::test::AdvancingRegexClock slow(std::chrono::milliseconds(1));
   EXPECT(jc::state::estimateTokens(rt::jsonStringify(input)) > 1'500'000);
+  EXPECT(slow.elapsed() > std::chrono::milliseconds(1800));
   auto pending = building(input, dropping(), false); const auto outcome = co_await std::move(pending);
   EXPECT_EQ(outcome.status, 200); EXPECT(rt::includes(outcome.body, jc::codex_items::SUMMARY_MARKER)); EXPECT(static_cast<double>(rt::length(outcome.body)) > gateway::SUMMARY_CHAR_CAP);
   EXPECT(rt::length(outcome.body) < rt::length(rt::jsonStringify(input))); EXPECT(rt::includes(*outcome.headers.get("x-jev-compaction"), "floor=1")); EXPECT(rt::includes(*outcome.headers.get("x-jev-compaction"), "calls_dropped=1"));
