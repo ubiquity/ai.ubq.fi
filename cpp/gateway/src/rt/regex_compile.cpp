@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdio>
 
 namespace uos::rt::regex_detail {
   namespace {
@@ -150,7 +151,8 @@ namespace uos::rt::regex_detail {
     const std::size_t length = input.size();
     // The compiler and name parser can look ahead while decoding a UTF-8 character.
     input.resize(length + 8, '\0');
-    Limits budget(limits::kRegexCompileDeadline);
+    Limits budget(std::chrono::seconds(10));
+    const auto started = Limits::Clock::now();
     budget.stackFloor = compileStackFloor(reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
     program->bytecode = compileBytecode(input, length, mask, budget);
     program->captureCount = static_cast<std::uint32_t>(lre_get_capture_count(program->bytecode.get()) - 1);
@@ -160,6 +162,8 @@ namespace uos::rt::regex_detail {
       program->splitBytecode = compileBytecode(input, length, mask & ~LRE_FLAG_STICKY, budget);
       program->registerCount = std::max(program->registerCount, static_cast<std::size_t>(lre_get_alloc_count(program->splitBytecode.get())));
     }
+    const auto us = std::chrono::duration_cast<std::chrono::microseconds>(Limits::Clock::now() - started).count();
+    std::fprintf(stderr, "REGEX_COMPILE %zu %lld\n", length, static_cast<long long>(us));
     return program;
   }
 }

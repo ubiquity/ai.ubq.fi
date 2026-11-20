@@ -42,7 +42,8 @@ extern "C" bool lre_check_stack_overflow(void* opaque, std::size_t size) {
 
 extern "C" int lre_check_timeout(void* opaque) {
   auto& limits = *static_cast<uos::rt::regex_detail::Limits*>(opaque);
-  return limits.pollsRemaining == 0 || --limits.pollsRemaining == 0 || uos::rt::regex_detail::Limits::Clock::now() >= limits.deadline;
+  --limits.pollsRemaining;
+  return limits.pollsRemaining == 0 || uos::rt::regex_detail::Limits::Clock::now() >= limits.deadline;
 }
 
 extern "C" void* lre_realloc(void*, void* ptr, std::size_t size) {

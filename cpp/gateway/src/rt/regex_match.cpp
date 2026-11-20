@@ -5,6 +5,7 @@
 #include "uos/rt/error.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <functional>
 #include <limits>
 #include <numeric>
@@ -44,11 +45,20 @@ namespace uos::rt::regex_detail {
   }
 
   Matcher::Matcher(const Program& program, std::size_t subjectBytes)
-    : program_(program), limits_(subjectBytes > limits::kRegexSubjectBytes && program.subjectBytes > limits::kRegexSubjectBytes
-                                   ? limits::kRegexLargeSubjectDeadline : program.matchDeadline) {
+    : program_(program), limits_(std::chrono::seconds(120)), subjectBytes_(subjectBytes) {
     if (program.registerCount > inlineCount) registers_ = std::make_unique<std::uint8_t*[]>(program.registerCount);
     const std::size_t count = 2 * (static_cast<std::size_t>(program.captureCount) + 1);
     if (count > inlineCount) offsets_ = std::make_unique_for_overwrite<std::size_t[]>(count);
+  }
+
+  Matcher::~Matcher() {
+    const char* group = "generic";
+    if (program_.subjectBytes == limits::kImageRegexSubjectBytes) group = "image";
+    if (program_.subjectBytes == limits::kCompactionRegexSubjectBytes) group = program_.sseFraming ? "sse" : "compaction";
+    if (program_.standardBase64) group = "base64";
+    if (program_.matchDeadline != limits::kRegexDeadline) group = "supervisor";
+    const auto us = std::chrono::duration_cast<std::chrono::microseconds>(Limits::Clock::now() - started_).count();
+    std::fprintf(stderr, "REGEX_MATCH %s %zu %u %u %lld\n", group, subjectBytes_, 4096u - limits_.pollsRemaining, searches_, static_cast<long long>(us));
   }
 
   bool Matcher::search(const void* subject, std::size_t length, std::size_t start, bool wide, bool splitting) {

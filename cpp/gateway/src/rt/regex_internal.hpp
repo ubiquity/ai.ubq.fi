@@ -68,6 +68,7 @@ namespace uos::rt::regex_detail {
   class Matcher {
   public:
     Matcher(const Program& program, std::size_t subjectBytes);
+    ~Matcher();
     bool search(const void* subject, std::size_t length, std::size_t start, bool wide, bool splitting);
     const std::size_t* captures() const { return offsets_.get() ? offsets_.get() : inlineOffsets_.data(); }
     std::size_t captureStart(std::size_t group) const { return captures()[2 * group]; }
@@ -77,6 +78,8 @@ namespace uos::rt::regex_detail {
     static constexpr std::size_t inlineCount = 32;
     const Program& program_;
     Limits limits_;
+    std::size_t subjectBytes_;
+    Limits::Clock::time_point started_ = Limits::Clock::now();
     unsigned searches_ = 0;
     std::array<std::uint8_t*, inlineCount> inlineRegisters_{};
     std::array<std::size_t, inlineCount> inlineOffsets_;
