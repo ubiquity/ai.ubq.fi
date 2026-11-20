@@ -337,11 +337,12 @@ namespace uos::provider::gemini {
   }
 
   rt::Task<GeminiCliTurn> runGeminiCli(GeminiCliOptions options, GeminiCliRunner runner) {
+    if (upstream_auth::followerMode() || (!runner && !geminiOperatorOptIn()))
+      throw GeminiError(503, "gemini_disabled", "Gemini subscription inference is not enabled on this gateway.");
     if (runner) {
       auto task = runner(options);
       co_return co_await std::move(task);
     }
-    if (!geminiOperatorOptIn()) throw GeminiError(503, "gemini_disabled", "Gemini subscription inference is not enabled on this gateway.");
     if (options.prompt.size() > MAX_PROMPT_BYTES) throw GeminiError(413, "gemini_prompt_too_large", "Gemini subscription prompt exceeds 8 MiB.");
     if (options.signal && options.signal->aborted()) rt::rethrow(options.signal->reason());
     const rt::AbortController deadline;

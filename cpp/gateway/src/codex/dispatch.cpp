@@ -20,6 +20,7 @@
 #include "uos/rt/string.hpp"
 #include "uos/rt/text_codec.hpp"
 #include "uos/rt/url.hpp"
+#include "uos/upstream_auth.hpp"
 #include "uos/utils.hpp"
 
 #include <array>
@@ -196,7 +197,8 @@ namespace uos::codex::dispatch {
   rt::Task<void> recordCodexThrownHealth(std::string accountId, rt::Reason error) {
     const CodexError* codexError = auth::codexErrorOf(error);
     if (codexError != nullptr &&
-        (codexError->code == "codex_auth_refresh_failed" || codexError->code == "refresh_token_reused" || codexError->code == "codex_auth_refresh_unreachable" ||
+        (dynamic_cast<const auth::CodexAuthFollowerStaleError*>(codexError) ||
+         codexError->code == "codex_auth_refresh_failed" || codexError->code == "refresh_token_reused" || codexError->code == "codex_auth_refresh_unreachable" ||
          codexError->code == "codex_auth_owner_unavailable" || codexError->code == "codex_auth_owner_conflict")) {
       co_return;
     }
@@ -567,6 +569,7 @@ namespace uos::codex::dispatch {
 
   std::string codexErrorClass(const rt::Reason& error) {
     if (const CodexError* codexError = auth::codexErrorOf(error)) {
+      if (dynamic_cast<const auth::CodexAuthFollowerStaleError*>(codexError)) return std::string(upstream_auth::FOLLOWER_STALE);
       if (codexError->code == "gateway_timeout") return "timeout";
       if (codexError->code == "codex_upstream_unreachable" || codexError->code == "codex_auth_refresh_unreachable") {
         return "network_failure";

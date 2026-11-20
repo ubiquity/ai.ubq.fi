@@ -156,6 +156,7 @@ namespace uos::openai_telemetry {
     std::optional<std::string> removedProviderTerminalStatus;
     std::size_t inStreamRetries = 0;
     json::array upstreamFailureEvents{};
+    bool upstreamAuthFollowerStale = false;
     friend bool operator==(const ResponseTelemetry&, const ResponseTelemetry&) = default;
   };
 
@@ -210,6 +211,7 @@ namespace uos::openai_telemetry {
     std::optional<std::string> removedProviderTerminalStatus;
     std::size_t inStreamRetries = 0;
     json::array upstreamFailureEvents{};
+    bool upstreamAuthFollowerStale = false;
     friend bool operator==(const ResponseTelemetryState&, const ResponseTelemetryState&) = default;
   };
 

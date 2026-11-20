@@ -162,6 +162,7 @@ namespace uos::codex::dispatch {
     /** Request-owned passive recorder; best effort, never required. */
     std::optional<::uos::sentinel::upstream_capture::SentinelUpstreamRecorder> sentinelUpstreamRecorder{};
     std::optional<CodexStreamRetryHooks> streamRetry{};
+    std::function<void()> onFollowerStale{};
   };
 
   // `type CodexProviderDispatchCoordinator` (exported through the type list).

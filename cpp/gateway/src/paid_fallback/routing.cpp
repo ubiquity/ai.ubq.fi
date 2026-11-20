@@ -180,6 +180,9 @@ namespace {
       fetchOptions.clientVersion = options.clientVersion.toOptional(); fetchOptions.cacheScope = health::codexCacheScopeForUsageContext(options.usageContext);
       fetchOptions.signal = options.signal; if (options.usageContext) fetchOptions.requestId = options.usageContext->requestId;
       fetchOptions.timing = codex::dispatch::CodexResponseTimingHooks{[context = options.usageContext] { tel::recordFirstCodexDispatch(context); }, [context = options.usageContext] { tel::recordFirstCodexHeaders(context); }};
+      if (options.usageContext && options.usageContext->responseTelemetry) {
+        fetchOptions.onFollowerStale = [telemetry = options.usageContext->responseTelemetry] { telemetry->upstreamAuthFollowerStale = true; };
+      }
       fetchOptions.beforeDispatch = std::function<rt::Task<std::optional<api_key_policy::ApiKeyProviderDispatch>>()>([context = options.usageContext] { return beforeDispatch(context, "chatgpt_codex"); });
       fetchOptions.bankedReset = openai::codexBankedResetOptionsForTest; if (options.usageContext) fetchOptions.sentinelUpstreamRecorder = options.usageContext->sentinelUpstreamRecorder;
       if (options.codexStreamPreflight) {

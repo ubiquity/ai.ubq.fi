@@ -25,6 +25,7 @@
 #include "uos/rt/crypto.hpp"
 #include "uos/rt/kv_js.hpp"
 #include "uos/rt/string.hpp"
+#include "uos/upstream_auth.hpp"
 #include "uos/utils.hpp"
 #include <algorithm>
 #include <tuple>
@@ -96,6 +97,7 @@ rt::Task<rt::Response> handleAdminCodexBankedResetShadowDecisions() {
   co_return http::json(200, json::object{{"decisions", json::value_from(*decisions)}}, rt::Headers{{"Cache-Control", "no-store"}});
 }
 rt::Task<rt::Response> handleAdminCodexCacheScopeExperiment(rt::Request req) {
+  if (upstream_auth::followerMode()) co_return error(409, std::string(upstream_auth::FOLLOWER_READ_ONLY), "upstream_auth_follower");
   const auto body = co_await req.text(); if (!rt::trim(body).empty()) co_return error(400, "Prompt-cache scope experiment does not accept request fields", "invalid_request_error");
   try {
     const auto baseline = co_await scope::assertPromptCacheScopeExperimentTelemetryBaseline(); auto task = scope::runPromptCacheScopeExperiment(baseline); const auto result = co_await std::move(task);
@@ -131,6 +133,7 @@ rt::Task<rt::Response> handleAdminPromptCacheAnalytics(rt::Request req, ReadAnal
   catch (...) { rt::console::error("[ai.ubq.fi] Prompt-cache analytics could not be read."); co_return error(503, "Prompt-cache analytics are unavailable", "prompt_cache_analytics_unavailable", true, true); }
 }
 rt::Task<rt::Response> handleAdminCodexAuth(rt::Request req) {
+  if (upstream_auth::followerMode()) co_return error(409, std::string(upstream_auth::FOLLOWER_READ_ONLY), "upstream_auth_follower");
   auto database = co_await databaseForRequest(); if (!database) co_return error(500, "Deno KV is not available; cannot persist Codex auth", "server_error");
   auto body = co_await request::readJsonBody(req); const auto* authPayload = body.is_object() && rt::hasOwn(body.as_object(), "auth") ? rt::get(body, "auth") : &body;
   const auto* modelsPayload = body.is_object() && rt::hasOwn(body.as_object(), "models") ? rt::get(body, "models") : nullptr;

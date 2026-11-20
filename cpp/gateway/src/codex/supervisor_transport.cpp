@@ -7,6 +7,7 @@
 #include "uos/rt/string.hpp"
 #include "uos/rt/text_codec.hpp"
 #include "uos/runtime/http.hpp"
+#include "uos/upstream_auth.hpp"
 
 #include <memory>
 #include <unordered_set>
@@ -185,6 +186,8 @@ namespace uos::codex::supervisor_transport {
     }
 
     rt::Task<SupervisorConnection> openConnection(std::string socketPath, std::optional<rt::AbortSignal> signal) {
+      // The app-server can use its own auth manager even for a read-only RPC.
+      if (upstream_auth::followerMode()) throw rt::JsError("Codex app-server access is disabled by UOS_GATEWAY_UPSTREAM_AUTH_FOLLOWER=1.");
       if (signal && signal->aborted()) throw rt::JsError("app-server connection aborted");
       const rt::Promise<ws::WebSocketConstructor> loading(loadWebSocketConstructor());
       const ws::WebSocketConstructor constructor = co_await loading.wait();

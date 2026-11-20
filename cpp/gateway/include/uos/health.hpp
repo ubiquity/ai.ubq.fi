@@ -13,5 +13,6 @@ namespace uos::health {
   rt::Task<rt::Response> handleHealthProviders();
   rt::Task<rt::Response> handleHealthProviders(PassiveProviderHealthOptions options);
   rt::Response handleHealth();
+  rt::Task<rt::Response> handleFollowerHealth();
   rt::Task<rt::Response> handleHealthUpstream();
 }

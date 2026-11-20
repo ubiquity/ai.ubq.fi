@@ -1,5 +1,6 @@
 // Links: src/runtime/permissions_linux.cpp
 #include "uos/runtime/permissions_linux.hpp"
+#include "uos/provider/gemini.hpp"
 #include "uos/rt/crypto.hpp"
 #include "uos/rt/env.hpp"
 #include "uos/rt/fs.hpp"
@@ -59,6 +60,22 @@ namespace {
   }
 }
 #endif
+
+TEST("shared auth follower mode overrides the Gemini opt-in before granting CLI access") {
+#if defined(__linux__) && defined(__aarch64__)
+  const Fixture fixture;
+  const rt::env::ScopedEnvironment environment{{"HOME", fixture.home}, {"UOS_GATEWAY_ENABLE_ANTIGRAVITY", "1"}};
+  ASSERT(uos::provider::gemini::geminiCliConfigured());
+  const rt::env::ScopedOverride follower{{"UOS_GATEWAY_UPSTREAM_AUTH_FOLLOWER", "1"}};
+  EXPECT(!uos::provider::gemini::geminiOperatorOptIn());
+  EXPECT(!uos::provider::gemini::geminiCliConfigured());
+  const auto profiles = gatewayLinuxPermissions(fixture.package, fixture.state);
+  EXPECT(!profiles.antigravity);
+  EXPECT(!profiles.gateway.allowChildProcess);
+  EXPECT(profiles.gateway.execute.empty());
+  EXPECT_EQ(profiles.gateway.write, std::vector<std::string>{fixture.data});
+#endif
+}
 
 TEST("Gemini leaves the disabled gateway grants and ARM64 filter byte identical") {
 #if defined(__linux__) && defined(__aarch64__)

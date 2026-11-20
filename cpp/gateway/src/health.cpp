@@ -72,6 +72,7 @@
 #include "uos/rt/kv_js.hpp"
 #include "uos/rt/number.hpp"
 #include "uos/rt/string.hpp"
+#include "uos/upstream_auth.hpp"
 #include "uos/utils.hpp"
 #include <algorithm>
 #include <memory>
@@ -152,8 +153,10 @@ namespace uos::health {
           co_return CodexAuthContext{json::object{{"source", "kv"}, {"updated_at_ms", rt::makeNumber(pool->updated_at_ms)}, {"access_token_exp_ms", numberOrNull(minimum)}, {"account_count", rt::makeNumber(static_cast<double>(rows.size()))}, {"accounts", accountRows}}, std::move(ids)};
         }
       }
-      const auto env = co_await loadEnvCodexAuth();
-      if (env) co_return *env;
+      if (!upstream_auth::followerMode()) {
+        const auto env = co_await loadEnvCodexAuth();
+        if (env) co_return *env;
+      }
       co_return CodexAuthContext{json::object{{"source", "none"}, {"updated_at_ms", nullptr}, {"access_token_exp_ms", nullptr}, {"account_count", 0}, {"accounts", json::array{}}}, {}};
     }
     std::string aggregateProviderStates(const std::vector<ph::ProviderHealthView>& views) {
@@ -380,9 +383,23 @@ namespace uos::health {
     const rt::Headers headers{{"Cache-Control", "no-store"}, {"x-uos-git-sha", config::runtimeGitSha()}, {"x-uos-deployment-id", config::runtimeDeploymentId()}};
     co_return http::json(200, payload, headers);
   }
-  rt::Response handleHealth() {
-    const auto gitSha = config::runtimeGitSha(); const auto deploymentId = config::runtimeDeploymentId();
-    return http::json(200, json::object{{"status", "available"}, {"release", json::object{{"git_sha", gitSha}, {"deployment_id", deploymentId}}}}, {{"Cache-Control", "no-store"}, {"x-uos-git-sha", gitSha}, {"x-uos-deployment-id", deploymentId}});
+  namespace {
+    rt::Response healthResponse(std::optional<json::object> upstreamAuth = std::nullopt) {
+      const auto gitSha = config::runtimeGitSha(); const auto deploymentId = config::runtimeDeploymentId();
+      json::object body{{"status", "available"}, {"release", json::object{{"git_sha", gitSha}, {"deployment_id", deploymentId}}}};
+      if (upstreamAuth) body.emplace("upstream_auth", std::move(*upstreamAuth));
+      return http::json(200, body, {{"Cache-Control", "no-store"}, {"x-uos-git-sha", gitSha}, {"x-uos-deployment-id", deploymentId}});
+    }
+  }
+  rt::Response handleHealth() { return healthResponse(); }
+  rt::Task<rt::Response> handleFollowerHealth() {
+    std::optional<double> remaining;
+    try {
+      const auto auth = co_await getCodexAuthContext();
+      const auto expiry = rt::getNumber(auth.meta, "access_token_exp_ms");
+      if (expiry && rt::Number::isFinite(*expiry)) remaining = std::max(0.0, *expiry - rt::dateNow());
+    } catch (...) {}
+    co_return healthResponse(json::object{{"follower", true}, {"earliest_access_token_expires_in_ms", numberOrNull(remaining)}});
   }
   rt::Task<rt::Response> handleHealthUpstream() {
     const auto probe = co_await probeUpstreamCoalesced();

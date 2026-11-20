@@ -205,6 +205,7 @@ namespace uos::codex::auth_refresh {
     }
 
     rt::Task<CodexAuthState> refreshAuth(auth::CodexAuthAccountEntry current) {
+      auth::requireCodexAuthRefreshAllowed();
       const double generationAtStart = auth::authCacheGeneration;
       rt::Response response;
       rt::Reason unreachable;
@@ -458,6 +459,7 @@ namespace uos::codex::auth_refresh {
    * contains only a hash-derived slot key and an opaque owner token.
    */
   rt::Task<CodexAuthState> refreshAuthCoordinated(auth::CodexAuthAccountEntry input) {
+    auth::requireCodexAuthRefreshAllowed();
     rt::Promise<std::optional<CodexAuthState>> nativeRefresh(native_auth::refreshNativeCodexAuthIfOwned(input.auth));
     const std::optional<CodexAuthState> native = co_await nativeRefresh.wait();
     if (native) co_return *native;
@@ -557,6 +559,7 @@ namespace uos::codex::auth_refresh {
   template rt::Task<CodexAuthState> awaitWithoutCancellingSharedWork<CodexAuthState>(rt::Promise<CodexAuthState> promise, std::optional<rt::AbortSignal> signal);
 
   rt::Task<CodexAuthState> refreshAuthStateless(CodexAuthState authState) {
+    auth::requireCodexAuthRefreshAllowed();
     rt::Promise<std::optional<CodexAuthState>> nativeRefresh(native_auth::refreshNativeCodexAuthIfOwned(authState, true));
     const std::optional<CodexAuthState> native = co_await nativeRefresh.wait();
     if (native) co_return *native;
@@ -600,6 +603,7 @@ namespace uos::codex::auth_refresh {
 
   rt::Task<CodexAuthState> getValidAuth(auth::CodexAuthAccountEntry current) {
     if (!auth::needsRefresh(current.auth)) co_return current.auth;
+    auth::requireCodexAuthRefreshAllowed();
 
     if (const rt::Promise<CodexAuthState>* existing = auth::refreshesInFlight.get(current.auth.account_id)) {
       const rt::Promise<CodexAuthState> inFlight = *existing;

@@ -5,6 +5,7 @@
 #include "uos/admin/codex_reset.hpp"
 #include "uos/admin/error_log.hpp"
 #include "uos/admin/gemini_quota.hpp"
+#include "uos/upstream_auth.hpp"
 #include "uos/admin/chart_source_proxy.hpp"
 #include "uos/admin/capacity_observation_sync.hpp"
 #include "uos/admin/sentinel_incident.hpp"
@@ -147,6 +148,11 @@ namespace uos::handler::index {
     }
     rt::Task<std::optional<rt::Response>> handleHealthRoute(rt::Request req, std::string path) {
       if ((req.method() == "GET" || req.method() == "HEAD") && path == "/health") {
+        if (upstream_auth::followerMode()) {
+          auto reading = health::handleFollowerHealth();
+          auto response = co_await std::move(reading);
+          co_return req.method() == "HEAD" ? ::uos::http::withoutBody(response) : response;
+        }
         auto response = health::handleHealth();
         co_return req.method() == "HEAD" ? ::uos::http::withoutBody(response) : response;
       }

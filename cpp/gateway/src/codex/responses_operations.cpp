@@ -888,6 +888,8 @@ namespace uos::codex::responses_operations {
       } catch (...) {
         failure = std::current_exception();
       }
+      if (dynamic_cast<const auth::CodexAuthFollowerStaleError*>(auth::codexErrorOf(failure)))
+        dispatch::reportCodexResponseTiming(ctx->options.onFollowerStale);
       dispatch::logCodexRouting("codex_token_refresh", tokenRefreshFields(*ctx, routing, trigger, "failed", dispatch::codexErrorClass(failure)));
       std::rethrow_exception(failure);
     }

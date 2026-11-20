@@ -8,6 +8,7 @@
 #include "uos/rt/text_codec.hpp"
 #include "uos/rt/websocket.hpp"
 #include "uos/runtime/http.hpp"
+#include "uos/upstream_auth.hpp"
 #include "uos/utils.hpp"
 
 #include <exception>
@@ -194,6 +195,7 @@ namespace uos::codex::native_auth_transport {
   }
 
   rt::Task<void> requestNativeCodexRefresh(std::string codexHome, std::string expectedEmail, std::string expectedAccountId) {
+    if (upstream_auth::followerMode()) throw rt::JsError("Native Codex refresh is disabled by UOS_GATEWAY_UPSTREAM_AUTH_FOLLOWER=1.");
     const rt::Promise<runtime::websocket::WebSocketModule> loading = runtime::http::loadWebSocketModule();
     const runtime::websocket::WebSocketModule module = co_await loading.wait();
     // `isRecord(module) ? module.default : null`: the module is always an object.
