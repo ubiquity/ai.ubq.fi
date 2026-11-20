@@ -31,15 +31,16 @@ if(UOS_GATEWAY_GIT_COMMIT)
     message(FATAL_ERROR "UOS_GATEWAY_GIT_COMMIT must be the full 40-character lowercase Git commit")
   endif()
 endif()
+set(UOS_PACKAGE_IDENTITY_SOURCES
+  "src/release.cpp"
+  "tests/health_test.cpp"
+  "tests/release_identity_test.cpp")
 add_library(uos_gateway_settings INTERFACE)
 target_include_directories(uos_gateway_settings INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/include" "${CMAKE_CURRENT_SOURCE_DIR}")
 target_compile_options(uos_gateway_settings INTERFACE -Wall -Wextra -Wshadow -Wconversion -Werror)
 # Tree-relative includes reach vendored headers outside the system include directories.
 target_compile_options(uos_gateway_settings INTERFACE "$<$<COMPILE_LANG_AND_ID:CXX,Clang,AppleClang>:--system-header-prefix=third_party/>")
 target_compile_definitions(uos_gateway_settings INTERFACE BOOST_JSON_NO_LIB BOOST_CONTAINER_NO_LIB BOOST_SYSTEM_NO_LIB)
-if(UOS_GATEWAY_GIT_COMMIT)
-  target_compile_definitions(uos_gateway_settings INTERFACE "UOS_PACKAGE_GIT_COMMIT=\"${UOS_GATEWAY_GIT_COMMIT}\"")
-endif()
 include(cmake/Profile.cmake)
 if(UOS_GATEWAY_IS_SDK)
   find_package(ICU 78 REQUIRED COMPONENTS uc i18n)
@@ -74,6 +75,11 @@ function(uos_object_for_source output source)
     endif()
     add_library("${target}" OBJECT EXCLUDE_FROM_ALL "${source}")
     target_link_libraries("${target}" PRIVATE uos_gateway_settings)
+    if(UOS_GATEWAY_GIT_COMMIT AND source IN_LIST UOS_PACKAGE_IDENTITY_SOURCES)
+      # The commit changes with every package build. Keep it out of every other
+      # object so their compiler-cache keys stay stable.
+      target_compile_definitions("${target}" PRIVATE "UOS_PACKAGE_GIT_COMMIT=\"${UOS_GATEWAY_GIT_COMMIT}\"")
+    endif()
     get_property(simdjson_consumers GLOBAL PROPERTY UOS_SIMDJSON_CONSUMERS)
     if(source IN_LIST simdjson_consumers)
       target_compile_definitions("${target}" PRIVATE UOS_GATEWAY_SIMDJSON)

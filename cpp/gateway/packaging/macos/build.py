@@ -175,9 +175,9 @@ def build(work, output, jobs):
             objects.append(gateway_entry)
         run(*compile_flags, *definitions, "-c", source, "-o", entry, env=build_env)
         startup = work / "startup.o"
-        run(*compile_flags, *definitions, "-c", GATEWAY / "runtime/startup.cpp", "-o", startup, env=build_env)
+        run(*compile_flags, "-c", GATEWAY / "runtime/startup.cpp", "-o", startup, env=build_env)
         target = stage / "bin" / name
-        run(*flags, *definitions, *objects, startup,
+        run(*flags, *objects, startup,
             "-Xlinker", "-force_load", "-Xlinker", build_root / "libuos_gateway.a", *static_libraries,
             "-Wl,-reproducible", "-Wl,-adhoc_codesign", "-o", target, env=env)
         if capture("xcrun", "lipo", "-archs", target, env=env) != "arm64":

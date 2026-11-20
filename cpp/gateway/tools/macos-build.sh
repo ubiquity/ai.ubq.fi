@@ -112,8 +112,7 @@ flags = [compiler, "-std=c++20", "-stdlib=libc++", "-O0", "-g0", "-Wall", "-Wext
          "--system-header-prefix=third_party/",
          "-isystem", str(sqlite / "include"), "-pthread", *cflags]
 flags.append("-DUOS_GATEWAY_NATIVE_LIBRARIES")
-if args.release_commit:
-    flags.append('-DUOS_PACKAGE_GIT_COMMIT="' + args.release_commit + '"')
+release_identity_sources = {Path("src/release.cpp"), Path("tests/release_identity_test.cpp"), Path("tests/health_test.cpp")}
 vendor_c_flags = [c_compiler, "-std=c11", "-O0", "-g0"]
 vendor_cxx_flags = vendor_sources.vendor_flags(flags)
 libs += [str(sqlite / "lib/libsqlite3.dylib"), "-L" + str(prefixes["boost"] / "lib"), "-lboost_json", "-lboost_container"]
@@ -163,6 +162,10 @@ def compile_one(source, selected_flags=None):
     target = obj(source)
     target.parent.mkdir(parents=True, exist_ok=True)
     source_flags = flags if selected_flags is None else selected_flags
+    if args.release_commit and source in release_identity_sources:
+        # Only the identity consumers vary by package commit; all other
+        # translation units keep the same compiler-cache key.
+        source_flags = source_flags + ['-DUOS_PACKAGE_GIT_COMMIT="' + args.release_commit + '"']
     if str(source) in simdjson_sources:
         source_flags = source_flags + vendor_sources.simdjson_flags(gateway)
     if args.legacy_loaders and str(source) in {"src/rt/gzip.cpp", "src/rt/sqlite.cpp", "src/rt/fetch_transport_codec.cpp"}:

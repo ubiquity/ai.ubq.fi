@@ -5,9 +5,9 @@
 - [x] Fetch and inspect the three reviewed branches from `claude/cpp-gateway-port` (`0c545781`).
 - [x] Merge `agent-jobs/cppgw-macos-final-20261119-44637373710-1` (Apple Silicon confirmation).
 - [x] Merge `agent-jobs/cppgw-stream-retry-20261119-44629153076-1` (pre-output stream retry).
-- [ ] Merge `agent-jobs/cppgw-build-cache-20261119-44628404886-1` (compiler cache).
-- [ ] Reconcile release commit binding with the compiler launcher in packaging and tooling.
-- [ ] Restrict `UOS_PACKAGE_GIT_COMMIT` to translation units that read it.
+- [x] Merge `agent-jobs/cppgw-build-cache-20261119-44628404886-1` (compiler cache).
+- [x] Reconcile release commit binding with the compiler launcher in packaging and tooling.
+- [x] Restrict `UOS_PACKAGE_GIT_COMMIT` to translation units that read it.
 - [ ] Show two package-style builds at different commits share non-identity cache hits.
 - [ ] Run `python3 cpp/gateway/tools/links.py --check`.
 - [ ] Run `actionlint` on both workflows.
@@ -25,3 +25,6 @@ Starting commit: `0c545781` (`claude/cpp-gateway-port`, delivered native gateway
 - `65b4a0a4` started this checklist.
 - Mac final tip `316de915` merged cleanly; the merge commit preserves its ancestry.
 - Stream retry tip `824b181b` merged cleanly; the merge commit preserves its ancestry.
+
+- Build-cache tip `fd5ffece` merged with conflicts in `packaging/macos/build.py` and `packaging/portable/Dockerfile`; both sides were kept: packaged builds bind `SOURCE_COMMIT`/`--release-commit` and compile through the configured launcher.
+- `UOS_PACKAGE_GIT_COMMIT` now reaches only `src/release.cpp`, `tests/health_test.cpp`, `tests/release_identity_test.cpp` in CMake and `tools/macos-build.sh`; `packaging/macos/gateway-version.cpp` keeps its local definition. `packaging/macos/build.py` no longer puts the definition on the startup object or the link line.
