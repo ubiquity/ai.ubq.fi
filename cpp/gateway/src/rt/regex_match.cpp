@@ -44,8 +44,7 @@ namespace uos::rt::regex_detail {
   }
 
   Matcher::Matcher(const Program& program, std::size_t subjectBytes)
-    : program_(program), limits_(subjectBytes > limits::kRegexSubjectBytes && program.subjectBytes > limits::kRegexSubjectBytes
-                                   ? limits::kRegexLargeSubjectDeadline : program.matchDeadline) {
+    : program_(program), limits_(limits::kRegexMatchBackstop, std::min(limits::kRegexMaxPolls, program.workBudget.pollsFor(subjectBytes))) {
     if (program.registerCount > inlineCount) registers_ = std::make_unique<std::uint8_t*[]>(program.registerCount);
     const std::size_t count = 2 * (static_cast<std::size_t>(program.captureCount) + 1);
     if (count > inlineCount) offsets_ = std::make_unique_for_overwrite<std::size_t[]>(count);
@@ -55,28 +54,29 @@ namespace uos::rt::regex_detail {
     const int shift = wide ? 1 : 0;
     if (length > static_cast<std::size_t>(std::numeric_limits<int>::max() >> shift)) throw RangeError("regular expression subject is too large");
     if (start > length) return false;
-    // Also check the shared deadline between searches that are individually too short to poll.
-    if (searches_++ % 256 == 0 && Limits::Clock::now() >= limits_.deadline) throw RangeError("regular expression execution limit exceeded");
     auto* offsets = offsets_ ? offsets_.get() : inlineOffsets_.data();
     if (program_.imageDataUrl && !wide && length > limits::kRegexSubjectBytes) {
-      const bool matched = start == 0 && matchAsciiImage({static_cast<const char*>(subject), length}, offsets);
-      if (Limits::Clock::now() >= limits_.deadline) throw RangeError("regular expression execution limit exceeded");
-      return matched;
+      return start == 0 && matchAsciiImage({static_cast<const char*>(subject), length}, offsets);
     }
     if (program_.standardBase64 && length > limits::kRegexSubjectBytes) {
       if (wide || start != 0 || length % 4 != 0) return false;
       const bool matched = base64Alphabet({static_cast<const char*>(subject), length});
-      if (Limits::Clock::now() >= limits_.deadline) throw RangeError("regular expression execution limit exceeded");
       offsets[0] = 0;
       offsets[1] = length;
       return matched;
     }
+    // A sequence of short VM searches may never reach an engine interrupt.
+    constexpr auto backstopError = "regular expression execution wall-clock backstop exceeded";
+    if (searches_++ % 256 == 0 && limits_.checkBackstop()) throw RangeError(backstopError);
     const auto* bytes = static_cast<const std::uint8_t*>(subject);
     const auto* bytecode = splitting && program_.splitBytecode ? program_.splitBytecode.get() : program_.bytecode.get();
     auto* registers = registers_ ? registers_.get() : inlineRegisters_.data();
     const int result = lre_exec(registers, bytecode, bytes, static_cast<int>(start), static_cast<int>(length), shift, &limits_);
     if (result == 0) return false;
-    if (result == LRE_RET_TIMEOUT) throw RangeError("regular expression execution limit exceeded");
+    if (result == LRE_RET_TIMEOUT) {
+      if (limits_.backstopExceeded) throw RangeError(backstopError);
+      throw RangeError("regular expression execution limit exceeded");
+    }
     if (result == LRE_RET_MEMORY_ERROR) throw RangeError("regular expression memory limit exceeded");
     if (result != 1) throw JsError("invalid regular expression bytecode");
     const std::size_t count = 2 * (static_cast<std::size_t>(program_.captureCount) + 1);

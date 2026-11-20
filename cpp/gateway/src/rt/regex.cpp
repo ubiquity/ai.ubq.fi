@@ -257,10 +257,8 @@ namespace uos::rt {
       else return std::nullopt;
 
       if (input.size() > limits::kBase64InputBytes || !isAscii(input)) throw RangeError("regular expression subject is too large");
-      const auto deadline = regex_detail::Limits::Clock::now() + limits::kRegexLargeSubjectDeadline;
       std::string out(input);
       std::ranges::replace(out, from, replacement.front());
-      if (regex_detail::Limits::Clock::now() >= deadline) throw RangeError("regular expression execution limit exceeded");
       return out;
     }
 

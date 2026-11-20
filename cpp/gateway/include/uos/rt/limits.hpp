@@ -26,9 +26,27 @@ namespace uos::rt::limits {
   inline constexpr std::size_t kModelIdCodeUnits = 200;
   inline constexpr std::size_t kRegexPatternBytes = 4 * 1024;
   inline constexpr std::size_t kRegexSubjectBytes = 1024 * 1024;
-  inline constexpr auto kRegexCompileDeadline = std::chrono::milliseconds(10);
-  inline constexpr auto kRegexDeadline = std::chrono::milliseconds(250);
-  inline constexpr auto kRegexLargeSubjectDeadline = std::chrono::milliseconds(1800);
+
+  struct RegexWorkBudget {
+    std::size_t basePolls;
+    std::size_t subjectBytesPerPoll;
+
+    constexpr std::size_t pollsFor(std::size_t subjectBytes) const {
+      return basePolls + subjectBytes / subjectBytesPerPoll;
+    }
+  };
+
+  // Counts of libregexp interrupt callbacks, shared across searches on one subject.
+  // The fixed application patterns select their own allowance by source and flags.
+  inline constexpr RegexWorkBudget kRegexWorkBudget{64, 500};
+  inline constexpr RegexWorkBudget kImageRegexWorkBudget{16, 1250};
+  inline constexpr RegexWorkBudget kCompactionRegexWorkBudget{4, 1250};
+  inline constexpr RegexWorkBudget kSseRegexWorkBudget{8, 680};
+  inline constexpr RegexWorkBudget kSupervisorRegexWorkBudget{16, 30};
+  inline constexpr RegexWorkBudget kBase64RegexWorkBudget{16, 625};
+  inline constexpr std::size_t kRegexMaxPolls = 4096;
+  inline constexpr auto kRegexCompileBackstop = std::chrono::minutes(5);
+  inline constexpr auto kRegexMatchBackstop = std::chrono::minutes(5);
 
   inline constexpr std::size_t kJsonDocumentBytes = 16 * 1024 * 1024;
   inline constexpr std::size_t kJsonDepth = 128;

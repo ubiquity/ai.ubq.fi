@@ -43,7 +43,7 @@ namespace uos::rt::regex_detail {
     std::uint32_t captureCount = 0;
     std::size_t registerCount = 0;
     std::size_t subjectBytes = limits::kRegexSubjectBytes;
-    std::chrono::milliseconds matchDeadline = limits::kRegexDeadline;
+    limits::RegexWorkBudget workBudget = limits::kRegexWorkBudget;
     bool sseFraming = false;
     bool imageDataUrl = false;
     bool standardBase64 = false;
@@ -55,11 +55,21 @@ namespace uos::rt::regex_detail {
 
   struct Limits {
     using Clock = std::chrono::steady_clock;
-    explicit Limits(std::chrono::milliseconds timeout = limits::kRegexDeadline) : deadline(Clock::now() + timeout) {}
+    // Internal thread-local seam for testing elapsed time without sleeping.
+    inline static thread_local Clock::time_point (*clockForTest)() noexcept = nullptr;
+
+    explicit Limits(Clock::duration backstop, std::size_t polls = 0) : deadline(now() + backstop), pollsRemaining(polls) {}
+    bool checkBackstop() noexcept {
+      backstopExceeded = now() >= deadline;
+      return backstopExceeded;
+    }
+
+    static Clock::time_point now() noexcept { return clockForTest ? clockForTest() : Clock::now(); }
     Clock::time_point deadline;
     std::uintptr_t stackFloor = 0;
     // libregexp calls the hook once per 10,000 backtracking/loop polls.
-    unsigned pollsRemaining = 4096;
+    std::size_t pollsRemaining;
+    bool backstopExceeded = false;
   };
 
   std::uintptr_t compileStackFloor(std::uintptr_t entry);
