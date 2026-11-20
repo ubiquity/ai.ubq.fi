@@ -152,3 +152,22 @@ ASYNC_TEST("stopped-state auth import aborts the whole update on a rejected or r
   EXPECT_EQ(fixture.probes, 4);
   EXPECT_EQ(fixture.otherCalls, 0);
 }
+
+ASYNC_TEST("stopped-state auth import rejects a bearer already in the follower renewal window") {
+  Fixture fixture;
+  const auto old = credential("account-a", "expired", fixture.now, -60'000);
+  const auto fresh = credential("account-a", "near-expiry", fixture.now, 60'000);
+  auto writeFollower = seed(fixture.destination, {{old}, fixture.now}, "follower data");
+  co_await std::move(writeFollower);
+  auto writeLeader = seed(fixture.source, {{fresh}, fixture.now}, "leader data");
+  co_await std::move(writeLeader);
+
+  const auto before = rt::fs::readFileSync(fixture.destination);
+  bool rejected = false;
+  try { co_await fixture.run(); }
+  catch (const rt::JsError& error) { rejected = error.message == "A leader Codex access token already needs renewal."; }
+  EXPECT(rejected);
+  EXPECT_EQ(rt::fs::readFileSync(fixture.destination), before);
+  EXPECT_EQ(fixture.probes, 0);
+  EXPECT_EQ(fixture.otherCalls, 0);
+}

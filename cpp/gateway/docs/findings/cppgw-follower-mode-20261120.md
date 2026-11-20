@@ -38,4 +38,21 @@ The separate native-authority engine seeds its own SQL namespace from a supplied
 
 The launcher verifies the same immutable package and confines the one-shot import. It requires the exact follower switch and two separate owner-private, checkpointed, marked databases. The process gets a read grant for the source database, keeps the usual write grant for the destination `.data`, and starts no listener. The source is opened with SQLite's immutable read-only URI.
 
-The import matches existing account IDs and retains slot order and follower-only accounts. It checks expiry and freshness, uses the repair module's candidate validation with the account-bound usage GET, and uses the existing pool upsert checks for native ownership. The usage request sends only the access bearer and account binding and refuses redirects. Any failed validation aborts the batch. Once validated, the import checks the destination pool revision and updates the existing auth singleton and its KV revision in a transaction. It bypasses serving-time queue and expiry maintenance, so unrelated stored values and revisions stay intact. The operator steps are in [CUTOVER.md](../CUTOVER.md#running-side-by-side-on-one-host).
+The import matches existing account IDs and retains slot order and follower-only accounts. It checks expiry and freshness, uses the repair module's candidate validation with the account-bound usage GET, and uses the existing pool upsert checks for native ownership. The usage request sends the access bearer and account binding and refuses redirects. Any failed validation aborts the batch. Once validated, the import checks the destination pool revision and the serving renewal window again before updating the existing auth singleton and its KV revision in a transaction. It bypasses serving-time queue and expiry maintenance, so unrelated stored values and revisions stay intact. The operator steps are in [CUTOVER.md](../CUTOVER.md#running-side-by-side-on-one-host).
+
+## Committed-diff review
+
+- Base `0c54578151b88da9afe6d014007dbffe1176214b`, head `1820b39a0039c32716e6f9607d611d39b67dfe60`, model `ubiquity/deepseek-flash` from the local Codex configuration. Both refs were fetched. The native Codex 0.171.0 executable ran `codex review --base origin/claude/cpp-gateway-port -c 'sandbox_mode="read-only"' -c 'shell_environment_policy.inherit="none"' -c 'shell_environment_policy.set={PATH="/usr/bin:/bin"}'`.
+- An earlier attempt at head `a43b78c05436945414c6ee47c68834eb04cf6394` reached its 540-second deadline without a final review. The following findings are from the completed review at `1820b39a`.
+
+> [P2] Reject imported tokens inside the follower refresh window
+>
+> The import accepts a replacement whenever its JWT expires after the current instant, but follower inference calls `auth::needsRefresh` before every attempt and `getValidAuth` then throws `CodexAuthFollowerStaleError` for any token within two minutes of expiry (`src/codex/auth.cpp:518-522`, `src/codex/auth_refresh.cpp:604-606`). An import can therefore report success and write the pool while that account is immediately unusable. Require the replacement to outlive the refresh window, or let follower mode use still-valid tokens until actual expiry. This only affects imports of tokens nearing expiry.
+
+The import now checks `auth::needsRefresh` before probing and again inside the write transaction. A regression case supplies a valid-looking token with one minute left and verifies refusal before the usage request and an unchanged destination database.
+
+> [P3] Correct the auth import test path in PORT-MANIFEST
+>
+> This is the only `tests` entry in `PORT-MANIFEST.json` using a repository-root path; the manifest's direct-test paths are relative to `cpp/gateway` (`tests/...`), as `cpp/gateway/PORTING.md:9` describes. A consumer looking up the direct test will not find it, so use `tests/codex_auth_follower_import_test.cpp`.
+
+The registry now points to `tests/codex_auth_follower_import_test.cpp`.

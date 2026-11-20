@@ -19,5 +19,5 @@
      --import-codex-auth-from /absolute/path/to/leader-snapshot
    ```
 
-   The command imports newer credentials for matching account IDs after an account-bound, read-only Codex usage check. It preserves follower-only accounts, slot order, quotas, API keys and other KV records. It prints an account count. A rejected or expired replacement aborts the update. After success, restart the follower with the switch still set and recheck its health.
+   The command imports newer credentials for matching account IDs after an account-bound, read-only Codex usage check. It preserves follower-only accounts, slot order, quotas, API keys and other KV records. It prints an account count. A replacement that the usage check rejects or that already needs renewal aborts the update. After success, restart the follower with the switch still set and recheck its health.
 5. **Remove `UOS_GATEWAY_UPSTREAM_AUTH_FOLLOWER` before the candidate becomes the only gateway.** First stop the leader and prepare the candidate with the latest authoritative state under the approved cutover procedure. Start the sole gateway with renewal enabled and run the approved health and authenticated inference checks.

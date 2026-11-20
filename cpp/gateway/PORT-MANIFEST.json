@@ -14,7 +14,7 @@
       "impl": "cpp/gateway/src/codex/auth_import.cpp",
       "loc": 0,
       "ported": true,
-      "tests": ["cpp/gateway/tests/codex_auth_follower_import_test.cpp"]
+      "tests": ["tests/codex_auth_follower_import_test.cpp"]
     },
     "cpp/gateway/src/provider/gemini.cpp": {
       "deps": [],

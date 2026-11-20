@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <limits>
 #include <utility>
+#include <vector>
 
 namespace uos::codex::auth_import {
   namespace {
@@ -57,7 +58,8 @@ namespace uos::codex::auth_import {
       return readPool(database);
     }
 
-    void writePool(const std::string& path, std::int64_t expectedVersion, const CodexAuthPoolState& pool, double earliestExpiry) {
+    void writePool(const std::string& path, std::int64_t expectedVersion, const CodexAuthPoolState& pool,
+                   const std::vector<const CodexAuthState*>& adopted) {
       const auto encoded = rt::kvJscSerialize(rt::KvValue(json::value_from(pool)));
       if (encoded.size() > 65'536) throw rt::JsError("Imported Codex auth pool exceeds the KV value limit.");
       const sqlite::Database database(path, {.readwrite = true, .safeIntegers = true});
@@ -67,7 +69,8 @@ namespace uos::codex::auth_import {
       // transaction only updates the pool and advances the normal KV revision.
       database.transaction([&] {
         if (readPool(database).version != expectedVersion) throw rt::JsError("Follower auth pool changed during validation.");
-        if (earliestExpiry <= rt::dateNow()) throw rt::JsError("A Codex access token expired during validation.");
+        if (std::any_of(adopted.begin(), adopted.end(), [](const CodexAuthState* account) { return auth::needsRefresh(*account); }))
+          throw rt::JsError("A leader Codex access token began to need renewal during validation.");
         const auto revision = database.query("UPDATE data_version SET version = version + 1 WHERE k = 0 AND version >= ? AND version < ? RETURNING version")
           .get(expectedVersion, std::numeric_limits<std::int64_t>::max());
         if (!revision) throw rt::JsError("Follower KV revision is incompatible.");
@@ -103,8 +106,7 @@ namespace uos::codex::auth_import {
     const auto destination = readStoppedPool(destinationPath);
     CodexAuthPoolState result = destination.pool;
     bool matched = false;
-    std::size_t adopted = 0;
-    double earliestExpiry = std::numeric_limits<double>::infinity();
+    std::vector<const CodexAuthState*> adopted;
     for (const auto& incoming : source.pool.accounts) {
       const auto previous = std::find_if(destination.pool.accounts.begin(), destination.pool.accounts.end(),
         [&incoming](const CodexAuthState& account) { return account.account_id == incoming.account_id; });
@@ -112,8 +114,8 @@ namespace uos::codex::auth_import {
       matched = true;
       if (incoming.access_token == previous->access_token && incoming.refresh_token == previous->refresh_token) continue;
       const auto expiry = auth::getJwtExpMs(incoming.access_token);
-      if (!expiry || !rt::Number::isFinite(*expiry) || *expiry <= rt::dateNow())
-        throw rt::JsError("A leader Codex access token has an unreadable or expired lifetime.");
+      if (!expiry || !rt::Number::isFinite(*expiry)) throw rt::JsError("A leader Codex access token has an unreadable lifetime.");
+      if (auth::needsRefresh(incoming)) throw rt::JsError("A leader Codex access token already needs renewal.");
       const auto previousExpiry = auth::getJwtExpMs(previous->access_token);
       if (previousExpiry && (*expiry < *previousExpiry || (*expiry == *previousExpiry && incoming.updated_at_ms <= previous->updated_at_ms))) continue;
 
@@ -134,11 +136,10 @@ namespace uos::codex::auth_import {
       const auto next = auth::upsertCodexAuthAccount(result, incoming);
       if (!next) throw rt::JsError("The follower cannot represent the imported Codex auth pool.");
       result = *next;
-      earliestExpiry = std::min(earliestExpiry, *expiry);
-      ++adopted;
+      adopted.push_back(&incoming);
     }
     if (!matched) throw rt::JsError("The leader and follower Codex pools have no matching accounts.");
-    if (adopted != 0) writePool(destinationPath, destination.version, result, earliestExpiry);
-    co_return adopted;
+    if (!adopted.empty()) writePool(destinationPath, destination.version, result, adopted);
+    co_return adopted.size();
   }
 }
