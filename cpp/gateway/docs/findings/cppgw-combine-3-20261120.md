@@ -88,3 +88,22 @@ Evidence is under `/tmp/portable-verify`; the verifier exited 0.
 | `tests/gemini_subscription_test.cpp` | 27/27 |
 
 The driver ran each test in a fresh network/mount/pid namespace, with a fresh home and temp directory and the credential-free environment.
+
+
+## Committed-diff review
+
+Base `origin/claude/cpp-gateway-port` (`0c545781`), head `83371c33`, model `gpt-6.2-sol`, exit 0.
+
+```sh
+timeout -k 5s 600s codex review --base origin/claude/cpp-gateway-port \
+  -c 'model="gpt-6.2-sol"' -c 'review_model="gpt-6.2-sol"' \
+  -c 'sandbox_mode="read-only"' -c 'shell_environment_policy.inherit="core"'
+```
+
+The complete result contained one finding:
+
+> [P2] Keep transient SSE throttling distinct from quota exhaustion — `cpp/gateway/src/codex/index.cpp:88-89`
+>
+> When Codex sends a generic `rate_limit_exceeded` or `too_many_requests` event with a retry hint, the stream classifier assigns it status 429. Passing that synthetic response to `recordCodexResponseHealth` writes a durable `quota_exhausted` observation, so an account that was briefly throttled can appear exhausted in provider health, even if the next attempt succeeds and leaves a false `last_429_at_ms`. Keep the retry behavior, but record exhaustion only when the event supplies authoritative quota evidence, consistent with AGENTS.md:14.
+
+This is a stream-retry health-classification nuance rather than a merge or cache regression. It is recorded for a focused follow-up so this delivery keeps the reviewed branch's retry and settlement behavior unchanged. The combined release tests, including the 32 stream-retry cases and the loopback routing case, pass.
