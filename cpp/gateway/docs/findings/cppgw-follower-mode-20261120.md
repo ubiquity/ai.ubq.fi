@@ -56,3 +56,11 @@ The import now checks `auth::needsRefresh` before probing and again inside the w
 > This is the only `tests` entry in `PORT-MANIFEST.json` using a repository-root path; the manifest's direct-test paths are relative to `cpp/gateway` (`tests/...`), as `cpp/gateway/PORTING.md:9` describes. A consumer looking up the direct test will not find it, so use `tests/codex_auth_follower_import_test.cpp`.
 
 The registry now points to `tests/codex_auth_follower_import_test.cpp`.
+
+The same model completed `codex review --commit 3a36e11f338c74d10dd52db872591ee0e594c7a8` against parent `1820b39a0039c32716e6f9607d611d39b67dfe60` with the same configuration flags.
+
+> Delay renewal-window rejection until after token replacement is selected
+>
+> `auth::needsRefresh(incoming)` runs before the `previousExpiry` comparison, so a leader token already inside the two-minute renewal window aborts the entire import even when that token is older or shorter-lived than the follower's current credential and would be skipped on the next line. This only affects sources containing a near-expiry token that is not selected for adoption, but it contradicts the documented behavior that a rejected replacement aborts the update (`cpp/gateway/docs/CUTOVER.md:22`) and can block otherwise valid imports. Move the freshness check after the newer-token comparison, or perform it only for credentials added to `adopted`; the new regression test uses an expired destination token and does not cover this case.
+
+The import selects newer candidates before checking their renewal window. The mixed-pool regression checks that a newer account is imported while an older source credential is skipped and the follower's fresher credential is retained.

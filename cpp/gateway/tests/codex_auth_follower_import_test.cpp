@@ -171,3 +171,23 @@ ASYNC_TEST("stopped-state auth import rejects a bearer already in the follower r
   EXPECT_EQ(fixture.probes, 0);
   EXPECT_EQ(fixture.otherCalls, 0);
 }
+
+ASYNC_TEST("an older source credential inside the renewal window does not block another account's import") {
+  Fixture fixture;
+  const auto older = credential("account-b", "older-b", fixture.now - 1, 60'000);
+  auto writeFollower = seed(fixture.destination, {{fixture.oldA, fixture.oldB}, fixture.now}, "follower data");
+  co_await std::move(writeFollower);
+  auto writeLeader = seed(fixture.source, {{fixture.newA, older}, fixture.now}, "leader data");
+  co_await std::move(writeLeader);
+
+  EXPECT_EQ(co_await fixture.run(), 1U);
+  EXPECT_EQ(fixture.probes, 1);
+  EXPECT_EQ(fixture.otherCalls, 0);
+  const auto db = checkpoint(fixture.destination);
+  const auto stored = db.query("SELECT v FROM kv WHERE k = ?").get(rt::packKey(auth::CODEX_AUTH_POOL_KV_KEY));
+  ASSERT(stored);
+  const auto value = rt::kvJscDeserialize(std::get<sqlite::Bytes>(*stored->get("v")));
+  const auto pool = auth::parseCodexAuthPool(rt::storedJsonView(value));
+  ASSERT(pool);
+  EXPECT_EQ(pool->accounts, (std::vector<CodexAuthState>{fixture.newA, fixture.oldB}));
+}

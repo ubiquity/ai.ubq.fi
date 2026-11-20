@@ -115,9 +115,9 @@ namespace uos::codex::auth_import {
       if (incoming.access_token == previous->access_token && incoming.refresh_token == previous->refresh_token) continue;
       const auto expiry = auth::getJwtExpMs(incoming.access_token);
       if (!expiry || !rt::Number::isFinite(*expiry)) throw rt::JsError("A leader Codex access token has an unreadable lifetime.");
-      if (auth::needsRefresh(incoming)) throw rt::JsError("A leader Codex access token already needs renewal.");
       const auto previousExpiry = auth::getJwtExpMs(previous->access_token);
       if (previousExpiry && (*expiry < *previousExpiry || (*expiry == *previousExpiry && incoming.updated_at_ms <= previous->updated_at_ms))) continue;
+      if (auth::needsRefresh(incoming)) throw rt::JsError("A leader Codex access token already needs renewal.");
 
       auto probing = probeAccessToken(incoming);
       const auto probe = co_await std::move(probing);
