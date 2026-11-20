@@ -52,6 +52,7 @@ namespace {
     const std::string rotatedAccess = accessToken(now + 1'200'000);
     bool rejectFirst = false;
     bool withSibling = true;
+    bool failSiblingStreamOnce = false;
     int tokenCalls = 0;
     std::vector<std::string> upstreamAccounts;
     rt::console::Capture logs{{rt::console::Method::info}};
@@ -103,6 +104,12 @@ namespace {
       upstreamAccounts.push_back(account);
       if (rejectFirst && account == first.account_id && request.headers().get("Authorization") == "Bearer " + first.access_token)
         co_return rt::Response::json(json::object{{"error", "synthetic bearer rejected"}}, {.status = 401});
+      if (account == sibling.account_id && std::exchange(failSiblingStreamOnce, false)) {
+        co_return rt::Response(
+          R"(data: {"type":"response.created","response":{"id":"resp_abandoned_follower"}})" "\n\n"
+          R"(data: {"type":"error","code":"server_error","message":"synthetic stream failure","param":null})" "\n\n",
+          {.headers = rt::Headers{{"Content-Type", "text/event-stream"}}});
+      }
       const json::object completed{
         {"id", "resp_follower"}, {"object", "response"}, {"created_at", now / 1000}, {"status", "completed"}, {"model", MODEL},
         {"output", json::array{json::object{{"type", "message"}, {"role", "assistant"}, {"id", "msg_follower"}, {"status", "completed"},
@@ -219,6 +226,44 @@ ASYNC_TEST("follower skips an expired bearer and serves on the sibling without c
 ASYNC_TEST("follower skips refresh after a 401 and serves on the sibling") {
   auto checking = checkInference("1", false, true, true);
   co_await std::move(checking);
+}
+
+ASYNC_TEST("follower failover and pre-output stream retry share one terminal record") {
+  rt::env::ScopedOverride follower{{std::string(uos::upstream_auth::FOLLOWER_ENV), "1"}};
+  Fixture fixture;
+  fixture.rejectFirst = true;
+  fixture.failSiblingStreamOnce = true;
+  rt::Reason failure;
+  try {
+    co_await fixture.start();
+    const auto before = co_await fixture.store->get(auth::CODEX_AUTH_POOL_KV_KEY);
+    const json::object payload{{"model", MODEL}, {"input", "synthetic follower retry"}, {"stream", true}};
+    auto requesting = fixture.request("/v1/responses", "POST", rt::jsonStringify(payload));
+    const auto response = co_await std::move(requesting);
+    const auto body = co_await response.text();
+    EXPECT_EQ(response.status(), 200);
+    EXPECT(body.find("resp_abandoned_follower") == std::string::npos);
+    EXPECT(body.find("response.completed") != std::string::npos);
+    const std::vector expected{fixture.first.account_id, fixture.sibling.account_id, fixture.sibling.account_id};
+    EXPECT_EQ(fixture.upstreamAccounts, expected);
+    EXPECT_EQ(fixture.tokenCalls, 0);
+    const auto after = co_await fixture.store->get(auth::CODEX_AUTH_POOL_KV_KEY);
+    EXPECT_EQ(after, before);
+  } catch (...) { failure = std::current_exception(); }
+  co_await fixture.stop();
+  if (failure) std::rethrow_exception(failure);
+
+  std::vector<json::value> terminals;
+  for (const auto& call : fixture.logs.calls()) {
+    if (call.args.size() > 1 && call.args[0] == "[ai.ubq.fi] request_terminal") terminals.push_back(rt::jsonParse(call.args[1].string()));
+  }
+  ASSERT_EQ(terminals.size(), 1U);
+  EXPECT_EQ(rt::getString(terminals.front(), "upstream_auth_reason"), uos::upstream_auth::FOLLOWER_STALE);
+  EXPECT_EQ(rt::getNumber(terminals.front(), "in_stream_retries"), 1);
+  const auto* failures = rt::getArray(terminals.front(), "upstream_failure_events");
+  ASSERT(failures);
+  ASSERT_EQ(failures->size(), 1U);
+  EXPECT_EQ(rt::getString(failures->front(), "code"), "server_error");
 }
 
 ASYNC_TEST("follower keeps the ordinary client error when the only bearer is stale") {

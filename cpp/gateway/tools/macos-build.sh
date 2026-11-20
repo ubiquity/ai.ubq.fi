@@ -44,6 +44,7 @@ if args.release_commit and not re.fullmatch(r"[0-9a-f]{40}", args.release_commit
 gateway = Path(os.environ["UOS_MACOS_GATEWAY"]).resolve()
 repo = gateway.parent.parent
 sys.path.insert(0, str(gateway / "tools"))
+import compiler_cache
 import vendor_sources
 
 vendors = tuple(vendor_sources.selected(gateway))
@@ -92,7 +93,13 @@ compiler = shutil.which(os.environ["CXX"]) if os.environ.get("CXX") else capture
 c_compiler = shutil.which(os.environ["CC"]) if os.environ.get("CC") else capture(["xcrun", "--find", "clang"])
 if not compiler or not c_compiler:
     parser.error("CC and CXX must name available compilers")
+compiler, c_compiler = map(os.path.abspath, (compiler, c_compiler))
 env["SDKROOT"] = capture(["xcrun", "--show-sdk-path"])
+try:
+    launcher = compiler_cache.launcher()
+except ValueError as error:
+    parser.error(str(error))
+checkout_flags = [f"-fdebug-prefix-map={repo}=."]
 packages = ["openssl", "zlib", "libbrotlidec", "libzstd", "icu-uc", "icu-i18n"]
 cflags = shlex.split(capture(["pkg-config", "--cflags-only-other", *packages]))
 for include in shlex.split(capture(["pkg-config", "--cflags-only-I", *packages])):
@@ -105,15 +112,18 @@ flags = [compiler, "-std=c++20", "-stdlib=libc++", "-O0", "-g0", "-Wall", "-Wext
          "--system-header-prefix=third_party/",
          "-isystem", str(sqlite / "include"), "-pthread", *cflags]
 flags.append("-DUOS_GATEWAY_NATIVE_LIBRARIES")
-if args.release_commit:
-    flags.append('-DUOS_PACKAGE_GIT_COMMIT="' + args.release_commit + '"')
+release_identity_sources = {Path("src/release.cpp"), Path("tests/release_identity_test.cpp"), Path("tests/health_test.cpp")}
 vendor_c_flags = [c_compiler, "-std=c11", "-O0", "-g0"]
 vendor_cxx_flags = vendor_sources.vendor_flags(flags)
 libs += [str(sqlite / "lib/libsqlite3.dylib"), "-L" + str(prefixes["boost"] / "lib"), "-lboost_json", "-lboost_container"]
 # dyld fallback search is explicit and credential-free; native links use the exact dylib above.
 env["DYLD_LIBRARY_PATH"] = ":".join(str(p / "lib") for p in prefixes.values())
+build_env = compiler_cache.environment(env, repo, "macos") if launcher else env
+test_build_env = (compiler_cache.environment(env, repo, "macos-tests-" + hashlib.sha256(str(repo).encode()).hexdigest())
+                  if launcher else env)
 provenance = dict(source_identity=source_identity, platform=platform.platform(), compiler=capture([compiler, "--version"]),
                   c_compiler=capture([c_compiler, "--version"]),
+                  compiler_launcher=launcher,
                   sdk=env["SDKROOT"], dependencies=capture([brew, "list", "--versions", *prefixes]),
                   package_versions=capture(["pkg-config", "--modversion", *packages]),
                   flags=flags, libraries=libs, inputs=inputs, arguments=vars(args))
@@ -122,12 +132,12 @@ provenance["dependency_artifacts"] = {str(p.resolve()): hashlib.sha256(p.read_by
 (run / "provenance.json").write_text(json.dumps(provenance, indent=2, default=str) + "\n")
 print("output:", build, "run:", run.name, flush=True)
 
-def invoke(command, log, timeout=300):
+def invoke(command, log, timeout=300, *, environment=env, cwd=None):
     start = time.monotonic()
     with log.open("w") as output:
         output.write(shlex.join(list(map(str, command))) + "\n")
         output.flush()
-        process = subprocess.Popen(command, stdout=output, stderr=subprocess.STDOUT, env=env, start_new_session=True)
+        process = subprocess.Popen(command, stdout=output, stderr=subprocess.STDOUT, env=environment, cwd=cwd, start_new_session=True)
         try:
             status = process.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
@@ -143,6 +153,8 @@ def invoke(command, log, timeout=300):
 def digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
+compilers = {command: digest(command) for command in (compiler, c_compiler)}
+
 def obj(source):
     return build / "obj" / source.with_suffix(".o")
 
@@ -150,29 +162,44 @@ def compile_one(source, selected_flags=None):
     target = obj(source)
     target.parent.mkdir(parents=True, exist_ok=True)
     source_flags = flags if selected_flags is None else selected_flags
+    if args.release_commit and source in release_identity_sources:
+        # Only the identity consumers vary by package commit; all other
+        # translation units keep the same compiler-cache key.
+        source_flags = source_flags + ['-DUOS_PACKAGE_GIT_COMMIT="' + args.release_commit + '"']
     if str(source) in simdjson_sources:
         source_flags = source_flags + vendor_sources.simdjson_flags(gateway)
     if args.legacy_loaders and str(source) in {"src/rt/gzip.cpp", "src/rt/sqlite.cpp", "src/rt/fetch_transport_codec.cpp"}:
         source_flags = [f for f in flags if f != "-DUOS_GATEWAY_NATIVE_LIBRARIES"]
     for library in vendor_sources.required(vendors, [source]):
         source_flags = source_flags + vendor_sources.include_flags(library, gateway)
-    command = source_flags + ["-MMD", "-MF", str(target.with_suffix(".d")), "-c", str(gateway / source), "-o", str(target)]
+    path_flags = checkout_flags
+    compile_env = build_env
+    if source.parts[0] == "tests":
+        # ccache makes checkout paths relative. Keep test fixture lookups bound
+        # to the actual checkout used by the Darwin sandbox.
+        path_flags = [*checkout_flags, f"-fmacro-prefix-map={gateway.relative_to(repo)}={gateway}"]
+        compile_env = test_build_env
+    command = launcher + source_flags + path_flags + ["-MMD", "-MF", str(target.with_suffix(".d")),
+                                                      "-c", str(gateway / source), "-o", str(target)]
+    compiler_hash = compilers[source_flags[0]]
     receipt = target.with_suffix(".json")
     previous = json.loads(receipt.read_text()) if receipt.exists() else {}
-    valid = previous.get("status") == 0 and target.exists() and previous.get("command") == command
+    valid = (previous.get("status") == 0 and target.exists() and previous.get("command") == command
+             and previous.get("compiler_sha256") == compiler_hash)
     if valid:
         valid = all(Path(p).is_file() and digest(p) == h for p, h in previous["inputs"].items())
     if valid:
         return dict(previous, cached=True)
-    result = invoke(command, target.with_suffix(".log"))
+    result = invoke(command, target.with_suffix(".log"), environment=compile_env, cwd=repo)
     result["source"] = str(source)
+    result["compiler_sha256"] = compiler_hash
     if result["status"] == 0:
         deps = shlex.split(target.with_suffix(".d").read_text().replace("\\\n", " ").split(":", 1)[1])
         # -MMD omits system headers, including nested headers from the registry.
         for library in vendors:
             if str(source) in library.consumers or str(source) in library.sources:
                 deps.extend(str(gateway / header) for header in library.headers)
-        result["inputs"] = {p: digest(p) for p in deps}
+        result["inputs"] = {str(repo / p): digest(repo / p) for p in deps}
     receipt.write_text(json.dumps(result, indent=2) + "\n")
     return result
 

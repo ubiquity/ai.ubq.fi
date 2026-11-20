@@ -25,9 +25,11 @@
 #include "uos/rt/prelude.hpp"
 #include "uos/rt/test.hpp"
 #include "src/rt/regex_internal.hpp"
+#include "tests/helpers/advancing_regex_clock.hpp"
 #include "third_party/quickjs-libregexp/libregexp.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <functional>
 #include <stdexcept>
@@ -869,35 +871,88 @@ TEST("regex pattern and subject byte limits admit their exact boundaries") {
 
 TEST("execution budget rejects an unfinished match") {
   const rt::Regex pattern("^(?:a|aa)*b$");
-  EXPECT_THROWS_MESSAGE(pattern.test(std::string(52, 'a')), rt::RangeError, "regular expression execution limit exceeded");
+  const std::string subject(52, 'a');
+  const auto expected = static_cast<long>(rt::limits::kRegexWorkBudget.pollsFor(subject.size()));
+  for (const auto step : {std::chrono::milliseconds(0), std::chrono::milliseconds(20)}) {
+    uos::test::AdvancingRegexClock clock(step);
+    EXPECT_THROWS_MESSAGE(pattern.test(subject), rt::RangeError, "regular expression execution limit exceeded");
+    // The clock is read at matcher construction, at search entry, and for
+    // each interrupt except the last one, which runs out of work first.
+    EXPECT_EQ(clock.reads() - 1, expected);
+  }
   EXPECT(pattern.test("aab"));
 }
 
-TEST("regexp engine hooks enforce the shared deadline and retain the allocation ceiling") {
+TEST("regexp engine hooks enforce the work budget and retain the allocation ceiling") {
   using Limits = rt::regex_detail::Limits;
   const auto before = Limits::Clock::now();
-  Limits budget;
+  Limits budget(rt::limits::kRegexMatchBackstop, 2);
   const auto after = Limits::Clock::now();
-  EXPECT(budget.deadline >= before + rt::limits::kRegexDeadline);
-  EXPECT(budget.deadline <= after + rt::limits::kRegexDeadline);
+  EXPECT(budget.deadline >= before + rt::limits::kRegexMatchBackstop);
+  EXPECT(budget.deadline <= after + rt::limits::kRegexMatchBackstop);
   const auto compileStart = Limits::Clock::now();
-  const Limits compilation(rt::limits::kRegexCompileDeadline);
+  const Limits compilation(rt::limits::kRegexCompileBackstop);
   const auto compileEnd = Limits::Clock::now();
-  EXPECT(compilation.deadline >= compileStart + rt::limits::kRegexCompileDeadline);
-  EXPECT(compilation.deadline <= compileEnd + rt::limits::kRegexCompileDeadline);
+  EXPECT(compilation.deadline >= compileStart + rt::limits::kRegexCompileBackstop);
+  EXPECT(compilation.deadline <= compileEnd + rt::limits::kRegexCompileBackstop);
   const rt::Regex credentialKey(R"re(\b(?=\w*(?:key|token|secret|password))(?=(\w*))\1(?:[.-]\w*){0,16}(["']?)\s*(?=[:=]))re", "gi");
-  EXPECT_EQ(credentialKey.program().matchDeadline.count(), (rt::limits::kRegexDeadline * 5).count());
-  EXPECT_EQ(rt::Regex("key", "gi").program().matchDeadline.count(), rt::limits::kRegexDeadline.count());
+  constexpr auto bytes = rt::limits::kRegexSubjectBytes;
+  EXPECT_EQ(credentialKey.program().workBudget.pollsFor(bytes), rt::limits::kSupervisorRegexWorkBudget.pollsFor(bytes));
+  EXPECT_EQ(rt::Regex("key", "gi").program().workBudget.pollsFor(bytes), rt::limits::kRegexWorkBudget.pollsFor(bytes));
   budget.deadline = Limits::Clock::time_point::max();
   EXPECT_EQ(lre_check_timeout(&budget), 0);
-  budget.deadline = Limits::Clock::now();
   EXPECT_EQ(lre_check_timeout(&budget), 1);
+  EXPECT_EQ(lre_check_timeout(&budget), 1);
+  EXPECT(!budget.backstopExceeded);
+  EXPECT_EQ(budget.pollsRemaining, 0u);
+  Limits wall(rt::limits::kRegexMatchBackstop, 2);
+  wall.deadline = Limits::Clock::now();
+  EXPECT_EQ(lre_check_timeout(&wall), 1);
+  EXPECT(wall.backstopExceeded);
 
   constexpr std::size_t maxAllocation = 72 * 1024 * 1024;
   const std::unique_ptr<void, decltype(&std::free)> memory(lre_realloc(&budget, nullptr, maxAllocation), std::free);
   EXPECT(memory);
   const std::unique_ptr<void, decltype(&std::free)> over(lre_realloc(&budget, nullptr, maxAllocation + 1), std::free);
   EXPECT(!over);
+}
+
+TEST("regex work within the budget survives the former time limits") {
+  using namespace std::chrono_literals;
+  uos::test::AdvancingRegexClock slow(20ms);
+  const std::string literal(rt::limits::kRegexPatternBytes, 'a');
+  EXPECT(rt::Regex(literal).test(literal));
+
+  const rt::Regex characterClass("^[ab]*$");
+  const std::string subject(rt::limits::kRegexSubjectBytes, 'a');
+  const auto matchStarted = slow.elapsed();
+  EXPECT(characterClass.test(subject));
+  EXPECT(slow.elapsed() - matchStarted > 250ms);
+
+  const rt::Regex dataPrefix("^data:", "iu");
+  const std::string imageUrl = "https://example.com/" + std::string(5 * 1024 * 1024 + 1, 'a');
+  const auto imageStarted = slow.elapsed();
+  EXPECT(!dataPrefix.test(imageUrl));
+  EXPECT(slow.elapsed() - imageStarted > 1800ms);
+
+  const rt::Regex boundary(R"(\r\n\r\n|\n\n|\r\r)");
+  const std::string frame = std::string(4 * 1024 * 1024, 'a') + "\r\n\r\n";
+  const auto frameStarted = slow.elapsed();
+  EXPECT_EQ(rt::search(frame, boundary), 4 * 1024 * 1024);
+  EXPECT(slow.elapsed() - frameStarted > 1800ms);
+}
+
+TEST("regex wall-clock backstops have distinct errors") {
+  const rt::Regex characterClass("^[ab]*$");
+  const std::string subject(rt::limits::kRegexSubjectBytes, 'a');
+  {
+    uos::test::AdvancingRegexClock expired(rt::limits::kRegexMatchBackstop / 2);
+    EXPECT_THROWS_MESSAGE(characterClass.test(subject), rt::RangeError, "regular expression execution wall-clock backstop exceeded");
+  }
+  {
+    uos::test::AdvancingRegexClock expired(rt::limits::kRegexCompileBackstop);
+    EXPECT_THROWS_MESSAGE(rt::Regex("a"), rt::RangeError, "regular expression compilation wall-clock backstop exceeded");
+  }
 }
 
 TEST("Unicode sets, named captures, and UTF-16 indices") {
@@ -942,6 +997,7 @@ TEST("the fixed image data URL pattern retains the encoded image allowance") {
   const rt::Regex image(R"(^data:([^;,]+);base64,([a-z0-9+/]*={0,2})$)", "iu");
   std::string subject = "DATA:IMAGE/PNG;BASE64,";
   subject.resize(rt::limits::kImageRegexSubjectBytes, 'A');
+  uos::test::AdvancingRegexClock slow(std::chrono::seconds(2));
   EXPECT(image.test(subject));
   subject.push_back('A');
   EXPECT_THROWS_MESSAGE(image.test(subject), rt::RangeError, "regular expression subject is too large");
@@ -951,6 +1007,7 @@ TEST("the fixed stored base64 pattern retains its encoded byte allowance and pad
   const rt::Regex standard(R"(^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$)");
   std::string subject(rt::limits::kBase64InputBytes, 'A');
   subject.back() = '=';
+  uos::test::AdvancingRegexClock slow(std::chrono::seconds(2));
   EXPECT(standard.test(subject));
   subject.back() = '-';
   EXPECT(!standard.test(subject));
@@ -963,6 +1020,7 @@ TEST("the base64 alphabet replacements admit encoded input at the byte limit") {
   std::string input(rt::limits::kBase64InputBytes, 'A');
   input.back() = '-';
   dash.lastIndex = 5;
+  uos::test::AdvancingRegexClock slow(std::chrono::seconds(2));
   const auto translated = rt::replace(input, dash, "+");
   EXPECT_EQ(translated.size(), input.size());
   EXPECT_EQ(translated.back(), '+');

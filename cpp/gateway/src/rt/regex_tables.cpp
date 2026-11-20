@@ -34,15 +34,14 @@ namespace uos::rt::regex_detail {
 }
 
 extern "C" bool lre_check_stack_overflow(void* opaque, std::size_t size) {
-  const auto& limits = *static_cast<uos::rt::regex_detail::Limits*>(opaque);
+  auto& limits = *static_cast<uos::rt::regex_detail::Limits*>(opaque);
   const auto frame = reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0));
-  return frame <= limits.stackFloor || size >= frame - limits.stackFloor ||
-         uos::rt::regex_detail::Limits::Clock::now() >= limits.deadline;
+  return frame <= limits.stackFloor || size >= frame - limits.stackFloor || limits.checkBackstop();
 }
 
 extern "C" int lre_check_timeout(void* opaque) {
   auto& limits = *static_cast<uos::rt::regex_detail::Limits*>(opaque);
-  return limits.pollsRemaining == 0 || --limits.pollsRemaining == 0 || uos::rt::regex_detail::Limits::Clock::now() >= limits.deadline;
+  return limits.pollsRemaining == 0 || --limits.pollsRemaining == 0 || limits.checkBackstop();
 }
 
 extern "C" void* lre_realloc(void*, void* ptr, std::size_t size) {

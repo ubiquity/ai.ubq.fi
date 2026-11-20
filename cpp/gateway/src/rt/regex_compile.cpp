@@ -84,6 +84,8 @@ namespace uos::rt::regex_detail {
       std::array<char, 128> error{};
       int size = 0;
       Bytecode bytecode(lre_compile(&size, error.data(), static_cast<int>(error.size()), input.c_str(), length, flags, &limits));
+      // The compiler has stack probes and no periodic interrupt hook.
+      if (limits.backstopExceeded || limits.checkBackstop()) throw RangeError("regular expression compilation wall-clock backstop exceeded");
       if (bytecode) return bytecode;
       const std::string_view message(error.data());
       if (message == "stack overflow" || message == "out of memory") throw RangeError(std::string(message));
@@ -110,18 +112,25 @@ namespace uos::rt::regex_detail {
 
     std::size_t subjectBudget(Program& program, std::string_view pattern, int flags) {
       if (flags == (LRE_FLAG_IGNORECASE | LRE_FLAG_UNICODE) && (pattern == "^data:" || pattern == "^https?://" || pattern == imageDataUrl)) {
+        program.workBudget = limits::kImageRegexWorkBudget;
         return limits::kImageRegexSubjectBytes;
       }
       if (flags == LRE_FLAG_GLOBAL && (pattern == R"([A-Za-z]+|\d+|[^\sA-Za-z\d])" || pattern == R"(\s+)")) {
+        program.workBudget = limits::kCompactionRegexWorkBudget;
         return limits::kCompactionRegexSubjectBytes;
       }
       if (flags == 0 && pattern == standardBase64) {
+        program.workBudget = limits::kBase64RegexWorkBudget;
         program.standardBase64 = true;
         return limits::kBase64InputBytes;
       }
       if (flags == 0 && (pattern == R"(\r?\n\r?\n)" || pattern == R"(\r\n\r\n|\n\n|\r\r)" || pattern == R"(\r\n|\r|\n)" || pattern == R"(\r?\n)")) {
+        program.workBudget = limits::kSseRegexWorkBudget;
         program.sseFraming = true;
         return limits::kSseRegexSubjectBytes;
+      }
+      if (flags == (LRE_FLAG_GLOBAL | LRE_FLAG_IGNORECASE) && pattern == credentialKey) {
+        program.workBudget = limits::kSupervisorRegexWorkBudget;
       }
       return limits::kRegexSubjectBytes;
     }
@@ -132,8 +141,6 @@ namespace uos::rt::regex_detail {
     auto program = std::make_shared<Program>();
     int mask = parseFlags(*program, flags);
     program->subjectBytes = subjectBudget(*program, pattern, mask);
-    // The fixed supervisor scan took 593 ms in isolation and exceeded 750 ms in the parallel sanitizer shard.
-    if (mask == (LRE_FLAG_GLOBAL | LRE_FLAG_IGNORECASE) && pattern == credentialKey) program->matchDeadline = limits::kRegexDeadline * 5;
     program->source = escapeSource(pattern, program->unicodeSets);
     // The image data URL validator accepts tens of MiB of encoded data. Fixed-size
     // blocks avoid a backtracking entry per byte, and the lookahead commits to the
@@ -150,7 +157,7 @@ namespace uos::rt::regex_detail {
     const std::size_t length = input.size();
     // The compiler and name parser can look ahead while decoding a UTF-8 character.
     input.resize(length + 8, '\0');
-    Limits budget(limits::kRegexCompileDeadline);
+    Limits budget(limits::kRegexCompileBackstop);
     budget.stackFloor = compileStackFloor(reinterpret_cast<std::uintptr_t>(__builtin_frame_address(0)));
     program->bytecode = compileBytecode(input, length, mask, budget);
     program->captureCount = static_cast<std::uint32_t>(lre_get_capture_count(program->bytecode.get()) - 1);

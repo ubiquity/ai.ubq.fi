@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import shlex
 import shutil
 import subprocess
 import sys
@@ -20,6 +21,7 @@ GATEWAY = Path(__file__).resolve().parents[2]
 ROOT = GATEWAY.parents[1]
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(GATEWAY / "tools"))
+import compiler_cache
 import vendor_sources
 
 SQLITE_VERSION = "3.54.0"
@@ -40,8 +42,8 @@ def capture(*command, env=None):
     return subprocess.check_output(command, cwd=ROOT, env=env, text=True).strip()
 
 
-def run(*command, env):
-    subprocess.run(command, cwd=ROOT, env=env, check=True)
+def run(*command, env, cwd=ROOT):
+    subprocess.run(command, cwd=cwd, env=env, check=True)
 
 
 def source_identity(env):
@@ -50,7 +52,7 @@ def source_identity(env):
     return capture("git", "show", "-s", "--format=%H%n%T%n%ct", "HEAD", env=env).splitlines()
 
 
-def prepare_sqlite(work, env):
+def prepare_sqlite(work, env, launcher, build_env):
     archive = work / "sqlite.zip"
     run("curl", "-fsSL", "--retry", "3", "--max-time", "120",
         f"https://www.sqlite.org/2026/{SQLITE_SOURCE}.zip", "-o", archive, env=env)
@@ -64,8 +66,9 @@ def prepare_sqlite(work, env):
         for target in (source, prefix / "include/sqlite3.h"):
             target.write_bytes(files.read(f"{SQLITE_SOURCE}/{target.name}"))
     obj = work / "sqlite3.o"
-    run("xcrun", "clang", "-O2", "-g0", "-fPIC", f"-ffile-prefix-map={work}=.", "-DSQLITE_THREADSAFE=1",
-        "-DSQLITE_DQS=3", "-DSQLITE_ENABLE_COLUMN_METADATA=1", "-c", source, "-o", obj, env=env)
+    cc = capture("xcrun", "--find", "clang", env=env)
+    run(*launcher, cc, "-O2", "-g0", "-fPIC", f"-ffile-prefix-map={work}=.", "-DSQLITE_THREADSAFE=1",
+        "-DSQLITE_DQS=3", "-DSQLITE_ENABLE_COLUMN_METADATA=1", "-c", source.name, "-o", obj, env=build_env, cwd=work)
     dylib = prefix / "lib/libsqlite3.dylib"
     run("xcrun", "clang", "-dynamiclib", "-Xlinker", "-install_name", "-Xlinker", dylib, obj, "-o", dylib, env=env)
     return prefix, obj
@@ -107,10 +110,16 @@ def build(work, output, jobs):
            "HOME": str(work / "home"), "TMPDIR": str(work / "tmp"),
            "HOMEBREW_NO_AUTO_UPDATE": "1", "HOMEBREW_NO_ANALYTICS": "1"}
     commit, tree, epoch = source_identity(env)
-    sqlite, sqlite_obj = prepare_sqlite(work, env)
+    launcher = compiler_cache.launcher()
+    build_env = compiler_cache.environment(env, ROOT, "macos") if launcher else env.copy()
+    if compiler_cache.is_ccache(launcher) and not build_env.get("CCACHE_DIR"):
+        build_env["CCACHE_DIR"] = str(Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "ccache")
+    build_env["SDKROOT"] = capture("xcrun", "--show-sdk-path", env=env)
+    sqlite, sqlite_obj = prepare_sqlite(work, env, launcher, build_env)
     build_root = work / "build"
     run("/bin/bash", GATEWAY / "tools/macos-build.sh", "--build-root", build_root, "--sqlite-prefix", sqlite,
-        "--jobs", str(jobs), "--suite", "rt", "--require-clean", "--release-commit", commit, env=env)
+        "--jobs", str(jobs), "--suite", "rt", "--require-clean", "--release-commit", commit,
+        env=dict(build_env, UOS_CI_COMPILER_LAUNCHER=shlex.join(launcher)))
     (receipt,) = (build_root / "runs").glob("*/provenance.json")
     profile = json.loads(receipt.read_text())
     identity = profile["source_identity"]
@@ -149,17 +158,26 @@ def build(work, output, jobs):
         shutil.copyfile(GATEWAY / "packaging" / f"{library.upper()}-LICENSE", licenses / library / "LICENSE")
 
     env["SDKROOT"] = profile["sdk"]
+    build_env["SDKROOT"] = profile["sdk"]
     flags = [*profile["flags"], f"-ffile-prefix-map={work}=."]
+    compile_flags = [*launcher, *flags, f"-fdebug-prefix-map={ROOT}=."]
     minimum_os = {}
     for name in EXECUTABLES:
         source = GATEWAY / "entrypoints" / (name.removeprefix("uos-") + ".cpp")
-        entry = (source,)
+        entry = work / (name + ".o")
+        objects = [entry]
+        definitions = []
         if name == "uos-gateway":
             gateway_entry = work / "gateway.o"
-            run(*flags, "-Dmain=uosGatewayMain", "-c", source, "-o", gateway_entry, env=env)
-            entry = (f'-DUOS_PACKAGE_GIT_COMMIT="{commit}"', GATEWAY / "packaging/macos/gateway-version.cpp", gateway_entry)
+            run(*compile_flags, "-Dmain=uosGatewayMain", "-c", source, "-o", gateway_entry, env=build_env)
+            source = GATEWAY / "packaging/macos/gateway-version.cpp"
+            definitions = [f'-DUOS_PACKAGE_GIT_COMMIT="{commit}"']
+            objects.append(gateway_entry)
+        run(*compile_flags, *definitions, "-c", source, "-o", entry, env=build_env)
+        startup = work / "startup.o"
+        run(*compile_flags, "-c", GATEWAY / "runtime/startup.cpp", "-o", startup, env=build_env)
         target = stage / "bin" / name
-        run(*flags, *entry, GATEWAY / "runtime/startup.cpp",
+        run(*flags, *objects, startup,
             "-Xlinker", "-force_load", "-Xlinker", build_root / "libuos_gateway.a", *static_libraries,
             "-Wl,-reproducible", "-Wl,-adhoc_codesign", "-o", target, env=env)
         if capture("xcrun", "lipo", "-archs", target, env=env) != "arm64":

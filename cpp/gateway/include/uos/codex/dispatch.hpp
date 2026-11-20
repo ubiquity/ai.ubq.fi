@@ -122,6 +122,19 @@ namespace uos::codex::dispatch {
     std::optional<banked_reset::CodexBankedResetTelemetry> telemetry{};
   };
 
+  struct CodexStreamRetry {
+    int status;
+    double retryAfterMs;
+  };
+
+  struct CodexStreamRetryHooks {
+    // Inspect the selected response after all wrappers have been applied. The
+    // caller retains its parsed stream until delivery or discard.
+    std::function<rt::Task<std::optional<CodexStreamRetry>>(rt::Response)> preflight;
+    std::function<rt::Task<void>()> discard;
+    std::function<void()> onRetry;
+  };
+
   // `type FetchCodexResponsesOptions` (exported through the type list). std::nullopt is null and
   // undefined alike for the `string | null` members.
   struct FetchCodexResponsesOptions {
@@ -148,6 +161,7 @@ namespace uos::codex::dispatch {
     std::optional<CodexBankedResetOptions> bankedReset{};
     /** Request-owned passive recorder; best effort, never required. */
     std::optional<::uos::sentinel::upstream_capture::SentinelUpstreamRecorder> sentinelUpstreamRecorder{};
+    std::optional<CodexStreamRetryHooks> streamRetry{};
     std::function<void()> onFollowerStale{};
   };
 

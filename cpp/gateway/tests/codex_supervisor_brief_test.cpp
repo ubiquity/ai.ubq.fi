@@ -96,6 +96,7 @@ namespace {
 }
 #include "uos/codex/supervisor_brief.hpp"
 
+#include "tests/helpers/advancing_regex_clock.hpp"
 #include "tests/helpers/supervisor_redaction_previous.hpp"
 #include "uos/codex/supervisor_config.hpp"
 #include "uos/codex/supervisor_log.hpp"
@@ -114,6 +115,7 @@ namespace {
 #include "uos/rt/text_codec.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -661,11 +663,15 @@ TEST("redactBriefText takes linear time on long runs of key words, dots, dashes 
   const std::vector<std::pair<std::string, int>> inputs{
     {"key", 70'000}, {"key.", 50'000}, {"a-key-", 35'000}, {"a_key:", 35'000}, {"tokens: [", 25'000}, {"api_key: 'x ", 20'000},
   };
+  uos::test::AdvancingRegexClock slow(std::chrono::milliseconds(5));
+  bool passedFormerDeadline = false;
   for (const auto& [unit, count] : inputs) {
     const std::string text = rt::repeat(unit, count);
+    const auto regexStarted = slow.elapsed();
     const double started = rt::performanceNow();
     (void)redactBriefText(text);
     const double elapsed = rt::performanceNow() - started;
+    passedFormerDeadline |= slow.elapsed() - regexStarted > std::chrono::milliseconds(1250);
     if (elapsed < 2'000) {
       EXPECT(elapsed < 2'000);
       continue;
@@ -677,6 +683,7 @@ TEST("redactBriefText takes linear time on long runs of key words, dots, dashes 
     std::fprintf(stderr, "    %s... (%zu characters) took %.0f ms; half the length took %.0f ms\n", text.substr(0, 12).c_str(), text.size(), elapsed, halfElapsed);
     EXPECT(elapsed <= 3 * halfElapsed + 100);
   }
+  EXPECT(passedFormerDeadline);
 }
 
 ASYNC_TEST("the brief's Cerebras payload carries no quoted-JSON or GitHub credential canaries") {

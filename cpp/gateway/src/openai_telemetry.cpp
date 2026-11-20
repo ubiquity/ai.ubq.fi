@@ -8,6 +8,7 @@
 #include "uos/responses_failover_stream.hpp"
 #include "uos/responses_stream.hpp"
 #include "uos/rt/clock.hpp"
+#include "uos/rt/console.hpp"
 #include "uos/rt/json.hpp"
 #include "uos/rt/number.hpp"
 #include "uos/rt/ordered.hpp"
@@ -19,11 +20,17 @@
 #include <array>
 #include <cstddef>
 #include <iterator>
+#include <mutex>
 #include <span>
 #include <string_view>
+#include <unordered_set>
 #include <utility>
 
 namespace uos::openai_telemetry {
+  namespace {
+    constexpr std::size_t MAX_UPSTREAM_FAILURE_EVENTS = 16;
+  }
+
   bool supportsReasoningProgressRelease(const UpstreamProvider& provider) {
     return provider == "chatgpt_codex" || provider == "surplus" || provider == "metered";
   }
@@ -292,6 +299,13 @@ namespace uos::openai_telemetry {
     std::vector<std::string> upstreamEventKinds;
     for (const std::shared_ptr<ResponseTelemetryState>& state : states) appendUnique(upstreamEventKinds, state->upstreamEventKinds);
     aggregate->upstreamEventKinds = std::move(upstreamEventKinds);
+    for (const auto& state : states) {
+      aggregate->inStreamRetries += state->inStreamRetries;
+      for (const auto& failure : state->upstreamFailureEvents) {
+        if (aggregate->upstreamFailureEvents.size() == MAX_UPSTREAM_FAILURE_EVENTS) break;
+        aggregate->upstreamFailureEvents.push_back(failure);
+      }
+    }
     aggregate->streamTerminalType = aggregate->completed ? std::optional<std::string>("response.completed")
                                                          : commonTelemetryValue(telemetryValues(states, &ResponseTelemetryState::streamTerminalType));
     aggregate->failureKind = commonTelemetryValue(telemetryValues(states, &ResponseTelemetryState::failureKind));
@@ -379,6 +393,8 @@ namespace uos::openai_telemetry {
       .removedProviderSemanticCommitment = state.removedProviderSemanticCommitment,
       .removedProviderLatencyMs = state.removedProviderLatencyMs,
       .removedProviderTerminalStatus = state.removedProviderTerminalStatus,
+      .inStreamRetries = state.inStreamRetries,
+      .upstreamFailureEvents = state.upstreamFailureEvents,
       .upstreamAuthFollowerStale = state.upstreamAuthFollowerStale,
     };
   }
@@ -407,6 +423,25 @@ namespace uos::openai_telemetry {
   }
 
   namespace {
+    bool safeEventIdentifier(std::string_view value) {
+      return !value.empty() && value.size() <= 80 && std::all_of(value.begin(), value.end(), [](char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
+      });
+    }
+
+    void logUnknownResponseEventKind(const std::string& type) {
+      if (!safeEventIdentifier(type)) return;
+      static std::mutex mutex;
+      static std::unordered_set<std::string> loggedKinds;
+      {
+        const std::lock_guard lock(mutex);
+        // Keep the first names for the process lifetime so they cannot be
+        // evicted and logged repeatedly by a noisy upstream.
+        if (loggedKinds.size() >= 64 || !loggedKinds.insert(type).second) return;
+      }
+      rt::console::info("[ai.ubq.fi] unrecognized_responses_event", rt::jsonStringify(json::object{{"type", type}}));
+    }
+
     // "firstProviderDispatchMs" | "firstProviderHeadersMs" | "firstCodexDispatchMs" | "firstCodexHeadersMs" |
     // "firstUpstreamSseEventMs" | "firstSemanticCommitmentMs" | "streamTerminalMs"
     using ResponseTelemetryTimingField = std::optional<double> ResponseTelemetryState::*;
@@ -504,8 +539,23 @@ namespace uos::openai_telemetry {
 
     std::string boundedResponseEventKind(const std::string& type) {
       const bool known = std::find(std::begin(CHAT_RESPONSE_EVENT_KINDS), std::end(CHAT_RESPONSE_EVENT_KINDS), std::string_view(type)) != std::end(CHAT_RESPONSE_EVENT_KINDS);
-      return known ? type : "unrecognized";
+      if (known) return type;
+      logUnknownResponseEventKind(type);
+      return "unrecognized";
     }
+  }
+
+  void recordUpstreamResponsesFailure(ResponseTelemetryState& telemetry, const responses_stream::ResponsesStreamEvent& event) {
+    if (event.type != "error" && event.type != "response.failed") return;
+    if (telemetry.upstreamFailureEvents.size() == MAX_UPSTREAM_FAILURE_EVENTS) return;
+    const auto* error = responses_stream::responsesFailurePayload(event);
+    const auto code = error ? rt::getString(*error, "code") : std::nullopt;
+    const auto type = error && error != &event.value ? rt::getString(*error, "type") : std::nullopt;
+    telemetry.upstreamFailureEvents.push_back(json::object{
+      {"type", event.type},
+      {"code", code && safeEventIdentifier(*code) ? json::value(*code) : json::value(nullptr)},
+      {"error_type", type && safeEventIdentifier(*type) ? json::value(*type) : json::value(nullptr)},
+    });
   }
 
   // An incomplete terminal is a recorded failure only when its reason names a

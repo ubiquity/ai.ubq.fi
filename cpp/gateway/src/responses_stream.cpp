@@ -20,6 +20,15 @@
 #include <vector>
 
 namespace uos::responses_stream {
+  const json::object* responsesFailurePayload(const ResponsesStreamEvent& event) {
+    if (event.type == "error") {
+      if (const auto* error = rt::getObject(event.value, "error")) return error;
+      return &event.value;
+    }
+    if (event.type == "response.failed") return rt::getObject(rt::get(rt::get(event.value, "response"), "error"));
+    return nullptr;
+  }
+
   const ResponsesStreamError* responsesStreamErrorOf(const rt::Reason& reason) noexcept {
     if (!reason) return nullptr;
     try {
@@ -226,6 +235,7 @@ namespace uos::responses_stream {
       void markParsedEvent(const ResponsesStreamEvent& parsed) {
         sawEvent = true;
         if (parsed.terminal) control->cancelReaderOnce(reasonText("Responses terminal event received"));
+        if (options.onEvent) options.onEvent(parsed);
       }
       /** One step of `takeEvents(bytes)`: the next complete event framed by `bytes`, in wire order. */
       std::optional<ResponsesStreamEvent> takeEvent(SseEventFramer::Frames& frames) {
