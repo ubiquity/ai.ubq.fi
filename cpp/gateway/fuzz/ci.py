@@ -25,8 +25,11 @@ import sys
 import time
 
 GATEWAY = Path(__file__).resolve().parents[1]
+ROOT = GATEWAY.parents[1]
+SOURCE_PREFIX = GATEWAY.relative_to(ROOT)
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(GATEWAY / "tools"))
+import compiler_cache
 import vendor_sources
 
 DEFINES = ["BOOST_JSON_NO_LIB", "BOOST_CONTAINER_NO_LIB", "BOOST_SYSTEM_NO_LIB",
@@ -48,15 +51,15 @@ def extra_sources(name, target, common):
     return [source for source in listed if source.startswith("src/") and source not in skip]
 
 
-def compile_one(compiler, c_compiler, flags, source, objects):
+def compile_one(compiler, c_compiler, flags, source, objects, env):
     output = objects / (source.replace("/", "_") + ".o")
     if source.endswith(".c"):
         # Use the matching C frontend and retain the same sanitizer options.
         compiler = c_compiler
         flags = ["-std=c11", *vendor_sources.c_dialect_flags(source),
                  *[flag for flag in flags if not flag.startswith("-std=c++")]]
-    done = subprocess.run([compiler, *flags, "-c", str(GATEWAY / source), "-o", str(output)],
-                          capture_output=True, text=True)
+    done = subprocess.run([*compiler, *flags, "-c", str(SOURCE_PREFIX / source), "-o", str(output)],
+                          cwd=ROOT, env=env, capture_output=True, text=True)
     return source, output, done.returncode, done.stderr[-6000:]
 
 
@@ -95,6 +98,15 @@ def main():
     cxx = Path(args.compiler)
     c_name = cxx.name.replace("clang++", "clang").replace("g++", "gcc")
     c_compiler = args.cc or (str(cxx.with_name(c_name)) if c_name != cxx.name else "cc")
+    compiler, c_compiler = (shutil.which(name) for name in (args.compiler, c_compiler))
+    if not compiler or not c_compiler:
+        parser.error("C and C++ compilers must be available")
+    compiler, c_compiler = map(os.path.abspath, (compiler, c_compiler))
+    try:
+        launcher = compiler_cache.launcher()
+    except ValueError as error:
+        parser.error(str(error))
+    env = compiler_cache.environment(os.environ, ROOT, "fuzz") if launcher else os.environ
     policy = json.loads((GATEWAY / "fuzz/targets.json").read_text())
     if args.target not in policy["targets"] or args.seconds < 1 or args.jobs < 1:
         parser.error("known target, positive duration and positive job count are required")
@@ -103,7 +115,8 @@ def main():
     objects, corpus, artifacts = out / "obj", out / "corpus", out / "artifacts"
     for directory in (objects, corpus, artifacts):
         directory.mkdir(parents=True, exist_ok=True)
-    flags = ["-std=c++20", "-pthread", "-I" + str(GATEWAY / "include"), "-I" + str(GATEWAY)]
+    flags = ["-std=c++20", "-pthread", "-I" + str(SOURCE_PREFIX / "include"), "-I" + str(SOURCE_PREFIX),
+             f"-fdebug-prefix-map={ROOT}=."]
     flags += ["-D" + define for define in DEFINES] + policy["compile_options"]
     sources = policy["common_sources"] + extra_sources(args.target, target, policy["common_sources"])
     sources += [source for source in target.get("extra_sources", []) if source not in sources]
@@ -111,16 +124,19 @@ def main():
     vendors = vendor_sources.required(vendor_sources.selected(), [*sources, target.get("included_implementation", "")])
     flags.append("--system-header-prefix=third_party/")
     if vendor_sources.simdjson_consumers(vendors):
-        flags += vendor_sources.simdjson_flags()
+        flags += vendor_sources.simdjson_flags(SOURCE_PREFIX)
     for library in vendors:
-        flags += vendor_sources.include_flags(library)
+        flags += vendor_sources.include_flags(library, SOURCE_PREFIX)
         sources += list(library.sources)
     failed = []
     built = []
+    print("Compiler launcher: " + (shlex.join(launcher) if launcher else "none"), flush=True)
     started = time.monotonic()
+    cxx_command = [*launcher, compiler]
+    c_command = [*launcher, c_compiler]
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
         for source, output, code, stderr in pool.map(
-                lambda source: compile_one(args.compiler, c_compiler, flags, source, objects), sources):
+                lambda source: compile_one(cxx_command, c_command, flags, source, objects, env), sources):
             if code:
                 failed.append(source)
                 print("COMPILE FAILED " + source + "\n" + stderr, file=sys.stderr)
@@ -133,7 +149,7 @@ def main():
     # The host policy pins mold and its thread count; a CI runner uses its default linker.
     link = shlex.split(os.environ.get("LDFLAGS", ""))
     link += [option for option in policy["link_options"] if "mold" not in option and "--threads" not in option]
-    linked = subprocess.run([args.compiler, *built, "-o", str(binary), "-pthread", *link,
+    linked = subprocess.run([compiler, *built, "-o", str(binary), "-pthread", *link,
                              *["-l" + library for library in policy["libraries"]]], capture_output=True, text=True)
     if linked.returncode:
         print("LINK FAILED\n" + linked.stderr[-12000:], file=sys.stderr)

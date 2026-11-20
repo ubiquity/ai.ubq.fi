@@ -77,6 +77,14 @@ CXX=clang++ UOS_CI_SELFTEST_CONFIG=asan python3 -B cpp/gateway/cmake/ci/test_dri
 
 These seven controls cover successful parallel environment isolation, failure counts, missing summaries, a timeout with descendants, link failure, sharding, and exclusion of unpublished dot-prefixed staging sources. They are separate from the gateway suite.
 
+## Compiler cache
+
+Install `ccache` to reuse compiled objects across fresh build directories. Set `CCACHE_DIR` to share one cache between local checkouts. The driver, CI fuzz builder and packagers use `ccache` from `PATH` by default. Set `UOS_CI_COMPILER_LAUNCHER` to a launcher command, or set `UOS_CI_COMPILER_LAUNCHER=''` to disable the launcher. The portable Linux packager resolves the command inside its build image and stores the local cache in BuildKit.
+
+The driver records the launcher and per-invocation cache hits and misses in `receipt.json`. Ccache checks compiler contents, arguments and source and header inputs within a configuration. Repository-relative dependency paths let outputs move between checkouts. Inside each test namespace, a read-only bind of the current checkout gives fixture paths derived from `__FILE__` a stable location. [ARM64 measurements](findings/cppgw-build-cache-20261119.md)
+
+CI scopes each cache to the runner image, configuration, installed toolchain package versions and vendored sources. The save key adds the run ID and restores use the same prefix across runs. All jobs can restore that configuration's cache, and shard 1 for each suite or the first fuzz target in sorted order saves it. Each cache is capped at 1.9 GB. The published Linux package workflow forces a fresh compile with the launcher disabled.
+
 ## Runner measurements
 
 Measured on 2026-11-17: Ubuntu 26.04.1, x86_64, 4 CPUs, approximately 15 GiB RAM; GCC 15.2.0 (debug), GCC 14.3.0 (release), Clang 21.1.8, Boost 1.90, OpenSSL 3.5.5, SQLite 3.54.0 (prepared from source; distribution version was 3.46.1), ICU 78.2, zlib 1.3.1, Brotli 1.2.0, Zstd 1.5.7 and mold 2.40.4.
