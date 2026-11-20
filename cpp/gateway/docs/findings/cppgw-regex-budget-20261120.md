@@ -9,7 +9,7 @@ Base `claude/cpp-gateway-port` at `0c54578151b88da9afe6d014007dbffe1176214b`, tr
 - [x] Add regressions with an injected clock.
 - [x] Audit other wall-clock limits.
 - [x] Run 20 consecutive rounds of four isolated ASan compaction copies.
-- [ ] Finish the release and sanitizer fixture gates. Bind results to the verified commit and tree.
+- [x] Finish the release and sanitizer fixture gates. Bind results to the verified commit and tree.
 
 ## Callback calibration
 
@@ -72,3 +72,50 @@ Searched native `src/`, `include/uos/` and `runtime/` for clock reads, timeout a
 | Local waits and retention | `src/inference_admission.cpp` — `DEFAULT_INFERENCE_ADMISSION_LIMITS.maxQueueWaitMs`; `src/rt/kv_sqlite.cpp` — `BUSY_TIMEOUT`; `include/uos/storage/native_kv.hpp` — 5 s lock retry; `src/{catalog/store,provider/capacity,metered_quota}.cpp` — `CODEX_CATALOG_COLD_WAIT_MS`, `PROVIDER_CAPACITY_COLD_WAIT_MS`, `METERED_QUOTA_COLD_WAIT_MS`; `include/uos/optional_telemetry_queue.hpp` — `maxDrainWaitMs`; `src/sentinel/upstream_capture.cpp` — `SENTINEL_UPSTREAM_MAX_TIMING_MS` | Queue admission, DB-lock and refresh waits, optional telemetry shutdown and replay timestamp validation. Expiry, retry windows, leases and replay timings represent elapsed time. |
 
 The compaction smoke tools also have test and RPC wait deadlines (`src/lib/jev_compaction/jev_compaction_smoke.cpp` and `jev_codex_smoke.cpp`). The audit found no other in-process CPU-work timer that requires a budget conversion.
+
+## Release and sanitizer verification
+
+The release regex receipt records `f28e78d4c04a4b99b76214defccf04c767fe210c`, tree `3669b33d160b324e82f3582c84fb661db1bffce3`. The other focused receipts record `46343640e3dc2a2cada18e888d7d8d9186834b01`, tree `aa38d0104489a59b298af6938df9acdf96bd2e92`, which adds the loaded test evidence. Every receipt recorded the same source SHA-256 before and after the run (`eeec06005c3f96d0d1f52f2c5f819a84638a95eb3b9f3cb8f330665c5c329eb0`), all 366 production objects, and SQLite 3.54.0 inside the fixture boundary.
+
+```sh
+scratch="$RUNNER_TEMP/cppgw-regex-budget"
+filters=(rt/regex_test compaction images _sse_ responses_stream input_normalization
+  transport_normalization fetch_transport_test sentinel_upstream_capture)
+UOS_CI_JOBS=2 bash "$scratch/gates.sh" final release "${filters[@]}"
+UOS_CI_JOBS=4 bash "$scratch/gates.sh" final asan "${filters[@]}"
+UOS_CI_JOBS=1 bash "$scratch/gates.sh" final asan supervisor
+UOS_CI_JOBS=1 bash "$scratch/gates.sh" final release supervisor
+python3 -B "$scratch/check-final.py" "$scratch"
+python3 -B cpp/gateway/tools/links.py --check
+git diff --check origin/claude/cpp-gateway-port HEAD
+git diff --exit-code origin/claude/cpp-gateway-port HEAD -- cpp/gateway/third_party
+(cd cpp/gateway/third_party/quickjs-libregexp && sha256sum --check SHA256SUMS)
+```
+
+`gates.sh` invokes `bash cpp/gateway/tools/ci-build.sh --config "$profile" "$filter"` once per filter with the Clang ccache wrappers, the external build directory and the pinned SQLite prefix. The ASan run resumed with four workers after release freed build capacity. The supervisor fixtures ran with one worker after the other gates to preserve their existing elapsed-time assertions. The loader used real Linux namespaces, loopback mocks and an empty, credential-free fixture environment.
+
+| Filters | Passing binaries per profile | Passing cases per profile |
+| --- | ---: | ---: |
+| Regex | 1 | 27 |
+| Compaction | 6 | 70 |
+| Images | 2 | 47 |
+| SSE and Responses streams | 5 | 31 |
+| Supervisor | 10 | 162 |
+| Input and transport normalization | 2 | 41 |
+| Fetch transport | 1 | 37 |
+| Stored upstream captures | 2 | 30 |
+| Total | 29 | 445 |
+
+The registration gate resolved 450 binaries. The vendored QuickJS-ng checksums and repository diff checks passed.
+
+## Committed review
+
+Fetched the base ref and requested review with the native Codex 0.170.0 executable. Base `0c54578151b88da9afe6d014007dbffe1176214b`, head `f28e78d4c04a4b99b76214defccf04c767fe210c`, model `ubiquity/deepseek-flash`.
+
+```sh
+codex review -c 'review_model="ubiquity/deepseek-flash"' -c 'sandbox_mode="read-only"' \
+  -c 'approval_policy="never"' -c 'shell_environment_policy.inherit="none"' \
+  -c 'history.persistence="none"' --base origin/claude/cpp-gateway-port
+```
+
+The reviewer reported `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted` before reading the diff. A stdin retry with the exact committed diff timed out during a connection retry. No complete review result was available.
