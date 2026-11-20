@@ -273,7 +273,13 @@ REAL_GEMINI_TEST("Gemini CLI receives only the minimal environment required for 
   const std::string captured = rt::fs::readFileSync(rt::path::join(home, "captured-env"), "utf8");
   EXPECT(captured.find("HOME=" + home + "\n") != std::string::npos);
   EXPECT(captured.find("PATH=/usr/local/bin:/usr/bin:/bin\n") != std::string::npos);
-  EXPECT(captured.find("TMPDIR=" + root + "/.data/antigravity-run-") != std::string::npos);
+#if defined(__APPLE__)
+  // Darwin's getcwd resolves the /tmp symlink before the CLI workspace is created.
+  const auto expectedData = rt::fs::realpathSync(data);
+#else
+  const auto& expectedData = data;
+#endif
+  EXPECT(captured.find("TMPDIR=" + expectedData + "/antigravity-run-") != std::string::npos);
   EXPECT(captured.find("LANG=C.UTF-8\n") != std::string::npos);
   EXPECT(captured.find("UOS_AI_TOKEN") == std::string::npos);
   EXPECT(captured.find("DEEPSEEK_API_KEY") == std::string::npos);
