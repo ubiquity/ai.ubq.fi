@@ -8,7 +8,8 @@ Base `claude/cpp-gateway-port` at `0c54578151b88da9afe6d014007dbffe1176214b`, tr
 - [x] Implement the work limits and give wall-clock backstops distinct errors.
 - [x] Add regressions with an injected clock.
 - [x] Audit other wall-clock limits.
-- [ ] Run the release and sanitizer gates and the four-copy compaction repeat. Bind results to the verified commit and tree.
+- [x] Run 20 consecutive rounds of four isolated ASan compaction copies.
+- [ ] Finish the release and sanitizer fixture gates. Bind results to the verified commit and tree.
 
 ## Callback calibration
 
@@ -36,6 +37,22 @@ The existing 52-byte catastrophic-backtracking fixture reached the previous 4,09
 Timing was used only to size the wall-clock backstops. The largest measured legitimate matcher operation was the compaction floor scan at 2.844 seconds under ASan. Scaling that scan to 16 MiB and a 20× slower host gives `2.844 × (16,777,216 / 8,101,176) × 20 ≈ 118 seconds`. Supplemental ASan probes reached all 4,096 callbacks in 2.733 seconds for the fixed supervisor pattern at 1 MiB and in 1.027 seconds for the SSE boundary pattern at 16 MiB, or about 55 and 21 seconds at 20×. The five-minute matching backstop exceeds each estimate. The backstop runs at cooperative checks, including between short VM searches.
 
 Libregexp provides parser stack probes and has no periodic compile interrupt. The 4 KiB source cap and 128 KiB parser stack allowance provide deterministic bounds. An isolated ASan probe compiling a nearly 4 KiB Unicode set of repeated `\\p{RGI_Emoji}` took 6.660 seconds during concurrent builds. A sticky regex can compile two programs, giving `6.660 × 2 × 20 ≈ 267 seconds`. The five-minute compilation backstop covers that estimate and gives a distinct error at stack probes or after the engine returns. The match and compile backstops use the same steady clock. The regression clocks exercise expiry without sleeping.
+
+## Loaded compaction repeat
+
+Verified code at `f28e78d4c04a4b99b76214defccf04c767fe210c`, tree `3669b33d160b324e82f3582c84fb661db1bffce3`, source SHA-256 `eeec06005c3f96d0d1f52f2c5f819a84638a95eb3b9f3cb8f330665c5c329eb0`.
+
+```sh
+scratch="$RUNNER_TEMP/cppgw-regex-budget"
+env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+  python3 -B "$scratch/incremental-compaction.py" "$scratch"
+env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+  python3 -B "$scratch/repeat-compaction-incremental.py" "$scratch"
+```
+
+The incremental build used the CI driver's ASan Ninja recipes to recompile `regex.cpp`, `regex_compile.cpp`, `regex_match.cpp`, `regex_tables.cpp` and `jev_compaction_test.cpp`. It substituted those objects in the stored driver link command and reused the ASan objects for the unchanged sources. The repeat used the same binary (SHA-256 `723b0b0836fe0a0cf2afcc90b15db20ebed5f246d8e8ecea130ac6c742bccb7f`) for all rounds, with the driver's `find_boundary`, `boundary_command` and `execute` helpers and its ASan, UBSan and leak options. Each copy had a separate loopback-only network, mount and PID namespace, empty home and fresh tmpfs.
+
+All 20 rounds completed with four overlapping copies per round. All 80 executions and 1,920 cases passed, including the slowed-clock floor fixture in each copy. The shortest four-copy overlap was 25.122 seconds. The repeat took 696.266 seconds, with a slowest single copy of 36.517 seconds.
 
 ## Wall-clock audit
 
