@@ -793,6 +793,8 @@ namespace uos::codex::responses_operations {
                                         std::optional<bool> activeAdmissionAlreadyFencedArg) {
       const bool activeAdmissionAlreadyFenced = activeAdmissionAlreadyFencedArg.value_or(false);
       ctx->attemptNumber += 1;
+      if (ctx->streamRetryPending && phase == "initial") phase = "stream_retry";
+      ctx->streamAttempt.reset();
       ctx->transportState.started = false;
       // Assigned inside the actual onDispatch callback; a holder avoids control
       // flow narrowing `null` to `never` across the opaque transport call.
@@ -807,6 +809,7 @@ namespace uos::codex::responses_operations {
         std::function<void()> onDispatch = [ctx, upstreamAttempt]() {
           ctx->providerDispatch.markTransportStarted();
           ctx->transportState.started = true;
+          if (std::exchange(ctx->streamRetryPending, false)) dispatch::reportCodexResponseTiming(ctx->options.streamRetry->onRetry);
           dispatch::reportCodexResponseTiming(ctx->options.timing.has_value() ? ctx->options.timing->onDispatch : std::function<void()>());
           if (ctx->options.sentinelUpstreamRecorder.has_value()) *upstreamAttempt = ctx->options.sentinelUpstreamRecorder->startAttempt("chatgpt_codex");
           else *upstreamAttempt = std::nullopt;
@@ -826,7 +829,12 @@ namespace uos::codex::responses_operations {
         fields["status_class"] = dispatch::codexStatusClass(recordedResponse.status());
         fields["active_generation"] = numberOrNull(routing.activeGeneration);
         fields["active_transition_reason"] = nullableOrNull(routing.activeTransitionReason);
-        dispatch::logCodexRouting("codex_attempt", fields);
+        if (ctx->options.streamRetry && recordedResponse.ok()) {
+          ctx->streamAttempt = responses_state::CodexResponseState::StreamAttempt{
+            std::move(fields), auth.account_id, phase != "post_banked_reset" && phase != "overage_fallback"};
+        } else {
+          dispatch::logCodexRouting("codex_attempt", fields);
+        }
         co_return recordedResponse;
       } catch (...) {
         failure = std::current_exception();

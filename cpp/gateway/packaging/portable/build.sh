@@ -6,8 +6,11 @@ if [[ $# != 1 || $(uname -sm) != 'Linux aarch64' ]]; then
   exit 64
 fi
 cache_options=()
+if [[ -v UOS_CI_COMPILER_LAUNCHER ]]; then
+  cache_options+=(--build-arg "UOS_CI_COMPILER_LAUNCHER=$UOS_CI_COMPILER_LAUNCHER")
+fi
 if [[ ${PORTABLE_REBUILD:-0} == 1 ]]; then
-  cache_options=(--no-cache-filter cpp --build-arg FRESH_COMPILE=1)
+  cache_options+=(--no-cache-filter cpp --build-arg FRESH_COMPILE=1)
 fi
 if ! root=$(git -C "$(dirname -- "$0")" rev-parse --show-toplevel 2>/dev/null); then
   echo 'The portable package must be built inside a Git checkout with a committed HEAD.' >&2
