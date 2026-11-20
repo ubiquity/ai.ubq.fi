@@ -8,6 +8,14 @@
       "ported": true,
       "tests": ["tests/gemini_subscription_test.cpp"]
     },
+    "cpp/gateway/src/codex/auth_import.cpp": {
+      "deps": ["src/codex/auth-repair.ts", "src/codex/native-auth.ts", "src/provider/capacity-parse.ts"],
+      "header": "cpp/gateway/include/uos/codex/auth_import.hpp",
+      "impl": "cpp/gateway/src/codex/auth_import.cpp",
+      "loc": 0,
+      "ported": true,
+      "tests": ["cpp/gateway/tests/codex_auth_follower_import_test.cpp"]
+    },
     "cpp/gateway/src/provider/gemini.cpp": {
       "deps": [],
       "header": "cpp/gateway/include/uos/provider/gemini.hpp",
@@ -5691,8 +5699,8 @@
   },
   "summary": {
     "loc": 112949,
-    "modules": 322,
+    "modules": 323,
     "ported_loc": 112949,
-    "ported_modules": 322
+    "ported_modules": 323
   }
 }

@@ -47,11 +47,13 @@ After each integration, update its row with the actual source entry point, effec
 
 ## Launch and state
 
-The executable accepts exactly `--runtime-manifest <absolute-path>`. The launch manifest selects
+The executable serves with `--runtime-manifest <absolute-path>`. The launch manifest selects
 `uos-gateway-launch-v1`, the canonical `packageRoot` and private `stateRoot`, the lowercase
 `packageManifestSha256`, `hostname` equal to `127.0.0.1`, and an integer `port` other than 7999 or 8000.
 Use disjoint package and state roots. The launch file must be owner-private, regular and singly linked. The
 state root and its existing `.data` directory must be canonical and owner-private. [Launch schema](../runtime/launch-schema.json)
+
+The launcher also accepts `<absolute-manifest-path> --import-codex-auth-from <absolute-state-directory>` in follower mode. This one-shot command verifies the same package, applies Linux confinement, and reads the source database under a read-only grant. It uses the Codex usage endpoint to validate incoming access tokens before updating the stopped follower's auth pool. [Side-by-side procedure](CUTOVER.md#running-side-by-side-on-one-host)
 
 ### Linux confinement
 
@@ -97,6 +99,7 @@ the process flags and the environment read by the native build and test tooling.
 | Switch | Default | Effect |
 | --- | --- | --- |
 | `UOS_GATEWAY_ALLOW_REDUCED_CONFINEMENT` | Unset | Exact value `1` opts in to the available Landlock policy starting at ABI 3. Startup still requires seccomp TSYNC. |
+| `UOS_GATEWAY_UPSTREAM_AUTH_FOLLOWER` | Unset | Exact value `1` serves Codex with the copied KV auth pool, refuses online credential refresh and pool writes, and disables the Codex app-server connection and Antigravity. `GET /health` reports follower status and time to the earliest known Codex access-token expiry. |
 | `UOS_GATEWAY_ENABLE_ANTIGRAVITY` | Unset | Exact value `1` opts in to the owner-installed Antigravity CLI integration and its child-process profile when the CLI passes validation. |
 | `UOS_GATEWAY_ACTIVE_BUILD` | Set by `build.py` (compiler wrapper falls back to its working directory) | Locates the active profile owner and generated test registry. |
 | `UOS_GATEWAY_BUILD_DIR` | Set by the native build owner | Selects the CMake presets' build directory. |
@@ -131,6 +134,8 @@ credentials and loopback mocks. [Test isolation](CI.md)
 The exact opt-in releases seccomp's process-creation and exec denials for the entire gateway process. Seccomp applies that exception to every gateway thread. Landlock allows direct execution of the canonical `agy` executable and its canonical dynamic loader. A second Landlock ruleset applies in the dedicated spawning thread and carries into the CLI. The gateway also gains read and write access to the CLI state. The child sees the individual runtime libraries and host files it needs, its private CLI state and optional configuration, and its own workspace. It receives four environment variables and standard I/O pipes, or `/dev/null` for unused stdin. Its only writable directories are its own CLI state and workspace.
 
 The dynamic loader can open compatible ELF files anywhere the calling process can read. The opted-in gateway retains its ordinary readable library and writable data paths, so the loader can still reach a readable ELF there. The child's narrower ruleset removes that access to gateway state and the general library tree. Loadable content in the child's own readable and writable CLI state and workspace remains in scope. Keep the flag unset or remove it and restart to run with the original no-child-process policy.
+
+Follower mode takes precedence over the Gemini opt-in and keeps process execution denied. The startup log identifies the switch and explains why Antigravity is disabled.
 
 ## Cutover requirements
 

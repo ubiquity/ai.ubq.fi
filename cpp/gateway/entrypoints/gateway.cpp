@@ -10,9 +10,9 @@
 int main(int argc, char** argv) {
   uos::rt::process::setArgv(argc, argv);
   try {
-    const std::string manifest = uos::runtime::startup::manifestArgument(argc, argv);
+    auto arguments = uos::runtime::startup::parseArguments(argc, argv);
     // run() completes the synchronous confinement bootstrap before returning its task.
-    auto serving = uos::runtime::startup::run(manifest);
+    auto serving = uos::runtime::startup::run(std::move(arguments));
     uos::rt::installHttpClientTransport();
     uos::rt::loop().setUncaughtPolicy(uos::rt::UncaughtPolicy::report);
     uos::rt::blockOn(std::move(serving));

@@ -2,6 +2,7 @@
 
 #include "runtime/paths.hpp"
 #include "src/rt/tls_internal.hpp"
+#include "uos/codex/auth_import.hpp"
 #include "uos/config.hpp"
 #include "uos/deepseek/index.hpp"
 #include "uos/kv.hpp"
@@ -71,6 +72,20 @@ namespace uos::runtime::startup {
       struct stat info {};
       if (::lstat(path.c_str(), &info) != 0 || !S_ISDIR(info.st_mode) || info.st_uid != ::getuid() || (info.st_mode & 0077) != 0 || fs::canonical(path) != path)
         refuse("state directory is not a real owner-private directory: " + path.string());
+    }
+
+    bool disjoint(const fs::path& first, const fs::path& second) {
+      const auto relative = first.lexically_relative(second);
+      const auto reverse = second.lexically_relative(first);
+      return !relative.empty() && *relative.begin() == ".." && !reverse.empty() && *reverse.begin() == "..";
+    }
+
+    void requireStoppedDatabase(const fs::path& database) {
+      regular(database, true);
+      for (const auto* suffix : {"-wal", "-shm", "-journal"}) {
+        if (fs::exists(fs::symlink_status(database.string() + suffix)))
+          refuse("Codex auth import requires stopped, checkpointed databases without SQLite sidecars");
+      }
     }
 
     std::string read(const fs::path& path, std::size_t maximum = 1024 * 1024, bool privateFile = false) {
@@ -241,7 +256,7 @@ namespace uos::runtime::startup {
 
     class FixtureTransport final : public rt::FetchTransport {
     public:
-      explicit FixtureTransport(std::string origin) : origin_(std::move(origin)), original_(rt::fetchTransport()) {
+      explicit FixtureTransport(std::string origin, bool authImport) : origin_(std::move(origin)), original_(rt::fetchTransport()), authImport_(authImport) {
         if (!original_) refuse("real HTTP client transport is not installed");
       }
       rt::Task<rt::Response> send(rt::Request request) override {
@@ -251,6 +266,10 @@ namespace uos::runtime::startup {
         policy.redirect = "error";
         rt::Request guarded(request, policy);
         const std::string destination = guarded.url();
+        if (authImport_) {
+          if (destination == origin_ + "/backend-api/wham/usage") return original_->send(std::move(guarded));
+          refuse("fixture auth import allows only the Codex usage probe");
+        }
         if (destination == deepseek::index::DEEPSEEK_CHAT_COMPLETIONS_URL) {
           rt::Request mapped(origin_ + "/chat/completions", guarded);
           return original_->send(std::move(mapped));
@@ -262,13 +281,14 @@ namespace uos::runtime::startup {
     private:
       std::string origin_;
       std::shared_ptr<rt::FetchTransport> original_;
+      bool authImport_;
     };
 
     struct FixtureRouting {
       std::shared_ptr<rt::FetchTransport> original;
       std::string originalCodexBase;
-      explicit FixtureRouting(const std::string& origin) : original(rt::fetchTransport()), originalCodexBase(config::config.codexBaseUrl) {
-        rt::setFetchTransport(std::make_shared<FixtureTransport>(origin));
+      explicit FixtureRouting(const std::string& origin, bool authImport = false) : original(rt::fetchTransport()), originalCodexBase(config::config.codexBaseUrl) {
+        rt::setFetchTransport(std::make_shared<FixtureTransport>(origin, authImport));
         config::config.codexBaseUrl = origin + "/codex";
         live::upstream::LiveUpstreamBases bases;
         bases.callsBaseUrl = origin + "/codex";
@@ -321,11 +341,12 @@ namespace uos::runtime::startup {
     }
 
     void enforce(const fs::path& package, const fs::path& state, int port,
-                 const std::optional<std::string>& origin) {
+                 const std::optional<std::string>& origin, const std::optional<fs::path>& authSource) {
       if (upstream_auth::followerMode())
         std::fprintf(stderr, "%s=1: Antigravity disabled because its CLI manages OAuth refresh.\n", upstream_auth::FOLLOWER_ENV.data());
       auto profiles = permissions_linux::gatewayLinuxPermissions(package.string(), state.string());
       auto& permissions = profiles.gateway;
+      if (authSource) permissions.read.push_back(authSource->string());
       if (const char* optIn = std::getenv("UOS_GATEWAY_ALLOW_REDUCED_CONFINEMENT"); optIn && std::string_view(optIn) == "1") {
         permissions_linux::LinuxPermissionsTcpPorts ports{static_cast<std::uint16_t>(port)};
         if (origin) ports.connectPorts.push_back(static_cast<std::uint16_t>(std::stoi(rt::URL(*origin).port())));
@@ -363,16 +384,30 @@ namespace uos::runtime::startup {
       closeStore.release();
       co_await std::move(serving);
     }
+
+    rt::Task<void> importAuth(std::string source, std::string destination, std::optional<std::string> origin) {
+      std::unique_ptr<FixtureRouting> routing;
+      if (origin) routing = std::make_unique<FixtureRouting>(*origin, true);
+      auto importing = codex::auth_import::importCodexAuthPool(std::move(source), std::move(destination));
+      const auto count = co_await std::move(importing);
+      std::printf("Imported updated Codex credentials for %zu account(s).\n", count);
+    }
   }
 
-  std::string manifestArgument(int argc, const char* const* argv) {
-    if (argc != 3 || std::string_view(argv[1]) != "--runtime-manifest" || !fs::path(argv[2]).is_absolute())
+  LaunchArguments parseArguments(int argc, const char* const* argv) {
+    if ((argc != 3 && argc != 5) || std::string_view(argv[1]) != "--runtime-manifest" || !fs::path(argv[2]).is_absolute())
       refuse("expected exactly --runtime-manifest <absolute-path>");
-    return argv[2];
+    LaunchArguments arguments{argv[2], std::nullopt};
+    if (argc == 5) {
+      if (std::string_view(argv[3]) != "--import-codex-auth-from" || !fs::path(argv[4]).is_absolute())
+        refuse("expected --import-codex-auth-from <absolute-state-directory>");
+      arguments.codexAuthSource = argv[4];
+    }
+    return arguments;
   }
 
-  rt::Task<void> run(std::string manifestPath) {
-    const fs::path launchPath = canonical(manifestPath);
+  rt::Task<void> run(LaunchArguments arguments) {
+    const fs::path launchPath = canonical(arguments.manifestPath);
     const json::object launch = object(launchPath, true);
     keys(launch, {"schema", "packageRoot", "stateRoot", "packageManifestSha256", "hostname", "port", "fixture"});
     if (string(launch, "schema") != "uos-gateway-launch-v1") refuse("launch manifest schema is unsupported");
@@ -382,10 +417,19 @@ namespace uos::runtime::startup {
     const fs::path database = state / storage::kv::BUN_KV_DATABASE_PATH;
     privateDirectory(state);
     privateDirectory(data);
-    const auto relative = state.lexically_relative(package);
-    const auto packageRelative = package.lexically_relative(state);
-    if (relative.empty() || (!relative.empty() && *relative.begin() != "..") || packageRelative.empty() || (!packageRelative.empty() && *packageRelative.begin() != ".."))
-      refuse("immutable package and mutable state must be disjoint");
+    if (!disjoint(state, package)) refuse("immutable package and mutable state must be disjoint");
+    std::optional<fs::path> authSource;
+    if (arguments.codexAuthSource) {
+      if (!upstream_auth::followerMode()) refuse("Codex auth import requires UOS_GATEWAY_UPSTREAM_AUTH_FOLLOWER=1");
+      const fs::path source = canonical(*arguments.codexAuthSource);
+      if (!disjoint(source, state) || !disjoint(source, package)) refuse("Codex auth source must be separate from the package and follower state");
+      privateDirectory(source);
+      privateDirectory(source / ".data");
+      authSource = source / storage::kv::BUN_KV_DATABASE_PATH;
+      requireStoppedDatabase(*authSource);
+      requireStoppedDatabase(database);
+      ::umask(0077);
+    }
     const std::string packageHash = string(launch, "packageManifestSha256");
     verifyPackage(package, packageHash);
     verifyClosure(package);
@@ -413,11 +457,12 @@ namespace uos::runtime::startup {
     }
     // Load the existing operator-selected CA bundles while startup can read them.
     rt::detail::tls::defaultContext();
-    enforce(package, state, port, origin);
+    enforce(package, state, port, origin, authSource);
     if (newFixture) createFixtureBinding(data, binding);
     paths::setResourceRoot(package.string());
     if (::chdir(state.c_str()) != 0) refuse("private state working directory is unavailable");
     if (::setenv("SQLITE_TMPDIR", data.c_str(), 1) != 0) refuse("private SQLite temporary directory is unavailable");
+    if (authSource) return importAuth(authSource->string(), database.string(), std::move(origin));
     return serveGateway(serve::ServeStartupOptions{hostname, port}, std::move(origin), database.string());
   }
 }

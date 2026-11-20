@@ -6,8 +6,8 @@ Base `0c545781` on `claude/cpp-gateway-port`.
 
 - [x] Read the runtime, cutover, CI and porting guides and trace the shared credential paths.
 - [x] Guard request-time renewal, pool writers and CLI access. Expose follower status and expiry.
-- [ ] Add and run scripted runtime coverage for expired and rejected credentials, admin writes, health and Gemini.
-- [ ] Add stopped-state import with the read-only Codex usage probe and document the operator steps.
+- [x] Register scripted runtime coverage for expired and rejected credentials, admin writes, health and Gemini.
+- [x] Add stopped-state import with the read-only Codex usage probe and document the operator steps.
 - [ ] Run the registration check and focused Release and ASan gates. Bind the results to the tested commit and tree.
 - [ ] Request committed-diff review against `claude/cpp-gateway-port` and leave a clean checkout.
 
@@ -33,3 +33,9 @@ The separate native-authority engine seeds its own SQL namespace from a supplied
 - A refused renewal is a 401 credential failure inside Codex routing. This allows the normal active-account transition and preserves the full-pool evidence gate for paid fallback. The Codex attempt log and inference request terminal log identify `upstream_auth_follower_stale`. The public error remains the existing auth failure.
 - The auth upload, cache-scope experiment and a writable local KV import containing the auth pool return 409. Read-only checks, unrelated migration rows, and quota and account routing operations use their existing paths.
 - Follower mode blocks supervisor app-server connections and the Antigravity CLI. The gateway keeps process-execution denial even if the Gemini integration was opted in. `GET /health` adds the mode and the milliseconds to the earliest known copied Codex access-token expiry.
+
+## Stopped-state credential adoption
+
+The launcher verifies the same immutable package and confines the one-shot import. It requires the exact follower switch and two separate owner-private, checkpointed, marked databases. The process gets a read grant for the source database, keeps the usual write grant for the destination `.data`, and starts no listener. The source is opened with SQLite's immutable read-only URI.
+
+The import matches existing account IDs and retains slot order and follower-only accounts. It checks expiry and freshness, uses the repair module's candidate validation with the account-bound usage GET, and uses the existing pool upsert checks for native ownership. The usage request sends only the access bearer and account binding and refuses redirects. Any failed validation aborts the batch. Once validated, the import checks the destination pool revision and updates the existing auth singleton and its KV revision in a transaction. It bypasses serving-time queue and expiry maintenance, so unrelated stored values and revisions stay intact. The operator steps are in [CUTOVER.md](../CUTOVER.md#running-side-by-side-on-one-host).

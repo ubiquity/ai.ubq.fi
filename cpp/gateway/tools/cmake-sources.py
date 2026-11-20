@@ -8,6 +8,7 @@ import sys
 EXPECTED_PORTED_MODULES = 320
 CUSTOM_MODULE_KEYS = {
     "cpp/gateway/src/admin/gemini_quota.cpp",
+    "cpp/gateway/src/codex/auth_import.cpp",
     "cpp/gateway/src/provider/gemini.cpp",
 }
 
@@ -20,7 +21,7 @@ def main():
     if len(ported) != EXPECTED_PORTED_MODULES:
         raise RuntimeError(f"PORTED.txt is incomplete; expected {EXPECTED_PORTED_MODULES} ported modules")
     if set(modules) - ported != CUSTOM_MODULE_KEYS or ported - set(modules):
-        raise RuntimeError("Port manifest must contain PORTED.txt plus the two registered C++ adapter modules")
+        raise RuntimeError("Port manifest must contain PORTED.txt plus the registered C++ modules")
     if manifest["summary"]["modules"] != len(ported) + len(CUSTOM_MODULE_KEYS) or manifest["summary"]["ported_modules"] != len(modules):
         raise RuntimeError("Port manifest is incomplete; every registered module must be ported")
     implementations = []
