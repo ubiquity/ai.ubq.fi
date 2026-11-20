@@ -9,7 +9,7 @@ The runner uses macOS 26.7.2 (25G332), arm64, Xcode 26.6 and Apple Clang 21.0.0 
 - [x] Install the Homebrew dependencies in `docs/MACOS.md` and build the checksum-verified SQLite 3.54.0.
 - [x] Check all 450 registrations with `python3 -B cpp/gateway/tools/links.py --check`.
 - [x] Build all 368 production sources, link the arm64 gateway and pass 37 runtime binaries and 524 cases.
-- [ ] Run the whole registered suite and record binary and case counts.
+- [x] Pass the whole registered suite on the fixed commit and record binary and case counts.
 - [ ] Run the release workflow's macOS packager and check the extracted version and health identity.
 - [ ] Record the final source identity, receipts and any remaining failures.
 
@@ -65,3 +65,25 @@ codex -c 'model="codex-auto-review"' -c 'review_model="codex-auto-review"' \
 
 The banner reported `codex-auto-review`. The review timed out with exit 124 after `failed to connect to Responses
 WebSocket stage=Unknown`, with no complete findings to ingest.
+
+## Final native tests
+
+The standalone runtime gate and full suite both exited 0 from clean commit
+`99c2969bf83d883a01f1858d61319bbd656c19d6`, tree `56db4224b562e0795b2240c7a36256862dabc3d5`.
+The driver compiled all 368 production sources and 471 test and support sources, archived all six vendors,
+and linked the arm64 gateway. The test roster matched the 450 entries from `links.py --check`.
+
+| Gate | Passing binaries | Passing cases |
+| --- | ---: | ---: |
+| Standalone runtime | 37/37 | 524/524 |
+| Full suite, runtime | 37/37 | 524/524 |
+| Full suite, application | 413/413 | 4,680/4,680 |
+| Full suite, total | 450/450 | 5,204/5,204 |
+
+| Receipt under `build/runs` | `provenance.json` SHA-256 | `results.json` SHA-256 |
+| --- | --- | --- |
+| `1795132384072967000` | `1e36d133417e5d075be699f19258f6340a03493cf7540906f983685c39e9d012` | `40371a2db49ec71fef97c56e56c3f77dad27a96a9fc9e92e685cff99c7ae196b` |
+| `1795132546666757000` | `8492d08805138f738de504595cbcd2a431aa6ddb1829e68912ae4ed4948a3196` | `0be86e902ea961aa0566c6b8e80baaed64a0612570c9fc20258ef251d00eef32` |
+
+The release workflow's `python3 -B cpp/gateway/packaging/macos/build.py "$scratch/release/uos-gateway-macos-arm64.tar.gz"`
+command started after the full suite passed. It uses a separate empty home and temporary directory in the scratch root.
