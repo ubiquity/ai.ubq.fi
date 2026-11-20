@@ -1,0 +1,13 @@
+diff --git a/ops/gpg-dsh.sh b/ops/gpg-dsh.sh
+--- a/ops/gpg-dsh.sh
++++ b/ops/gpg-dsh.sh
+@@ -176,6 +176,8 @@
+ discard_legacy_seed() {
+   has_legacy_seed || return 0
+-  gpgconf --homedir "$legacy_seed" --kill gpg-agent >/dev/null 2>&1 || :
++  if owned_dir "$legacy_seed"; then
++    gpgconf --homedir "$legacy_seed" --kill gpg-agent >/dev/null 2>&1 || :
++  fi
+   for path in "$legacy_seed" "$legacy_seed".lock "$legacy_seed".lock.break "$legacy_seed".new.* "$legacy_seed".old.*; do
+     if owned_dir "$path"; then
+       rm -rf "$path" || die "cannot discard the legacy seed copy $path"
