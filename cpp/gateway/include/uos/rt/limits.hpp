@@ -45,7 +45,7 @@ namespace uos::rt::limits {
   inline constexpr RegexWorkBudget kSupervisorRegexWorkBudget{16, 30};
   inline constexpr RegexWorkBudget kBase64RegexWorkBudget{16, 625};
   inline constexpr std::size_t kRegexMaxPolls = 4096;
-  inline constexpr auto kRegexCompileBackstop = std::chrono::seconds(10);
+  inline constexpr auto kRegexCompileBackstop = std::chrono::minutes(5);
   inline constexpr auto kRegexMatchBackstop = std::chrono::minutes(5);
 
   inline constexpr std::size_t kJsonDocumentBytes = 16 * 1024 * 1024;

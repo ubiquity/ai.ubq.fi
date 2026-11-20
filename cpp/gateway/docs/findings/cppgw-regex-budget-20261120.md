@@ -4,11 +4,38 @@ Base `claude/cpp-gateway-port` at `0c54578151b88da9afe6d014007dbffe1176214b`, tr
 
 - [x] Locate the execution, compile and allocation hooks and confirm the ARM64 runner supports Linux namespaces.
 - [x] Install the workflow dependencies and build SQLite 3.54.0 from the checksum-verified release.
-- [ ] Prepare the pinned CI dependencies and measure matcher callbacks in the existing fixtures.
-- [ ] Implement the work limits and give wall-clock backstops distinct errors.
-- [ ] Add regressions with an injected clock.
+- [x] Measure matcher callbacks in the existing fixtures.
+- [x] Implement the work limits and give wall-clock backstops distinct errors.
+- [x] Add regressions with an injected clock.
 - [x] Audit other wall-clock limits.
 - [ ] Run the release and sanitizer gates and the four-copy compaction repeat. Bind results to the verified commit and tree.
+
+## Callback calibration
+
+Ubuntu 26.04.1 ARM64, four CPUs, Clang 21.1.8, Boost 1.90, ICU 78.2 and SQLite 3.54.0. SQLite was built from the workflow archive with `--disable-static --disable-readline CFLAGS='-O2 -DSQLITE_DQS=3'`. The CI driver verified its version inside the namespace.
+
+The temporary counter in `0a6c6265922309698964faf7992088da215e3a2c` counted callbacks over each matcher lifetime, including operations that completed without a callback. It logged only category, subject size, callback and search counts, and elapsed microseconds. The initial regex run tested that tree (`d738be45eaf5f641d9b31e73a8a96e9de88f580c`). The remaining runs used the same sources at `fe5157d201d26bb874cd72358a02ee7e49f6f01e`, tree `93a13506895093a48139543543502f21bbeaced9`.
+
+For each filter below, ran `bash cpp/gateway/tools/ci-build.sh --config asan <filter>` with `UOS_CI_JOBS=4`, the task-local ccache wrappers for Clang and `UOS_CI_SQLITE_PREFIX=/usr/local`. The driver used isolated Linux network, mount and PID namespaces with an empty home and fresh tmpfs. Filters were `rt/regex_test.cpp`, `compaction`, `images`, `_sse_`, `responses_stream`, `supervisor`, `input_normalization`, `transport_normalization`, `fetch_transport_test` and `sentinel_upstream_capture`. The instrumented supervisor run reported two existing performance assertions over 2 seconds in `codex_supervisor_secret_test` while the release build was compiling. Those cases reached their redaction assertions and contributed callback counts.
+
+| Category | Matcher operations | Peak callbacks | Subject at peak (bytes) | Fixture | New limit at that size |
+| --- | ---: | ---: | ---: | --- | ---: |
+| Generic | 992,012 | 317 | 635,017 | `codex_supervisor_secret_test` | 1,334 |
+| Image | 296 | 1,048 | 5,242,901 | `images_test` | 4,096 |
+| Compaction and shared whitespace pattern | 39,880 | 559 | 2,796,204 | `sentinel_upstream_capture_test` | 2,240 |
+| SSE framing | 880 | 26 | 65,539 | `responses_stream_test` | 104 |
+| Supervisor credential key | 68,982 | 1,689 | 200,000 | `codex_supervisor_brief_test` | 4,096 |
+| Stored base64 | 4,322 | 36 | 80,001 | `regex_test` | 144 |
+
+The base allowances cover short-subject bursts, including 16 generic callbacks at 801 bytes. The slopes target about four times the peak at its measured size. The previous 4,096-callback ceiling limits the supervisor case to 2.43 times the measured peak and the image case to 3.91 times. Short searches can complete before QuickJS reaches its first callback. The compaction floor fixture did 1,284,750 searches over 8,101,176 bytes with zero callbacks. The largest ASCII image and stored-base64 cases used their existing linear scans and had zero callbacks.
+
+The existing 52-byte catastrophic-backtracking fixture reached the previous 4,096-callback ceiling while the calibration clock allowance was relaxed. The new generic allowance at that size is 64. The regression asserts the exact rejection point with a frozen clock and with 20 ms added per clock read. The source and subject caps, stack guard and single-allocation ceiling still apply.
+
+## Backstop sizing
+
+Timing was used only to size the wall-clock backstops. The largest measured legitimate matcher operation was the compaction floor scan at 2.844 seconds under ASan. Scaling that scan to 16 MiB and a 20× slower host gives `2.844 × (16,777,216 / 8,101,176) × 20 ≈ 118 seconds`. Supplemental ASan probes reached all 4,096 callbacks in 2.733 seconds for the fixed supervisor pattern at 1 MiB and in 1.027 seconds for the SSE boundary pattern at 16 MiB, or about 55 and 21 seconds at 20×. The five-minute matching backstop exceeds each estimate. The backstop runs at cooperative checks, including between short VM searches.
+
+Libregexp provides parser stack probes and has no periodic compile interrupt. The 4 KiB source cap and 128 KiB parser stack allowance provide deterministic bounds. An isolated ASan probe compiling a nearly 4 KiB Unicode set of repeated `\\p{RGI_Emoji}` took 6.660 seconds during concurrent builds. A sticky regex can compile two programs, giving `6.660 × 2 × 20 ≈ 267 seconds`. The five-minute compilation backstop covers that estimate and gives a distinct error at stack probes or after the engine returns. The match and compile backstops use the same steady clock. The regression clocks exercise expiry without sleeping.
 
 ## Wall-clock audit
 
