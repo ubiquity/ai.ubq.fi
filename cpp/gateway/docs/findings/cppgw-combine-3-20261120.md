@@ -102,8 +102,8 @@ timeout -k 5s 600s codex review --base origin/claude/cpp-gateway-port \
 
 The complete result contained one finding:
 
-> [P2] Keep transient SSE throttling distinct from quota exhaustion — `cpp/gateway/src/codex/index.cpp:88-89`
+> [P2] Keep transient SSE throttling distinct from quota exhaustion — `/home/runner/work/_temp/agent-jobs/cppgw-combine-3-20261120/checkout/cpp/gateway/src/codex/index.cpp:88-89`
 >
-> When Codex sends a generic `rate_limit_exceeded` or `too_many_requests` event with a retry hint, the stream classifier assigns it status 429. Passing that synthetic response to `recordCodexResponseHealth` writes a durable `quota_exhausted` observation, so an account that was briefly throttled can appear exhausted in provider health, even if the next attempt succeeds and leaves a false `last_429_at_ms`. Keep the retry behavior, but record exhaustion only when the event supplies authoritative quota evidence, consistent with AGENTS.md:14.
+> When Codex sends a generic `rate_limit_exceeded` or `too_many_requests` event with a retry hint, the stream classifier assigns it status 429. Passing that synthetic response to `recordCodexResponseHealth` writes a durable `quota_exhausted` observation, so an account that was briefly throttled can appear exhausted in provider health, even if the next attempt succeeds and leaves a false `last_429_at_ms`. Keep the retry behavior, but record exhaustion only when the event supplies authoritative quota evidence, consistent with [AGENTS.md:14](AGENTS.md#L14).
 
 This is a stream-retry health-classification nuance rather than a merge or cache regression. It is recorded for a focused follow-up so this delivery keeps the reviewed branch's retry and settlement behavior unchanged. The combined release tests, including the 32 stream-retry cases and the loopback routing case, pass.
