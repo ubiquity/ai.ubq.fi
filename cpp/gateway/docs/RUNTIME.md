@@ -57,9 +57,9 @@ The launcher also accepts `<absolute-manifest-path> --import-codex-auth-from <ab
 
 ### Linux confinement
 
-The synchronous bootstrap verifies the launch and package manifests, the executing binary, and the host-library closure. It loads the configured TLS trust stores and installs Landlock and the existing seccomp filter before starting the HTTP transport, event loop, or SQLite worker. The package and the existing host runtime paths are readable. By default, only `stateRoot/.data` is writable. Seccomp is thread-synchronized and denies subprocess execution by default. The reviewed launcher and its environment control the resources available before enforcement.
+The synchronous bootstrap verifies the launch and package manifests, the executing binary, and the host-library closure. It loads the configured TLS trust stores, applies confinement, and installs the existing seccomp filter before starting the HTTP transport, event loop, or SQLite worker. In the default policy, the package and selected host runtime paths are readable and only `stateRoot/.data` is writable. Seccomp is thread-synchronized and denies subprocess execution by default. The reviewed launcher and its environment control the resources available before enforcement.
 
-The default policy requires Linux ARM64 with Landlock ABI 8 or newer and applies the existing filesystem policy using Landlock thread synchronization. On a host with ABI 3–7, the operator can explicitly enable the reduced policy. Landlock must be enabled in the kernel, and seccomp with thread synchronization is required.
+The default policy requires Linux ARM64 with Landlock ABI 8 or newer and applies the existing filesystem policy using Landlock thread synchronization. On a host with ABI 3–7, the operator can explicitly enable the reduced policy. Every mode requires seccomp with thread synchronization.
 
 ```sh
 UOS_GATEWAY_ALLOW_REDUCED_CONFINEMENT=1 /absolute/path/to/package/ops/launch-native.sh /absolute/path/to/launch.json
@@ -69,7 +69,7 @@ For a service launch, put the assignment in the approved `EnvironmentFile=`. For
 
 | Landlock ABI | First Linux release | Protections with the opt-in                                                                                        |
 | -----------: | ------------------: | ------------------------------------------------------------------------------------------------------------------ |
-|          0–2 |                   — | Startup refuses                                                                                                    |
+|          1–2 |                   — | Startup refuses                                                                                                    |
 |            3 |                 6.2 | Filesystem restrictions, including rename/link and truncation, plus seccomp TSYNC and Landlock inheritance         |
 |            4 |                 6.7 | ABI 3 protections plus TCP bind and connect restrictions                                                           |
 |            5 |                6.10 | ABI 4 protections plus device `ioctl` restrictions                                                                 |
@@ -81,6 +81,10 @@ For a service launch, put the assignment in the approved `EnvironmentFile=`. For
 On ABI 3–7, the bootstrap verifies in `/proc/self/task` that it is the sole thread. The later resolver and SQLite threads inherit its Landlock domain. On ABI 4 and newer, the opt-in TCP policy permits binding the validated listener port, including `0` for kernel assignment. Outbound TCP permits DNS on port 53 and the gateway's HTTPS and WSS upstreams on port 443. An isolated fixture instead gets its verified loopback mock port. Landlock checks port numbers, so redirects to other TCP ports are denied under this policy.
 
 The startup log and `LinuxPermissionsReceipt` report the queried ABI, active controls, and missing controls. A Pi with ABI 3 reports the filesystem filter, thread inheritance, and seccomp TSYNC as active. It reports TCP port controls, device `ioctl` restrictions, Unix socket controls, signal scoping, and Landlock TSYNC as missing. [Linux Landlock documentation](https://docs.kernel.org/userspace-api/landlock.html)
+
+For an ARM64 kernel whose ABI query returns `ENOSYS` or `EOPNOTSUPP`, put `UOS_GATEWAY_ALLOW_NO_LANDLOCK=1` in the supplied hardened unit's `EnvironmentFile=`. A kernel reporting any Landlock ABI follows the existing Landlock rules. Startup on an absent kernel checks the read-only system and release mounts, the masked home directories and secret locations, the non-root user, empty capability sets, and `NoNewPrivileges` from inside the sandbox before opening SQLite or binding the listener. It then installs the default seccomp filter and logs one warning about the absence of Landlock and gateway outbound TCP port restrictions. [Hardened systemd unit](../ops/uos-gateway-native-no-landlock.service) · [Raspberry Pi setup](RASPBERRY-PI.md#start-under-systemd-without-landlock) · [Security limits](SECURITY-LIMITS.md#service-manager-confinement)
+
+`GET /health` reports `confinement` as `landlock` for ABI 8+, `landlock-reduced` for ABI 3–7 with the reduced opt-in, or `service-manager` for the verified systemd confinement on a kernel without Landlock.
 
 After enforcement, the gateway changes cwd to `stateRoot`, sets `SQLITE_TMPDIR` to the private `.data`, and
 serves immutable assets from `packageRoot`. The linked C++ SQLite store opens the existing
@@ -99,6 +103,7 @@ the process flags and the environment read by the native build and test tooling.
 | Switch | Default | Effect |
 | --- | --- | --- |
 | `UOS_GATEWAY_ALLOW_REDUCED_CONFINEMENT` | Unset | Exact value `1` opts in to the available Landlock policy starting at ABI 3. Startup still requires seccomp TSYNC. |
+| `UOS_GATEWAY_ALLOW_NO_LANDLOCK` | Unset | Exact value `1` permits startup with verified service-manager confinement and seccomp TSYNC only when the Landlock ABI query returns `ENOSYS` or `EOPNOTSUPP`. |
 | `UOS_GATEWAY_UPSTREAM_AUTH_FOLLOWER` | Unset | Exact value `1` serves Codex with the copied KV auth pool, refuses online credential refresh and pool writes, and disables the Codex app-server connection and Antigravity. `GET /health` reports follower status and time to the earliest known Codex access-token expiry. |
 | `UOS_GATEWAY_ENABLE_ANTIGRAVITY` | Unset | Exact value `1` opts in to the owner-installed Antigravity CLI integration and its child-process profile when the CLI passes validation. |
 | `UOS_GATEWAY_ACTIVE_BUILD` | Set by `build.py` (compiler wrapper falls back to its working directory) | Locates the active profile owner and generated test registry. |

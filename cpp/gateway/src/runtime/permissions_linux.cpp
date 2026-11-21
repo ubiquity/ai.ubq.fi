@@ -10,10 +10,12 @@
 #include "uos/rt/string.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <functional>
 #include <utility>
@@ -21,12 +23,17 @@
 #if defined(__linux__) && defined(__aarch64__)
 #include <fcntl.h>
 #include <linux/audit.h>
+#include <linux/capability.h>
 #include <linux/filter.h>
 #include <linux/landlock.h>
+#include <linux/magic.h>
 #include <linux/sched.h>
 #include <linux/seccomp.h>
+#include <mntent.h>
+#include <pwd.h>
 #include <sys/prctl.h>
 #include <sys/statfs.h>
+#include <sys/statvfs.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 #endif
@@ -44,6 +51,7 @@ namespace uos::runtime::permissions_linux {
     constexpr std::uint64_t scopeAbstractUnixSocket = 1ULL << 0;
     constexpr std::uint64_t scopeSignal = 1ULL << 1;
     constexpr std::uint32_t restrictThreadSync = 1U << 3;
+    namespace fs = std::filesystem;
 
     struct NativeConfinementError : rt::JsError {
       std::string code;
@@ -53,17 +61,23 @@ namespace uos::runtime::permissions_linux {
     struct NativeSupport {
       int landlockAbi = 0;
       bool seccomp = false;
+      bool serviceManager = false;
     };
     struct NativeGrant {
       std::string path;
       double access = 0;
     };
     struct NativePermissions {
-      std::function<NativeSupport()> support;
+      std::function<NativeSupport(bool allowNoLandlock)> support;
       std::function<bool(const std::string& path)> readonlyMount;
       std::function<bool(const std::vector<NativeGrant>&, const detail::LandlockPolicy&, const std::optional<LinuxPermissionsTcpPorts>&, bool allowChildProcess)>
         enforce;
     };
+
+    bool beneath(const std::string& parent, const std::string& child) {
+      const std::string path = rt::path::relative(parent, child);
+      return path.empty() || (path != ".." && !rt::startsWith(path, "../") && !rt::path::isAbsolute(path));
+    }
 
 #if defined(__linux__) && defined(__aarch64__)
     // Include syscall numbers missing from older ARM64 distribution headers.
@@ -93,12 +107,12 @@ namespace uos::runtime::permissions_linux {
 
     int landlockAbi() { return static_cast<int>(syscall(__NR_landlock_create_ruleset, nullptr, 0, LANDLOCK_CREATE_RULESET_VERSION)); }
 
-    NativeSupport nativeSupport() {
+    NativeSupport nativeSupport(bool allowNoLandlock) {
       const int abi = landlockAbi();
-      if (abi < 0) failure("Landlock ABI query");
+      if (abi < 0 && !(allowNoLandlock && (errno == ENOSYS || errno == EOPNOTSUPP))) failure("Landlock ABI query");
       std::uint32_t action = SECCOMP_RET_ERRNO;
       const bool available = syscall(__NR_seccomp, SECCOMP_GET_ACTION_AVAIL, 0, &action) == 0;
-      return NativeSupport{abi, available};
+      return NativeSupport{std::max(abi, 0), available, abi < 0};
     }
 
     bool nativeReadonlyMount(const std::string& path) {
@@ -107,6 +121,118 @@ namespace uos::runtime::permissions_linux {
       const int status = statfs(bounded.c_str(), &filesystem);
       if (status != 0) failure("Immutable mount inspection");
       return (filesystem.f_flags & 1) != 0;
+    }
+
+    bool unavailablePath(int error) {
+      return error == EACCES || error == EPERM || error == ENOENT || error == ENOTDIR;
+    }
+
+    bool deniedAccess(const std::string& path, int mode) {
+      return access(path.c_str(), mode) != 0 && (unavailablePath(errno) || (mode == W_OK && errno == EROFS));
+    }
+
+    bool readOnlyPath(const std::string& path, bool allowHidden = false) {
+      struct statvfs filesystem {};
+      if (statvfs(path.c_str(), &filesystem) != 0) return allowHidden && unavailablePath(errno);
+      return (filesystem.f_flag & ST_RDONLY) != 0 && deniedAccess(path, W_OK);
+    }
+
+    std::optional<std::string> writableSystemPath(const ServiceManagerPaths& paths) {
+      for (const char* sentinel : {"/", "/usr", "/etc", "/boot", "/home", "/tmp", "/var/tmp"}) {
+        if (!readOnlyPath(sentinel)) return sentinel;
+      }
+      if (!readOnlyPath(paths.package)) return paths.package;
+
+      // A writable bind mount can override an otherwise read-only parent.
+      // The service unit separately restricts the kernel API trees.
+      FILE* mounts = setmntent("/proc/self/mounts", "r");
+      if (!mounts) return "/proc/self/mounts";
+      const auto closeMounts = rt::scopeExit([mounts] { endmntent(mounts); });
+      std::array<char, 32768> buffer{};
+      struct mntent mount {};
+      bool foundRoot = false;
+      while (getmntent_r(mounts, &mount, buffer.data(), static_cast<int>(buffer.size()))) {
+        const std::string path = mount.mnt_dir;
+        if (path == "/") foundRoot = true;
+        if (!hasmntopt(&mount, "rw") || beneath(paths.state, path) || beneath("/proc", path) ||
+            beneath("/sys", path) || beneath("/dev", path)) continue;
+        if (!readOnlyPath(path, true)) return path;
+      }
+      if (!foundRoot || ferror(mounts)) return "/proc/self/mounts";
+      return std::nullopt;
+    }
+
+    std::optional<std::string> exposedHome(const ServiceManagerPaths& paths) {
+      for (const char* home : {"/home", "/root", "/run/user"}) {
+        struct statfs filesystem {};
+        if (statfs(home, &filesystem) != 0 || filesystem.f_type != TMPFS_MAGIC || !readOnlyPath(home)) return home;
+        if (deniedAccess(home, R_OK) && deniedAccess(home, X_OK)) continue;
+
+        // An empty read-only cover may reveal the two verified bind paths.
+        // Only traverse the directories created to reach those binds.
+        std::error_code error;
+        fs::recursive_directory_iterator entry(home, error), end;
+        if (error) return home;
+        for (; entry != end; entry.increment(error)) {
+          const std::string path = entry->path().string();
+          if (path == paths.state || path == paths.package) {
+            entry.disable_recursion_pending();
+          } else if ((!beneath(path, paths.state) && !beneath(path, paths.package)) ||
+                     !fs::is_directory(entry->symlink_status(error)) || !readOnlyPath(path)) {
+            return path;
+          }
+          if (error) return home;
+        }
+        if (error) return home;
+      }
+      return std::nullopt;
+    }
+
+    std::optional<std::string> readableHomeSecret(const std::string& state) {
+      const passwd* account = getpwuid(getuid());
+      if (!account) return "account home unavailable";
+      const char* accountHome = account->pw_dir;
+      const char* envHome = std::getenv("HOME");
+      for (const char* home : {accountHome, envHome}) {
+        if (!home || !*home) continue;
+        if (!fs::path(home).is_absolute()) return "home path is relative";
+        for (const char* name : {".ssh", ".codex", ".config"}) {
+          const fs::path path = fs::path(home) / name;
+          if (deniedAccess(path.string(), R_OK) && deniedAccess(path.string(), X_OK)) continue;
+          std::error_code error;
+          const auto resolved = fs::canonical(path, error);
+          if (error || !beneath(state, resolved.string())) return path.string();
+        }
+      }
+      return std::nullopt;
+    }
+
+    bool emptyCapabilitySets() {
+      // Bounding alone does not remove active or inherited capabilities.
+      struct __user_cap_header_struct header{_LINUX_CAPABILITY_VERSION_3, 0};
+      std::array<struct __user_cap_data_struct, _LINUX_CAPABILITY_U32S_3> caps{};
+      if (syscall(__NR_capget, &header, caps.data()) != 0) return false;
+      for (const auto& word : caps) {
+        if (word.effective || word.permitted || word.inheritable) return false;
+      }
+      for (unsigned long cap = 0; cap < caps.size() * 32; ++cap) {
+        const int present = prctl(PR_CAPBSET_READ, cap, 0UL, 0UL, 0UL);
+        if (present < 0 && errno == EINVAL) return cap > CAP_SYS_ADMIN;
+        if (present != 0) return false;
+      }
+      return true;
+    }
+
+    detail::ServiceManagerChecks nativeServiceManagerChecks(const ServiceManagerPaths& paths) {
+      uid_t real = 0, effective = 0, saved = 0;
+      const bool nonRoot = getresuid(&real, &effective, &saved) == 0 && real != 0 && real == effective && real == saved;
+      detail::ServiceManagerChecks checks{nonRoot, emptyCapabilitySets(), prctl(PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0) == 1};
+      if (checks.nonRoot && checks.emptyCapabilities && checks.noNewPrivileges) {
+        checks.writableSystemPath = writableSystemPath(paths);
+        if (!checks.writableSystemPath) checks.exposedHome = exposedHome(paths);
+        if (!checks.writableSystemPath && !checks.exposedHome) checks.readableHomeSecret = readableHomeSecret(paths.state);
+      }
+      return checks;
     }
 
     std::vector<sock_filter> processFilter(bool allowChildProcess) {
@@ -161,6 +287,13 @@ namespace uos::runtime::permissions_linux {
       program.len = static_cast<unsigned short>(filter.size());
       program.filter = filter.data();
       return static_cast<int>(syscall(__NR_seccomp, SECCOMP_SET_MODE_FILTER, SECCOMP_FILTER_FLAG_TSYNC, &program));
+    }
+
+    void enforceProcessFilter(std::vector<sock_filter>& filter) {
+      if (installProcessFilter(filter) != 0) {
+        dprintf(STDERR_FILENO, "Seccomp thread synchronization failed: errno %d\n", errno);
+        _exit(78);
+      }
     }
 
     void requireSingleThread() {
@@ -218,10 +351,7 @@ namespace uos::runtime::permissions_linux {
         dprintf(STDERR_FILENO, "%s failed: errno %d\n", policy.restrictFlags != 0 ? "Landlock thread synchronization" : "Landlock enforcement", errno);
         _exit(78);
       }
-      if (installProcessFilter(filter) != 0) {
-        dprintf(STDERR_FILENO, "Seccomp thread synchronization failed: errno %d\n", errno);
-        _exit(78);
-      }
+      enforceProcessFilter(filter);
       return true;
     }
 #endif
@@ -232,11 +362,6 @@ namespace uos::runtime::permissions_linux {
 #else
       throw rt::JsError("Linux confinement requires Linux ARM64");
 #endif
-    }
-
-    bool beneath(const std::string& parent, const std::string& child) {
-      const std::string path = rt::path::relative(parent, child);
-      return path.empty() || (path != ".." && !rt::startsWith(path, "../") && !rt::path::isAbsolute(path));
     }
 
     LinuxPermissionsSupport reportedSupport(const NativeSupport& support) {
@@ -369,16 +494,46 @@ namespace uos::runtime::permissions_linux {
   }
 
 #if defined(__linux__) && defined(__aarch64__)
+  LinuxPermissionsReceipt detail::applyServiceManagerPermissions(const LinuxPermissionsSupport& support, bool allowChildProcess,
+                                                                 const ServiceManagerChecks& checks) {
+    const auto refuse = [](std::string reason) { throw rt::JsError("Service-manager confinement check failed: " + reason); };
+    if (!support.seccomp) refuse("seccomp thread synchronization is required");
+    if (allowChildProcess) refuse("the Antigravity child-process profile requires Landlock");
+    if (!checks.nonRoot) refuse("the gateway must run as a non-root user");
+    if (!checks.emptyCapabilities) refuse("the capability sets, including the bounding set, must be empty");
+    if (!checks.noNewPrivileges) refuse("NoNewPrivileges is required");
+    if (checks.writableSystemPath) refuse("read-only system mount: " + *checks.writableSystemPath);
+    if (checks.exposedHome) refuse("masked home directories: " + *checks.exposedHome);
+    if (checks.readableHomeSecret) refuse("unreadable home secrets: " + *checks.readableHomeSecret);
+
+    LinuxPermissionsReceipt receipt;
+    static_cast<LinuxPermissionsSupport&>(receipt) = support;
+    receipt.mode = "service-manager";
+    receipt.processThreadSync = true;
+    receipt.activeProtections = {"service-manager-filesystem", "seccomp-tsync"};
+    receipt.missingProtections = {"landlock-filesystem", "landlock-tsync", "tcp-ports", "device-ioctl", "abstract-unix-sockets",
+                                  "signal-scope", "pathname-unix-sockets"};
+    auto filter = processFilter(false);
+    enforceProcessFilter(filter);
+    return receipt;
+  }
+
   std::vector<sock_filter> detail::seccompProcessFilter(bool allowChildProcess) { return processFilter(allowChildProcess); }
 #endif
 
   LinuxPermissionsSupport getLinuxPermissionsSupport() {
-    return reportedSupport(linkedPermissions().support());
+    return reportedSupport(linkedPermissions().support(false));
   }
 
   static LinuxPermissionsReceipt enforcePermissions(const LinuxPermissions& permissions, std::optional<int> abiCap) {
     const NativePermissions native = linkedPermissions();
-    const NativeSupport support = native.support();
+    const NativeSupport support = native.support(permissions.allowNoLandlock.has_value());
+#if defined(__linux__) && defined(__aarch64__)
+    if (support.serviceManager) {
+      return detail::applyServiceManagerPermissions(reportedSupport(support), permissions.allowChildProcess,
+                                                    nativeServiceManagerChecks(*permissions.allowNoLandlock));
+    }
+#endif
     const int abi = abiCap ? std::min(*abiCap, support.landlockAbi) : support.landlockAbi;
     const auto policy = detail::landlockPolicy(abi, support.seccomp, permissions.allowReducedConfinement.has_value());
     const auto list = filesystemGrants(permissions, policy);
@@ -396,6 +551,7 @@ namespace uos::runtime::permissions_linux {
     LinuxPermissionsReceipt receipt;
     static_cast<LinuxPermissionsSupport&>(receipt) = reportedSupport(support);
     receipt.filesystemThreadSync = policy.restrictFlags != 0;
+    if (!receipt.filesystemThreadSync) receipt.mode = "landlock-reduced";
     receipt.processThreadSync = true;
     receipt.immutableMounts = std::move(immutableMounts);
     receipt.activeProtections = {"landlock-filesystem", "seccomp-tsync"};

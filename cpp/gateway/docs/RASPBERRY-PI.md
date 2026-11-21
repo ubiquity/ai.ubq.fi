@@ -1,6 +1,6 @@
 # Portable ARM64 gateway on Raspberry Pi OS
 
-The portable release targets 64-bit Raspberry Pi OS Bookworm and Trixie with an ARMv8-A CPU. The default requires Landlock ABI 8 or newer. Operators on ABI 3–7 can explicitly select the reduced policy described below. Build on a Linux ARM64 machine with Docker and Buildx. Use a Bookworm userspace for the glibc 2.36 baseline. Trixie uses glibc 2.41.
+The portable release targets 64-bit Raspberry Pi OS Bookworm and Trixie with an ARMv8-A CPU. The default requires Landlock ABI 8 or newer. Operators on ABI 3–7 can explicitly select the reduced policy. On kernels built without Landlock, use the opt-in systemd unit below for testing. Build on a Linux ARM64 machine with Docker and Buildx. Use a Bookworm userspace for the glibc 2.36 baseline. Trixie uses glibc 2.41.
 
 ## Build and verify
 
@@ -53,16 +53,88 @@ Use `runtime/launch-schema.json` from the sealed package. Supply both values fro
 
 ## Kernel and filesystem requirements
 
-Use a usr-merged system. The loader and libraries must resolve under `/usr/lib/`, including Debian's `/usr/lib/aarch64-linux-gnu` directory. The existing Arch package tool looks up libraries in flat directories and binds the building host's library hashes. The portable sealer accounts for Debian's multiarch layout while preserving the executable's closure verification. The existing runtime reads the selected package, standard OS trust and resolver data, and `/proc/self`. It gives write access to the private state `.data` directory and directs SQLite temporary files there.
+Use a usr-merged system. The loader and libraries must resolve under `/usr/lib/`, including Debian's `/usr/lib/aarch64-linux-gnu` directory. The existing Arch package tool looks up libraries in flat directories and binds the building host's library hashes. The portable sealer accounts for Debian's multiarch layout while preserving the executable's closure verification. The runtime reads the selected package, standard OS trust and resolver data, and `/proc/self`. Both confinement paths direct SQLite temporary files to the private state `.data` directory.
 
-Linux 6.6 has Landlock ABI 3 and Linux 6.12 has ABI 6 upstream. Landlock ABI 8 introduces `LANDLOCK_RESTRICT_SELF_TSYNC` in upstream Linux 7.0. Enable Landlock in the kernel and the active LSM list, and retain seccomp filter support with thread synchronization. On ABI 3–7, set `UOS_GATEWAY_ALLOW_REDUCED_CONFINEMENT=1` in the native launcher's environment. The reduced policy applies the kernel's available rights before bootstrap starts other threads, which then inherit the restrictions. Verify the effective policy in the startup record. The Docker proofs use the runner kernel for these checks. [Linux confinement](RUNTIME.md#linux-confinement) · [Landlock userspace API](https://docs.kernel.org/userspace-api/landlock.html)
+Linux 6.6 has Landlock ABI 3 and Linux 6.12 has ABI 6 upstream when Landlock is enabled. Landlock ABI 8 introduces `LANDLOCK_RESTRICT_SELF_TSYNC` in upstream Linux 7.0. Keep seccomp filter support with thread synchronization in every mode. On ABI 3–7, set `UOS_GATEWAY_ALLOW_REDUCED_CONFINEMENT=1` in the native launcher's environment. The reduced policy applies the kernel's available rights before bootstrap starts other threads, which then inherit the restrictions. Verify the effective policy in `GET /health`. The Docker proofs use the runner kernel for these checks. [Linux confinement](RUNTIME.md#linux-confinement) · [Landlock userspace API](https://docs.kernel.org/userspace-api/landlock.html)
 
 On an ARM64 target, query the active ABI directly before sealing.
 
 ```sh
 uname -m
 getconf GNU_LIBC_VERSION
-python3 -c 'import ctypes; print(ctypes.CDLL(None).syscall(444, 0, 0, 1))'
+python3 - <<'PY'
+import ctypes
+import errno
+
+libc = ctypes.CDLL(None, use_errno=True)
+abi = libc.syscall(444, 0, 0, 1)
+if abi >= 0:
+    print("Landlock ABI", abi)
+else:
+    error = ctypes.get_errno()
+    print(errno.errorcode.get(error, error))
+PY
 ```
 
 Use the memory results for the measured small-chat workload. Raspberry Pi throughput and sustained write latency depend on the device CPU, storage and production workload. The proof uses fresh private state and runner storage. [Measurements and scope](findings/cppgw-pi-compat-20261118.md)
+
+## Start under systemd without Landlock
+
+Use these steps when the probe prints `ENOSYS` or `EOPNOTSUPP`. They use a dedicated service account and a fresh `/srv/uos-native` layout for a test gateway. This mode relies on systemd for filesystem confinement and leaves outbound TCP ports unrestricted by the gateway. [Security limits](SECURITY-LIMITS.md#service-manager-confinement)
+
+1. Install the Bookworm or Trixie packages from [Prepare a local release](#prepare-a-local-release), then create the service account and its private state directories.
+
+   ```sh
+   sudo useradd --system --user-group --no-create-home --home-dir /nonexistent \
+     --shell /usr/sbin/nologin uos-gateway
+   sudo install -d -m 0755 /srv/uos-native
+   sudo install -d -o uos-gateway -g uos-gateway -m 0700 /srv/uos-native/state /srv/uos-native/state/.data
+   ```
+
+2. Verify and extract the ARM64 archive as above. Seal it as root into the new directory selected by the unit. Keep the printed `packageManifestSha256`.
+
+   ```sh
+   sudo env -i PATH=/usr/bin:/bin LC_ALL=C python3 -B "$bundle/seal.py" /srv/uos-native/package
+   ```
+
+3. Copy a stopped, checkpointed test database with the `bun-jsc-v1` marker into the state directory. Replace the source path with your approved test snapshot.
+
+   ```sh
+   sudo install -o uos-gateway -g uos-gateway -m 0600 /path/to/test/kv-bun.sqlite3 \
+     /srv/uos-native/state/.data/kv-bun.sqlite3
+   sudo install -o uos-gateway -g uos-gateway -m 0600 /dev/null /srv/uos-native/launch.json
+   sudoedit /srv/uos-native/launch.json
+   ```
+
+   Fill in the hash printed by the sealer. Pick a free loopback port if 18080 is in use.
+
+   ```json
+   {
+     "schema": "uos-gateway-launch-v1",
+     "packageRoot": "/srv/uos-native/package",
+     "packageManifestSha256": "paste-the-hash-printed-by-the-sealer",
+     "stateRoot": "/srv/uos-native/state",
+     "hostname": "127.0.0.1",
+     "port": 18080
+   }
+   ```
+
+4. Create the root-only environment file. Add the line `UOS_GATEWAY_ALLOW_NO_LANDLOCK=1` and the approved test gateway environment. Keep Antigravity disabled. Systemd reads this file before applying the mount sandbox.
+
+   ```sh
+   sudo install -o root -g root -m 0600 /dev/null /srv/uos-native/operator.env
+   sudoedit /srv/uos-native/operator.env
+   ```
+
+5. From the checkout for the package's commit, install and verify the unit. Start it, check for `"confinement":"service-manager"` in the response, and read the startup warning. Use the port from your launch manifest in the health request.
+
+   ```sh
+   sudo install -m 0644 cpp/gateway/ops/uos-gateway-native-no-landlock.service /etc/systemd/system/
+   sudo systemd-analyze verify /etc/systemd/system/uos-gateway-native-no-landlock.service
+   sudo systemctl daemon-reload
+   sudo systemctl start uos-gateway-native-no-landlock.service
+   curl -fsS http://127.0.0.1:18080/health
+   sudo journalctl -u uos-gateway-native-no-landlock.service -n 30 --no-pager
+   ```
+
+   The unit includes a commented `MemoryMax=256M` setting for small boards. Match the limit to the test workload.

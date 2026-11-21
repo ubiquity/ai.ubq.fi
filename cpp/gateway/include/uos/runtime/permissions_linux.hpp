@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #if defined(__linux__) && defined(__aarch64__)
@@ -24,6 +25,11 @@ namespace uos::runtime::permissions_linux {
     std::vector<std::uint16_t> connectPorts = {};
   };
 
+  struct ServiceManagerPaths {
+    std::string package;
+    std::string state;
+  };
+
   struct LinuxPermissions {
     std::vector<std::string> read = {};
     std::vector<std::string> write = {};
@@ -35,6 +41,8 @@ namespace uos::runtime::permissions_linux {
     bool allowChildProcess = false;
     /** Operator opt-in with TCP grants for kernels that support TCP port restrictions. */
     std::optional<LinuxPermissionsTcpPorts> allowReducedConfinement = std::nullopt;
+    /** Operator opt-in with verified mount paths, considered only when Landlock is absent. */
+    std::optional<ServiceManagerPaths> allowNoLandlock = std::nullopt;
   };
 
   struct LinuxPermissionsReceipt : LinuxPermissionsSupport {
@@ -43,6 +51,7 @@ namespace uos::runtime::permissions_linux {
     std::vector<std::string> immutableMounts = {};
     std::vector<std::string> activeProtections = {};
     std::vector<std::string> missingProtections = {};
+    std::string_view mode = "landlock";
   };
 
   struct LinuxGatewayPermissions {
@@ -84,6 +93,17 @@ namespace uos::runtime::permissions_linux {
     LandlockPolicy landlockPolicy(int abi, bool seccomp, bool allowReduced);
 
 #if defined(__linux__) && defined(__aarch64__)
+    struct ServiceManagerChecks {
+      bool nonRoot;
+      bool emptyCapabilities;
+      bool noNewPrivileges;
+      std::optional<std::string> writableSystemPath = std::nullopt;
+      std::optional<std::string> exposedHome = std::nullopt;
+      std::optional<std::string> readableHomeSecret = std::nullopt;
+    };
+
+    LinuxPermissionsReceipt applyServiceManagerPermissions(const LinuxPermissionsSupport& support, bool allowChildProcess,
+                                                          const ServiceManagerChecks& checks);
     std::vector<sock_filter> seccompProcessFilter(bool allowChildProcess);
 #endif
 
