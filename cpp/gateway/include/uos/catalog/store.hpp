@@ -27,6 +27,9 @@ namespace uos::catalog::store {
   using Catalog = std::shared_ptr<const types::LoadedCodexCatalog>;
   rt::Task<Catalog> loadCatalog(rt::Kv& kv, std::string version, std::string authGeneration, double nowMs);
 
+  // Load the verified upstream body when revalidating a stale served catalog.
+  rt::Task<std::optional<std::string>> loadCatalogSource(rt::Kv& kv, Catalog catalog);
+
   // Readonly<{ clientVersion: string; authGeneration: string; body: string; etag?: string | null;
   //            contentType?: string | null; fetchedAtMs?: number }>
   struct StoreCodexCatalogInput {

@@ -319,7 +319,9 @@ ASYNC_TEST("storeCodexCatalog and loadCatalog round trips match Bun") {
       json::object view;
       view["body"] = loaded->body;
       view["parsed"] = loaded->parsed;
-      view["source_body"] = loaded->source_body ? json::value(json::string(*loaded->source_body)) : json::value(nullptr);
+      auto readingSource = loadCatalogSource(*store.kv, loaded);
+      auto source = co_await std::move(readingSource);
+      view["source_body"] = source ? json::value(json::string(*source)) : json::value(nullptr);
       loadedText = rt::jsonStringify(json::value(view));
     }
     EXPECT_EQ(loadedText, rt::jsonStringify(vector.at("loaded")));
@@ -392,7 +394,10 @@ ASYNC_TEST("large bodies are split into bounded chunks and inflate back") {
   EXPECT(bounded);
   auto loading = loadCatalog(*store.kv, "0.152.0", GEN, rt::dateNow());
   const auto loaded = co_await std::move(loading);
-  EXPECT(loaded && loaded->body == text && loaded->source_body == std::optional<std::string>(text));
+  ASSERT(loaded);
+  auto readingSource = loadCatalogSource(*store.kv, loaded);
+  const auto source = co_await std::move(readingSource);
+  EXPECT(loaded->body == text && source == std::optional<std::string>(text));
   resetCodexCatalogMemoForTest();
 }
 
@@ -442,7 +447,10 @@ ASYNC_TEST("integrity failures and metadata guards load nothing") {
   resetCodexCatalogMemoForTest();
   auto loading = loadCatalog(*source.kv, "1.0.0", GEN, NOW + 1);
   const auto loaded = co_await std::move(loading);
-  EXPECT(loaded && loaded->body == served && !loaded->source_body.has_value());
+  ASSERT(loaded);
+  auto readingSource = loadCatalogSource(*source.kv, loaded);
+  const auto sourceBody = co_await std::move(readingSource);
+  EXPECT(loaded->body == served && !sourceBody.has_value());
   resetCodexCatalogMemoForTest();
 }
 
@@ -503,6 +511,30 @@ ASYNC_TEST("the memo serves hits, keeps 32 catalogs in LRU order, and pruning ke
   auto restoring = put(store.kv, "1.0.40", NOW + 300);
   co_await std::move(restoring);
   EXPECT_EQ(getCodexCatalogMemoVersionsForTest(), memoAfter35);
+  resetCodexCatalogMemoForTest();
+}
+
+ASYNC_TEST("large catalogs evict by served bytes while a reader keeps its catalog") {
+  auto opening = freshStore(GEN);
+  const Store store = co_await std::move(opening);
+  const std::string text = R"({"models":[{"slug":"large","base_instructions":")" +
+    std::string(CODEX_CATALOG_MEMO_BODY_BYTES / 2, 'a') + R"("}]})";
+  const std::vector<std::string> versions{"1.0.0", "1.0.1"};
+  Catalog first;
+  for (const auto& version : versions) {
+    StoreCodexCatalogInput input{.clientVersion = version, .authGeneration = GEN, .body = text, .fetchedAtMs = NOW};
+    auto writing = storeCodexCatalog(*store.kv, std::move(input));
+    const bool stored = co_await std::move(writing);
+    ASSERT(stored);
+    auto loading = loadCatalog(*store.kv, version, GEN, NOW + 1);
+    const auto loaded = co_await std::move(loading);
+    ASSERT(loaded);
+    EXPECT(loaded->body == text);
+    if (!first) first = loaded;
+  }
+  EXPECT_EQ(getCodexCatalogMemoVersionsForTest(), std::vector<std::string>{"1.0.1"});
+  EXPECT_EQ(first->metadata.client_version, versions.front());
+  EXPECT(first->body == text);
   resetCodexCatalogMemoForTest();
 }
 

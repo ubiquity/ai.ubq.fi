@@ -58,15 +58,14 @@ namespace uos::catalog::store {
       // Map insertion order is the LRU order. Reinsert hits and replacements so
       // the first entry is always the least recently used catalog.
       memo.delete_(key);
+      if (catalog->body.size() > types::CODEX_CATALOG_MEMO_BODY_BYTES) return;
       memo.set(key, std::move(catalog));
-      while (static_cast<double>(memo.size()) > types::CODEX_CATALOG_MAX_VERSIONS) {
-        std::optional<std::string> leastRecentlyUsed;
-        for (const std::string& candidate : memo.keys()) {
-          leastRecentlyUsed = candidate;
-          break;
-        }
-        if (!leastRecentlyUsed) break;
-        memo.delete_(*leastRecentlyUsed);
+      std::size_t bodyBytes = 0;
+      for (const auto& entry : memo.values()) bodyBytes += entry->body.size();
+      while (static_cast<double>(memo.size()) > types::CODEX_CATALOG_MAX_VERSIONS || bodyBytes > types::CODEX_CATALOG_MEMO_BODY_BYTES) {
+        const auto oldest = memo.begin();
+        bodyBytes -= oldest->second->body.size();
+        memo.delete_(oldest->first);
       }
     }
 
@@ -291,18 +290,8 @@ namespace uos::catalog::store {
       // validation without changing their upstream source or storage integrity.
       json::value parsed(std::move(*parsedBody));
       std::string servedBody = applyCodexCatalogCompactionLimits(parsed.as_object()) ? rt::jsonStringify(parsed) : std::move(*body);
-      std::optional<std::string> sourceBody;
-      if (metadata.source_chunk_count) {
-        std::function<rt::KvKey(double)> keyForSourceChunk = [version, generation = metadata.body_generation](double index) {
-          return sourceChunkKey(version, generation, index);
-        };
-        auto readingSource = readCatalogBody(kv, keyForSourceChunk, *metadata.source_chunk_count, metadata.source_compressed_bytes.value_or(0),
-                                             metadata.source_body_bytes.value_or(0), metadata.source_sha256.value_or(""));
-        sourceBody = co_await std::move(readingSource);
-      }
       auto loaded = std::make_shared<LoadedCodexCatalog>(LoadedCodexCatalog{
         .metadata = metadata, .body = std::move(servedBody), .parsed = std::move(parsed.as_object())});
-      if (sourceBody && !sourceBody->empty() && parseCatalogBody(*sourceBody)) loaded->source_body = std::move(sourceBody);
       memoizeCatalog(loaded);
       co_return loaded;
     }
@@ -619,6 +608,19 @@ namespace uos::catalog::store {
 
   rt::Task<Catalog> loadCatalog(rt::Kv& kv, std::string version, std::string authGeneration, double nowMs) {
     return loadCatalogFor(kv, std::move(version), rt::KvValue(std::move(authGeneration)), nowMs);
+  }
+
+  rt::Task<std::optional<std::string>> loadCatalogSource(rt::Kv& kv, Catalog catalog) {
+    const auto& metadata = catalog->metadata;
+    if (!metadata.source_chunk_count) co_return std::nullopt;
+    std::function<rt::KvKey(double)> keyForChunk = [version = metadata.client_version, generation = metadata.body_generation](double index) {
+      return sourceChunkKey(version, generation, index);
+    };
+    auto reading = readCatalogBody(kv, std::move(keyForChunk), *metadata.source_chunk_count, metadata.source_compressed_bytes.value_or(0),
+                                   metadata.source_body_bytes.value_or(0), metadata.source_sha256.value_or(""));
+    auto body = co_await std::move(reading);
+    if (!body || body->empty() || !parseCatalogBody(*body)) co_return std::nullopt;
+    co_return body;
   }
 
   rt::Task<bool> storeCodexCatalog(rt::Kv& kv, StoreCodexCatalogInput input) {

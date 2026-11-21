@@ -176,11 +176,12 @@ namespace {
     if (replacement) { auto resultTask = catalogResponse(replacement, c->req, "rotated"); auto result = co_await std::move(resultTask); co_return result; }
     auto resultTask = meteredCatalogOrError(message); auto result = co_await std::move(resultTask); co_return result;
   }
-  rt::Task<rt::Response> revalidateCachedCatalog(Context c, Catalog cached) {
+  rt::Task<rt::Response> revalidateCachedCatalog(Context c, std::optional<std::string> sourceBody) {
     bool current = false; if (!c->heartbeat.lost()) current = co_await store::authGenerationIsCurrent(*c->kv, c->authGeneration);
     if (!current) { auto resultTask = rotatedCatalogResponse(c->kv, c->req, c->version); auto result = co_await std::move(resultTask); co_return result; }
-    if (!cached->source_body) { auto resultTask = staleOrRotatedOrUnavailable(c, "Codex catalog source body is unavailable for revalidation"); auto result = co_await std::move(resultTask); co_return result; }
-    store::StoreCodexCatalogInput input{.clientVersion = c->version, .authGeneration = c->authGeneration, .body = *cached->source_body, .etag = cached->metadata.etag, .contentType = cached->metadata.content_type, .fetchedAtMs = c->nowMs};
+    if (!sourceBody) { auto resultTask = staleOrRotatedOrUnavailable(c, "Codex catalog source body is unavailable for revalidation"); auto result = co_await std::move(resultTask); co_return result; }
+    const auto& cached = c->cached;
+    store::StoreCodexCatalogInput input{.clientVersion = c->version, .authGeneration = c->authGeneration, .body = std::move(*sourceBody), .etag = cached->metadata.etag, .contentType = cached->metadata.content_type, .fetchedAtMs = c->nowMs};
     auto pending = store::storeCodexCatalog(*c->kv, std::move(input)); auto stored = co_await std::move(pending);
     bool stillCurrent = false; if (stored) stillCurrent = co_await store::authGenerationIsCurrent(*c->kv, c->authGeneration);
     if (!stillCurrent) { auto resultTask = rotatedCatalogResponse(c->kv, c->req, c->version); auto result = co_await std::move(resultTask); co_return result; }
@@ -203,12 +204,22 @@ namespace {
   }
   rt::Task<rt::Response> refreshCodexCatalog(Context c) {
     fetch::FetchCodexModelsOptions options; options.clientVersion = c->version;
-    if (c->cached && c->cached->source_body) options.ifNoneMatch = c->cached->metadata.etag;
+    std::optional<std::string> sourceBody;
+    if (c->cached) {
+      try {
+        auto reading = store::loadCatalogSource(*c->kv, c->cached);
+        sourceBody = co_await std::move(reading);
+      } catch (...) {
+        rt::console::error("[ai.ubq.fi] Codex catalog source read failed for " + c->version + ":", std::current_exception());
+      }
+      if (sourceBody) options.ifNoneMatch = c->cached->metadata.etag;
+    }
     options.onProviderTransportFailure = [c] { c->providerDegradationObserved = true; };
     auto task = fetch::fetchCodexModels(options); auto upstream = co_await std::move(task);
     if (upstream.status() >= 500 && upstream.status() <= 599) c->providerDegradationObserved = true;
     co_await recordObservedProviderDegradation(c);
-    if (upstream.status() == 304 && c->cached) { auto resultTask = revalidateCachedCatalog(c, c->cached); auto result = co_await std::move(resultTask); co_return result; }
+    if (upstream.status() == 304 && c->cached) { auto resultTask = revalidateCachedCatalog(c, std::move(sourceBody)); auto result = co_await std::move(resultTask); co_return result; }
+    sourceBody.reset();
     auto contentType = upstream.headers().get("Content-Type");
     std::string body; bool readFailed = false;
     try { body = co_await upstream.text(); } catch (...) { readFailed = true; rt::console::error("[ai.ubq.fi] Codex catalog response read failed for " + c->version + ":", std::current_exception()); }

@@ -99,6 +99,24 @@ Each tuple lists VmRSS, RssAnon, VmHWM and resident `[heap]` in KiB. The 2.54 GB
 | 2.54 GB | 29200/5768/29200/264 | 122004/93836/122004/264 | 126420/93836/126420/264 | 126484/93836/126484/264 | 128532/95884/128532/264 | 127236/95884/128532/264 | 58400/27032/129284/264 |
 | 4.6 MB | 29720/6284/29720/784 | 122524/94352/122524/784 | 127056/94404/127056/836 | | | | 57896/25244/128976/764 |
 
-## Changes under measurement
+## Share the catalog and move request data
 
 The first change shares the verified catalog with in-flight requests, applies provider enrichment on one working copy, and moves the serialized result into the response. ETag hashing reads the validated UTF-8 bytes directly. The cold and stale paths still verify durable content and auth generations. Existing catalog store assertions now use the shared handle, with the same comparisons for body, source, eviction and generation.
+
+The measured source is `d361e1014da121f50a4c1f97c66479259330b323`. The manifest SHA-256 is `ef1f2fceb6f27a047e1213e859758f7052d75c4ca9199f1eba6170fef0c1130a` and the executable SHA-256 is `3d12eb096e03a6fb04dbcc41e6da8eba0449a4d2adcbb97faf8d0e18836631a7`. All 11 Release catalog binaries passed (125 cases). The first-session anonymous reading dropped from 93,324 to 42,992 KiB in matched trim-probe runs and fell to 25,548 KiB after trim. The catalog-only Heaptrack peak fell from 81.93 to 59.70 MB, and allocation calls fell from 347,767 to 164,744. Retained heap was 17.26 MB after the catalog, with source and served bytes still held in the memo. All catalog trials preserved the 4,812,874-byte payload and ETag.
+
+| Checkpoint with trim probe | VmRSS KiB | RssAnon KiB | VmHWM KiB | [heap] KiB |
+| --- | ---: | ---: | ---: | ---: |
+| Start | 30,440 | 6,996 | 30,440 | 1,484 |
+| Catalog 1 | 70,220 | 42,424 | 72,376 | 1,484 |
+| Completion 1 | 74,944 | 42,476 | 74,944 | 1,536 |
+| Catalog and completion 10 | 79,040 | 46,572 | 79,040 | 1,536 |
+| Catalog and completion 100 | 79,040 | 46,572 | 79,040 | 1,536 |
+| Catalog and completion 1,000 | 79,040 | 46,572 | 79,040 | 1,536 |
+| Trim after 1,000 | 57,924 | 25,456 | 81,004 | 1,464 |
+
+A 128 KiB fixed mmap threshold trial on this build had 27,344 KiB of anonymous memory after the first session and 24,236 KiB after trim. The unmodified threshold still let the first catalog grow the arena. The next change keeps the verified served view in an 8 MiB serialized-byte LRU and reads the source body when a stale refresh needs it.
+
+## Keep only the served catalog in the memo
+
+The memo applies its 32-version limit and an 8 MiB budget for the sum of served JSON lengths. This limits the amount of catalog data represented by retained strings and DOMs. Bigger catalogs can still be served from verified durable state. The fresh path skips the original body. Stale refresh loads and verifies that body before sending an upstream conditional request. The first focused run reached 123/126 cases because three OpenRouter tests still read the original body from the eager field. The tests now read it through the source loader and retain the original byte, ETag and revalidation assertions. The rerun passed all 11 binaries and 126 cases, including a new byte-eviction case with an in-flight reader.
