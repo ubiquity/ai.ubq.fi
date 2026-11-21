@@ -231,6 +231,18 @@ ASYNC_TEST("public health is passive release provenance with zero upstream and K
 #endif
     EXPECT(rt::getString(object(payload, "release"), "deployment_id").has_value()); EXPECT(scope.store->commands.empty());
 }
+ASYNC_TEST("public health reports the confinement mode recorded at native startup") {
+  T2IngressScope ingress;
+  const auto reset = rt::scopeExit([] { h::setConfinementMode({}); });
+  for (std::string_view mode : {"landlock", "landlock-reduced", "service-manager"}) {
+    h::setConfinementMode(mode);
+    const rt::Request request("https://ai.ubq.fi/health");
+    AWAIT(response, uos::handler::index::handler(request));
+    EXPECT_EQ(response.status(), 200);
+    AWAIT(payload, response.json());
+    EXPECT_EQ(rt::getString(payload, "confinement"), mode);
+  }
+}
 ASYNC_TEST("public health HEAD is release liveness without a response body") {
   T2IngressScope ingress;
   rt::RequestInit init; init.method = "HEAD";

@@ -1,0 +1,48 @@
+# For an operator-approved test install on a host where Landlock is absent.
+[Unit]
+Description=Native ai.ubq.fi gateway with service-manager confinement
+After=network-online.target
+
+[Service]
+Type=simple
+User=uos-gateway
+Group=uos-gateway
+WorkingDirectory=/srv/uos-native/state
+# PID 1 reads this root-owned, mode-0600 file before entering the sandbox.
+EnvironmentFile=/srv/uos-native/operator.env
+ExecStart=/srv/uos-native/package/ops/launch-native.sh /srv/uos-native/launch.json
+Restart=no
+TimeoutStopSec=15
+UMask=0077
+
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=tmpfs
+# Spell out the read-only home masks for Bookworm's systemd as well.
+TemporaryFileSystem=/home:ro,nodev,mode=0755 /root:ro,nodev,mode=0700 /run/user:ro,nodev,mode=0755
+# Keep the approved state and sealed release visible in the private mount namespace.
+BindPaths=/srv/uos-native/state
+BindReadOnlyPaths=/srv/uos-native/package
+ReadWritePaths=/srv/uos-native/state
+PrivateTmp=yes
+# Keep /run and the private temp mounts read-only. SQLite uses state/.data for scratch.
+ReadOnlyPaths=/run /tmp /var/tmp
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# Preserve loopback, upstream HTTPS and unicast DNS. This filters addresses only.
+IPAddressDeny=multicast
+
+# Optional hard limit for small boards. Size it for the intended test workload.
+# MemoryMax=256M

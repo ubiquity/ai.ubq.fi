@@ -5,6 +5,7 @@
 #include "uos/codex/auth_import.hpp"
 #include "uos/config.hpp"
 #include "uos/deepseek/index.hpp"
+#include "uos/health.hpp"
 #include "uos/kv.hpp"
 #include "uos/live/upstream.hpp"
 #include "uos/provider/gemini.hpp"
@@ -353,9 +354,18 @@ namespace uos::runtime::startup {
         else ports.connectPorts = {53, 443}; // DNS TCP fallback and the gateway's HTTPS/WSS upstreams.
         permissions.allowReducedConfinement = std::move(ports);
       }
+      if (const char* optIn = std::getenv("UOS_GATEWAY_ALLOW_NO_LANDLOCK"); optIn && std::string_view(optIn) == "1") {
+        permissions.allowNoLandlock = permissions_linux::ServiceManagerPaths{package.string(), state.string()};
+      }
       const auto receipt = permissions_linux::applyLinuxPermissions(permissions);
-      if (!receipt.processThreadSync || (!receipt.filesystemThreadSync && !permissions.allowReducedConfinement))
+      if (!receipt.processThreadSync || (!receipt.filesystemThreadSync && receipt.mode == "landlock"))
         refuse("kernel confinement did not produce both enforcement receipts");
+      health::setConfinementMode(receipt.mode);
+      if (receipt.mode == "service-manager") {
+        std::fprintf(stderr, "Warning: Landlock is absent (confinement=service-manager). Outbound TCP is not restricted by the gateway. "
+                             "The supplied systemd unit uses IPAddressDeny=multicast and RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX.\n");
+        return;
+      }
       if (profiles.antigravity) {
         provider::gemini::setGeminiChildConfinement([base = std::move(*profiles.antigravity)](const std::string& workspace) {
           auto child = base;

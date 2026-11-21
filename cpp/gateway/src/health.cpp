@@ -384,13 +384,17 @@ namespace uos::health {
     co_return http::json(200, payload, headers);
   }
   namespace {
+    std::string confinementMode;
+
     rt::Response healthResponse(std::optional<json::object> upstreamAuth = std::nullopt) {
       const auto gitSha = config::runtimeGitSha(); const auto deploymentId = config::runtimeDeploymentId();
       json::object body{{"status", "available"}, {"release", json::object{{"git_sha", gitSha}, {"deployment_id", deploymentId}}}};
       if (upstreamAuth) body.emplace("upstream_auth", std::move(*upstreamAuth));
+      if (!confinementMode.empty()) body.emplace("confinement", confinementMode);
       return http::json(200, body, {{"Cache-Control", "no-store"}, {"x-uos-git-sha", gitSha}, {"x-uos-deployment-id", deploymentId}});
     }
   }
+  void setConfinementMode(std::string_view mode) { confinementMode = mode; }
   rt::Response handleHealth() { return healthResponse(); }
   rt::Task<rt::Response> handleFollowerHealth() {
     std::optional<double> remaining;

@@ -1,8 +1,16 @@
-# Native gateway input limits
+# Native gateway security limits
 
 Input budgets are defined in [`uos/rt/limits.hpp`](../include/uos/rt/limits.hpp). Client, upstream and stored inputs also retain their smaller route or protocol limits. Limits apply to counts or sizes at the stated stage. For example, Fetch measures an SSE line in decoded UTF-8 bytes before a provider turns it into events or JSON.
 
 The acceptance tests below are registered existing binaries with additional boundary cases. The ARM64 run records the tested commit, tree, commands and outcomes. [Run findings](findings/cppgw-input-limits-20261119.md)
+
+## Service-manager confinement
+
+This opt-in mode is weaker than Landlock. The filesystem boundary comes from the service manager before launch. The gateway checks read-only system mounts and the sealed release, the home masks and common home secret paths, the non-root identity, empty capability sets and `NoNewPrivileges`. It installs its usual thread-synchronized seccomp filter, including child process and executable launch denial. The Antigravity CLI profile requires Landlock.
+
+The unit masks `/home`, `/root` and `/run/user` and allows writes to the dedicated state tree. Unix permissions still govern reads of visible host files outside those masks. Place private data in protected locations, including home directories on custom paths. The gateway applies no Landlock filesystem allowlist, device `ioctl` restrictions or Unix socket and signal scoping in this mode.
+
+The gateway applies no outbound TCP port restriction in this mode. The unit limits socket families to IPv4, IPv6 and Unix sockets. On hosts with systemd IP filtering, `IPAddressDeny=multicast` blocks multicast while leaving unicast DNS and provider HTTPS available. The IP rule operates on addresses. [Raspberry Pi setup](RASPBERRY-PI.md#start-under-systemd-without-landlock)
 
 ## Antigravity CLI
 
