@@ -2,6 +2,7 @@
 // Shared Codex catalog constants and record types, split out of src/codex_catalog.ts.
 #include "uos/rt/kv.hpp"
 #include "uos/rt/prelude.hpp"
+#include <cstddef>
 #include <optional>
 #include <string>
 
@@ -12,6 +13,8 @@ namespace uos::catalog::types {
   inline constexpr double CODEX_CATALOG_COLD_WAIT_MS = 5'000;
   inline constexpr double CODEX_CATALOG_CHUNK_BYTES = 55'000;
   inline constexpr double CODEX_CATALOG_MAX_VERSIONS = 32;
+  // Cap the combined served JSON size represented by the in-memory memo.
+  inline constexpr std::size_t CODEX_CATALOG_MEMO_BODY_BYTES = 8 * 1024 * 1024;
   inline constexpr double PROMPT_CACHE_SCOPE_PROMOTION_LEASE_MS = 120'000;
 
   extern const rt::KvKey CODEX_CATALOG_AUTH_GENERATION_KEY;

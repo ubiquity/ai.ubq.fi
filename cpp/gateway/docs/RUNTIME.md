@@ -24,6 +24,12 @@ The sealed directory contains `bin/uos-gateway`, `static/`, the favicons, `licen
 The package metadata binds the build profile. The runtime closure records the interpreter, library paths and hashes,
 and ELF version requirements. Seal into a new directory after a shared-library change. [Vendor registry](../cmake/vendors.json)
 
+## Memory on small Linux ARM64 hosts
+
+On Ubuntu ARM64 with a 540,000-row, roughly 1 GB SQLite fixture, the Release gateway used about 29 MiB resident at startup. One Codex session with a 535-model catalog and a 63 kB streamed request settled at about 55 MiB resident, including 23 MiB anonymous. Both readings stayed flat from 100 to 1,000 serial sessions, with a peak of about 68 MiB resident. Startup fixes glibc's mmap threshold at 128 KiB so freed large buffers can release their mappings.
+
+Allow at least 90 MiB of RAM headroom for this serial workload on a small board, alongside memory for the OS and other services. Size additional headroom for concurrent streams and larger inputs, and leave disk space for the SQLite state and WAL. The Release benchmark enforces a 68 MiB post-trim resident budget after one catalog and 100 completions. [Codex memory check](../bench/codex_memory/README.md) · [Measurements](findings/cppgw-memory-20261121.md)
+
 ## Input limits
 
 The shared constants in [limits.hpp](../include/uos/rt/limits.hpp) record the target defaults. The enforced limits below apply at the parser, library or transport boundary. Keep smaller existing limits on the same operation and record a larger allowance only for a proven application flow. Map failures to the boundary's established status, close code or exception. Source wiring and executed acceptance are recorded separately below.

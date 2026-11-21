@@ -75,10 +75,11 @@ def stop(child, expected=0):
 
 
 @contextmanager
-def process(command, root, environment, log_name):
+def process(command, root, environment, log_name, *, pass_fds=()):
     log = root / log_name
     with log.open("wb") as output:
-        child = subprocess.Popen(command, cwd=root, env=environment, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT)
+        child = subprocess.Popen(command, cwd=root, env=environment, stdin=subprocess.DEVNULL, stdout=output,
+                                 stderr=subprocess.STDOUT, pass_fds=pass_fds)
         try:
             yield child, log
         finally:

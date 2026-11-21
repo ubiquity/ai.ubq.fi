@@ -7,7 +7,16 @@
 #include <exception>
 #include <utility>
 
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
+
 int main(int argc, char** argv) {
+#if defined(__GLIBC__)
+  // Keep glibc's initial mmap threshold. Freeing catalog-sized mappings
+  // would otherwise raise it and send later large allocations into arenas.
+  (void)::mallopt(M_MMAP_THRESHOLD, 128 * 1024);
+#endif
   uos::rt::process::setArgv(argc, argv);
   try {
     auto arguments = uos::runtime::startup::parseArguments(argc, argv);
