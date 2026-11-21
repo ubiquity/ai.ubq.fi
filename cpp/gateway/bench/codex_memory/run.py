@@ -18,9 +18,10 @@ import time
 sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(HERE.parent / "request_path"), str(HERE.parents[1] / "tests/production_smoke"), str(HERE)]
-from cases import ADMIN_TOKEN, synthetic_auth
+from cases import synthetic_auth
 from driver import connection, control, require
 from fixture import BODY, HISTORY, ROWS, catalog, completion, populate, seed, upstream
+from fixtures import ADMIN_TOKEN
 from run import LISTEN, check_terminals, command_for, identities_for, process, settled, sparse, stop, verify_namespace, wait_port
 
 CHECKPOINTS = (1, 10, 100, 1000)

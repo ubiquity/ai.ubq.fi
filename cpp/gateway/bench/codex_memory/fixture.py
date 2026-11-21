@@ -7,9 +7,9 @@ import sqlite3
 from threading import Thread
 from urllib.parse import parse_qs, urlsplit
 
-from cases import ADMIN_TOKEN, API_TOKEN, CATALOG_MODEL
+from cases import CATALOG_MODEL
 from driver import connection, control, require
-from fixtures import encode
+from fixtures import ADMIN_TOKEN, API_TOKEN, encode
 from run import settled
 
 VERSION = "0.171.0"
@@ -157,7 +157,8 @@ def populate(database, rows):
                 with recursive sequence(n) as (select 1 union all select n + 1 from sequence where n < ?)
                 insert into kv (k, v, v_encoding, version, expiration_ms)
                 select cast(x'026d656d6f72792d666978747572650002' || printf('%07d', n) || x'00' as blob),
-                       zeroblob(1750), 3, (select version from data_version where k = 0), -1 from sequence
+                       zeroblob(case when n % 4 = 0 then 1750 else 700 end),
+                       3, (select version from data_version where k = 0), -1 from sequence
                 """, (rows - existing,))
             sql.commit()
         sql.execute("pragma wal_checkpoint(truncate)")
