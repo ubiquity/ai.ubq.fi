@@ -120,3 +120,9 @@ A 128 KiB fixed mmap threshold trial on this build had 27,344 KiB of anonymous m
 ## Keep only the served catalog in the memo
 
 The memo applies its 32-version limit and an 8 MiB budget for the sum of served JSON lengths. This limits the amount of catalog data represented by retained strings and DOMs. Bigger catalogs can still be served from verified durable state. The fresh path skips the original body. Stale refresh loads and verifies that body before sending an upstream conditional request. The first focused run reached 123/126 cases because three OpenRouter tests still read the original body from the eager field. The tests now read it through the source loader and retain the original byte, ETag and revalidation assertions. The rerun passed all 11 binaries and 126 cases, including a new byte-eviction case with an in-flight reader.
+
+Source `66e0f1a3a234dd8c0e2b8d53f7c129f70b99ae96` has manifest SHA-256 `ca8198148a1aa1adaf463672e17b716f45711b19c0879fb8ddfdbc9237854176` and executable SHA-256 `e36eaa27328780c5b231f24f41876f9e175ef11bb770a1760d1de0ffcd8a1a34`. The first-session anonymous reading fell from 42,992 to 39,220 KiB. Trim returned 1 and left 19,632 KiB, down from 25,548 KiB. The live allocator count went from 18,502,224 to 13,661,936 bytes, including direct mappings, about one original catalog body.
+
+## Fix the glibc mmap threshold
+
+With the bounded memo and the default adaptive thresholds, the warmed allocator still held about 19 MiB of anonymous RSS that trim could release. Setting the mmap threshold to 128 KiB for the same package brought first-session anonymous RSS down to 22,852 KiB, peak RSS to 60,528 KiB and trimmed anonymous RSS to 19,948 KiB. The gateway entry point now fixes glibc's mmap threshold at that initial value before starting runtime threads. Large allocations can use individually releasable mappings throughout the lifetime of the service.
