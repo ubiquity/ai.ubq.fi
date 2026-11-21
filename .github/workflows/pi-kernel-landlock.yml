@@ -1,0 +1,27 @@
+name: Pi kernel with Landlock
+on:
+  push:
+    branches: [claude/pi-kernel-landlock]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 240
+    container: debian:bookworm
+    steps:
+      - name: Install git for checkout
+        run: apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates >/dev/null
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Build
+        run: bash pi-kernel/build.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pi-kernel-landlock
+          path: |
+            out/pi-kernel-landlock.tar.gz
+            out/pi-kernel-landlock.tar.gz.sha256
+            out/config.diff
+          retention-days: 14
