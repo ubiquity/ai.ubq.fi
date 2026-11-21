@@ -8,19 +8,19 @@
 - [x] Profile allocation peaks and retained bytes, and measure the effect of `malloc_trim(0)`.
 - [x] Fix measured waste and repeat the same workload after each fix.
 - [x] Add the Release budget check and document small-board use.
-- [ ] Record the final focused, shard and registration gates.
+- [x] Record the final focused, shard and registration gates.
 
 ## Runner
 
 The starting tree is `8f11c1a264bcdd6bef668139bf1a59031dd962fe` on `claude/cpp-gateway-port`. The runner has four ARM64 CPUs, Ubuntu 26.04.1, Linux 7.0.0-1020-azure, glibc 2.43, Clang 21.1.8, Boost 1.90, ICU 78.2 and Heaptrack 1.5.0. The job's compiler cache is in use.
 
-The runner used the [C++ workflow dependencies](../../../../.github/workflows/cpp-gateway-ci.yml) and built SQLite 3.54.0 under `/usr/local` using the workflow's tarball SHA-256 `134ec0802dda5795816e25d25872d20b312cb3973438c49b30bc40b7705ea9ed`, `./configure --prefix=/usr/local --disable-static --disable-readline CFLAGS='-O2 -DSQLITE_DQS=3'` and `make -j4`. `pkg-config --modversion sqlite3` returned `3.54.0`. The runner permits fresh network, mount and PID namespaces through noninteractive sudo. Measurements use loopback mocks and an environment created from an allowlist.
+The runner installed the workflow dependencies and built SQLite 3.54.0 under `/usr/local` using the workflow's tarball SHA-256 `134ec0802dda5795816e25d25872d20b312cb3973438c49b30bc40b7705ea9ed`, `./configure --prefix=/usr/local --disable-static --disable-readline CFLAGS='-O2 -DSQLITE_DQS=3'` and `make -j4`. `pkg-config --modversion sqlite3` returned `3.54.0`. The runner permits fresh network, mount and PID namespaces through noninteractive sudo. Measurements use loopback mocks and an environment created from an allowlist. [C++ workflow dependencies](../../../../.github/workflows/cpp-gateway-ci.yml)
 
 ## Reproduction
 
 The reported service moved from about 5 MiB anonymous and 15 MiB resident at idle to 57 MiB anonymous and 103 MiB peak resident after the first two requests. The runner reproduces the pattern with synthetic data and its own library mappings. It shows that the first catalog accounts for nearly all of the increase, with a smaller live memo and a much larger allocator high-water effect.
 
-The [benchmark driver](../../bench/codex_memory/README.md) uses the existing package launcher harness and synthetic production-smoke auth and model fixtures. It seeds exact-version catalog chunks through the gateway, restarts on the populated database, verifies local dispatch and validates text, token usage and delivery. Its synthetic catalog repeats an 8 KiB instruction template across 535 upstream records. Production catalog bytes were unavailable.
+The benchmark driver uses the existing package launcher harness and synthetic production-smoke auth and model fixtures. It seeds exact-version catalog chunks through the gateway, restarts on the populated database, verifies local dispatch and validates text, token usage and delivery. Its synthetic catalog repeats an 8 KiB instruction template across 535 upstream records. Production catalog bytes were unavailable. [Benchmark driver](../../bench/codex_memory/README.md)
 
 Release objects build via `CC=clang CXX=clang++ UOS_CI_JOBS=4 bash cpp/gateway/tools/ci-build.sh --config release --shard 1/4` with a fresh empty build home and temp, the restored compiler cache and a scratch `UOS_CI_BUILD_DIR`. The package uses those Release production objects and vendor archives, plus `runtime/startup.cpp`, `entrypoints/gateway.cpp` and `src/release.cpp` built with the same flags and the selected Git SHA. The benchmark package producer seals the binary, assets and host closure from a Git archive of that SHA. Ubuntu's multiarch path is selected by the request-path packager. In a private mount namespace, the link, seal and isolated runs see the pinned SQLite at the distribution's library path. The package copy has its default build RUNPATH removed via `patchelf --remove-rpath` and SHA-256 `6c7ccae25f289041e33cbae8daeee19dcd458d0c4fb026d34650bf97e69910bf`. The suite uses the original build at `/usr/local` with SHA-256 `2fb9976405cd8f7afcc474acc90b93c087c4ced76b5302ef75dcd79279f9b238`. The baseline package manifest SHA-256 is `98965354c8402aa3f280092e7e9eff9484d939e68564c1e99f27dbd87bb606f5` and the executable SHA-256 is `7cb64c6448a97815551bc1b437eed2451cc38b75863fc21ae5608c198ef3c9d7`.
 
@@ -233,3 +233,54 @@ The allocator columns are byte counts from `mallinfo2`. Live arena and mmap byte
 | baseline 1,024 rows | 3 | 18,399,504 | 0 | 81,092,336 → 53,829,360 |
 | baseline 2.54 GB, 1,000 sessions | 3 | 20,040,736 | 0 | 80,962,528 → 51,602,400 |
 | shared catalog, 1,000 sessions | 3 | 15,246,592 | 4,816,896 | 28,338,944 → 9,464,576 |
+
+## Final verification
+
+The accepted commit is `e96224b08552cd1a4522798602638f1c96fc9180`, tree `cf4218659393de6addb18eec055c3bef90d1c640`. All three native receipts confirm stable build inputs with SHA-256 `abf7386d4e2fb735dbedefe6db0da1d918c1f86692895985b5f5f297661e117c` and SQLite 3.54.0. The commands used Clang with four jobs and the CI driver's credential-free OS isolation.
+
+| Command | Binaries passed | Cases passed | Receipt SHA-256 |
+| --- | ---: | ---: | --- |
+| `python3 -B "$scratch/affected.py" --config release` | 75 | 1,047 | `e7efc45ed505fd3d0396abc6024e25706e70a3135fc0b6a378ab7d4af0bc6122` |
+| `python3 -B "$scratch/affected.py" --config asan` | 75 | 1,047 | `01e642f3aae05a505ff8eb29defa26205dc06b176d407b143a9cb2f74356417c` |
+| `bash cpp/gateway/tools/ci-build.sh --config release --shard 1/4` | 114 | 1,334 | `2e2129b2ea38b669cf65cdf1db1c9c311565f78ae905f41f7e897e53c71a7c32` |
+
+The affected invocation selects the full registered link closure for the three changed application sources and calls the same CI driver. This is the scratch `affected.py` used for both configurations.
+
+```python
+from pathlib import Path
+import runpy
+import sys
+
+gateway = Path("cpp/gateway").resolve()
+sys.path.insert(0, str(gateway / "tools"))
+import links
+
+changed = {"src/catalog/index.cpp", "src/catalog/models.cpp", "src/catalog/store.cpp"}
+registry = links.read_registry()
+tests = [test for test in links.all_tests() if changed.intersection(links.resolve(test, registry).sources)]
+assert len(tests) == 75
+links.all_tests = lambda: tests
+runpy.run_path(str(gateway / "cmake/ci/driver.py"), run_name="__main__")
+```
+
+`python3 -B cpp/gateway/tools/links.py --check` passed all 453 registrations. `git diff --check` passed. The prewarm sanitizer run overlapped edits and the driver rejected it as acceptance evidence. The final runs above used committed inputs throughout.
+
+The accepted commit was also sealed and run with `--check`. The manifest SHA-256 is `7eacbd0cfa92ad0a639fdcd35635ca8f711ed77fb75f9158f4b84613c823ad34`, the executable SHA-256 is `d83fc59813fee2394255dfce07ab9ff1110e7ec3955e736c57686c355ce82921`, and the budget receipt SHA-256 is `e9b6ebe14e55cea141e06e8abf2a40c17e3adc1a4d9bff46959d2536fada5aab`. The 989,941,760-byte fixture gave the following readings in KiB. Trim returned 1 with three arenas, 9,232,752 live arena bytes, 4,816,896 direct-mapped bytes and 10,534,544 free arena bytes before and after. The original request-path launcher passed `--scenarios models stream --requests 1 --warmup 0 --repetitions 1 --concurrency 1` with the same package, including the progressive SSE proof and two delivered terminals.
+
+| Checkpoint | VmRSS | RssAnon | VmHWM | [heap] |
+| --- | ---: | ---: | ---: | ---: |
+| Start | 29,636 | 6,256 | 29,636 | 748 |
+| Catalog | 51,112 | 23,252 | 60,544 | 748 |
+| Completion 1, 10 and 100 | 55,776 | 23,308 | 60,544 | 804 |
+| Trim | 53,116 | 20,648 | 60,544 | 760 |
+
+### Committed-diff review
+
+The native Codex 0.171.0 CLI used both refs fetched into an isolated scratch checkout. The base was `8f11c1a264bcdd6bef668139bf1a59031dd962fe` and the head was the accepted commit above. The review model was `gpt-6.1-sol`. The loopback-only command returned 124 after logging `failed to connect to Responses WebSocket stage=Unknown`. There was no complete review result.
+
+```sh
+timeout -k 2s 20s codex review --base refs/review/base \
+  -c 'model="gpt-6.1-sol"' -c 'review_model="gpt-6.1-sol"' \
+  -c 'sandbox_mode="read-only"' -c 'shell_environment_policy.inherit="none"' \
+  -c 'shell_environment_policy.set={PATH="/usr/bin:/bin"}'
+```
