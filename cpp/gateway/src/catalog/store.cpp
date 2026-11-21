@@ -36,8 +36,8 @@ namespace uos::catalog::store {
 
     constexpr double NaN = std::numeric_limits<double>::quiet_NaN();
 
-    rt::OrderedMap<std::string, LoadedCodexCatalog>& catalogMemo() {
-      static rt::OrderedMap<std::string, LoadedCodexCatalog> memo;
+    rt::OrderedMap<std::string, Catalog>& catalogMemo() {
+      static rt::OrderedMap<std::string, Catalog> memo;
       return memo;
     }
 
@@ -46,19 +46,19 @@ namespace uos::catalog::store {
     }
 
     void deleteCatalogMemoVersion(const std::string& version) {
-      rt::OrderedMap<std::string, LoadedCodexCatalog>& memo = catalogMemo();
+      auto& memo = catalogMemo();
       for (const auto& [key, catalog] : memo) {
-        if (catalog.metadata.client_version == version) memo.delete_(key);
+        if (catalog->metadata.client_version == version) memo.delete_(key);
       }
     }
 
-    void memoizeCatalog(const LoadedCodexCatalog& catalog) {
-      rt::OrderedMap<std::string, LoadedCodexCatalog>& memo = catalogMemo();
-      const std::string key = catalogMemoKey(catalog.metadata);
+    void memoizeCatalog(Catalog catalog) {
+      auto& memo = catalogMemo();
+      const std::string key = catalogMemoKey(catalog->metadata);
       // Map insertion order is the LRU order. Reinsert hits and replacements so
       // the first entry is always the least recently used catalog.
       memo.delete_(key);
-      memo.set(key, catalog);
+      memo.set(key, std::move(catalog));
       while (static_cast<double>(memo.size()) > types::CODEX_CATALOG_MAX_VERSIONS) {
         std::optional<std::string> leastRecentlyUsed;
         for (const std::string& candidate : memo.keys()) {
@@ -253,11 +253,11 @@ namespace uos::catalog::store {
       std::optional<std::string> result;
       try {
         auto inflating = gunzip(std::move(compressed));
-        const std::string body = co_await std::move(inflating);
+        std::string body = co_await std::move(inflating);
         if (static_cast<double>(rt::utf8ByteLength(body)) == bodyBytes) {
           auto hashing = utils::sha256Hex(body);
           const std::string digest = co_await std::move(hashing);
-          if (digest == sha256) result = body;
+          if (digest == sha256) result = std::move(body);
         }
       } catch (...) {
         result = std::nullopt;
@@ -267,31 +267,30 @@ namespace uos::catalog::store {
 
     bool applyCodexCatalogCompactionLimits(json::object& parsed);
 
-    rt::Task<std::optional<LoadedCodexCatalog>> loadCatalogFor(rt::Kv& kv, std::string version, rt::KvValue authGeneration, double nowMs) {
+    rt::Task<Catalog> loadCatalogFor(rt::Kv& kv, std::string version, rt::KvValue authGeneration, double nowMs) {
       auto reading = kv.get(metadataKey(version));
       const rt::KvEntryMaybe<> entry = co_await std::move(reading);
       const std::optional<CodexCatalogMetadata> stored = catalogMetadata(entry.value);
-      if (!stored || !equalsString(authGeneration, stored->auth_generation)) co_return std::nullopt;
+      if (!stored || !equalsString(authGeneration, stored->auth_generation)) co_return nullptr;
       const CodexCatalogMetadata metadata = *stored;
-      if (nowMs - metadata.fetched_at_ms >= types::CODEX_CATALOG_RETENTION_MS) co_return std::nullopt;
+      if (nowMs - metadata.fetched_at_ms >= types::CODEX_CATALOG_RETENTION_MS) co_return nullptr;
       const std::string memoKey = catalogMemoKey(metadata);
-      if (LoadedCodexCatalog* cached = catalogMemo().get(memoKey)) {
-        // memoizeCatalog drops the entry before reinserting it, so the hit moves out.
-        LoadedCodexCatalog hit = std::move(*cached);
+      if (const Catalog* cached = catalogMemo().get(memoKey)) {
+        Catalog hit = *cached;
         memoizeCatalog(hit);
         co_return hit;
       }
 
       std::function<rt::KvKey(double)> keyForChunk = [version, generation = metadata.body_generation](double index) { return chunkKey(version, generation, index); };
       auto readingBody = readCatalogBody(kv, keyForChunk, metadata.chunk_count, metadata.compressed_bytes, metadata.body_bytes, metadata.sha256);
-      const std::optional<std::string> body = co_await std::move(readingBody);
-      if (!body || body->empty()) co_return std::nullopt;
+      std::optional<std::string> body = co_await std::move(readingBody);
+      if (!body || body->empty()) co_return nullptr;
       std::optional<json::object> parsedBody = parseCatalogBody(*body);
-      if (!parsedBody) co_return std::nullopt;
+      if (!parsedBody) co_return nullptr;
       // Persisted bytes are verified above. Project old caches before client ETag
       // validation without changing their upstream source or storage integrity.
       json::value parsed(std::move(*parsedBody));
-      const std::string servedBody = applyCodexCatalogCompactionLimits(parsed.as_object()) ? rt::jsonStringify(parsed) : *body;
+      std::string servedBody = applyCodexCatalogCompactionLimits(parsed.as_object()) ? rt::jsonStringify(parsed) : std::move(*body);
       std::optional<std::string> sourceBody;
       if (metadata.source_chunk_count) {
         std::function<rt::KvKey(double)> keyForSourceChunk = [version, generation = metadata.body_generation](double index) {
@@ -301,8 +300,9 @@ namespace uos::catalog::store {
                                              metadata.source_body_bytes.value_or(0), metadata.source_sha256.value_or(""));
         sourceBody = co_await std::move(readingSource);
       }
-      LoadedCodexCatalog loaded{.metadata = metadata, .body = servedBody, .parsed = std::move(parsed.as_object())};
-      if (sourceBody && !sourceBody->empty() && parseCatalogBody(*sourceBody)) loaded.source_body = *sourceBody;
+      auto loaded = std::make_shared<LoadedCodexCatalog>(LoadedCodexCatalog{
+        .metadata = metadata, .body = std::move(servedBody), .parsed = std::move(parsed.as_object())});
+      if (sourceBody && !sourceBody->empty() && parseCatalogBody(*sourceBody)) loaded->source_body = std::move(sourceBody);
       memoizeCatalog(loaded);
       co_return loaded;
     }
@@ -596,7 +596,7 @@ namespace uos::catalog::store {
 
   std::vector<std::string> getCodexCatalogMemoVersionsForTest() {
     std::vector<std::string> versions;
-    for (const LoadedCodexCatalog& catalog : catalogMemo().values()) versions.push_back(catalog.metadata.client_version);
+    for (const Catalog& catalog : catalogMemo().values()) versions.push_back(catalog->metadata.client_version);
     return versions;
   }
 
@@ -617,10 +617,8 @@ namespace uos::catalog::store {
     return std::move(parsed.as_object());
   }
 
-  rt::Task<std::optional<LoadedCodexCatalog>> loadCatalog(rt::Kv& kv, std::string version, std::string authGeneration, double nowMs) {
-    auto loading = loadCatalogFor(kv, std::move(version), rt::KvValue(std::move(authGeneration)), nowMs);
-    std::optional<LoadedCodexCatalog> catalog = co_await std::move(loading);
-    co_return catalog;
+  rt::Task<Catalog> loadCatalog(rt::Kv& kv, std::string version, std::string authGeneration, double nowMs) {
+    return loadCatalogFor(kv, std::move(version), rt::KvValue(std::move(authGeneration)), nowMs);
   }
 
   rt::Task<bool> storeCodexCatalog(rt::Kv& kv, StoreCodexCatalogInput input) {
@@ -787,16 +785,16 @@ namespace uos::catalog::store {
     co_return equalsString(entry.value, expected);
   }
 
-  rt::Task<std::optional<LoadedCodexCatalog>> loadCurrentGenerationCatalog(rt::Kv& kv, std::string version) {
+  rt::Task<Catalog> loadCurrentGenerationCatalog(rt::Kv& kv, std::string version) {
     auto reading = kv.get(CODEX_CATALOG_AUTH_GENERATION_KEY);
     const rt::KvEntryMaybe<> generation = co_await std::move(reading);
-    if (!generation.value.truthy()) co_return std::nullopt;
+    if (!generation.value.truthy()) co_return nullptr;
     auto loading = loadCatalogFor(kv, std::move(version), generation.value, rt::dateNow());
-    std::optional<LoadedCodexCatalog> catalog = co_await std::move(loading);
+    auto catalog = co_await std::move(loading);
     co_return catalog;
   }
 
-  rt::Task<std::optional<LoadedCodexCatalog>> waitForColdCatalog(rt::Kv& kv, std::string version) {
+  rt::Task<Catalog> waitForColdCatalog(rt::Kv& kv, std::string version) {
     const double deadline = rt::dateNow() + types::CODEX_CATALOG_COLD_WAIT_MS;
     while (rt::dateNow() < deadline) {
       co_await rt::sleep(50);
@@ -804,9 +802,9 @@ namespace uos::catalog::store {
       const rt::KvEntryMaybe<> authGeneration = co_await std::move(reading);
       if (!authGeneration.value.truthy()) continue;
       auto loading = loadCatalogFor(kv, version, authGeneration.value, rt::dateNow());
-      std::optional<LoadedCodexCatalog> catalog = co_await std::move(loading);
+      auto catalog = co_await std::move(loading);
       if (catalog) co_return catalog;
     }
-    co_return std::nullopt;
+    co_return nullptr;
   }
 }

@@ -12,7 +12,7 @@
 
 namespace uos::catalog::models {
   json::array claudeCodeCodexModels(const std::vector<provider::claude_code_models::ClaudeCodeModel>& models);
-  json::array withClaudeCodeModels(const json::array& models, const std::vector<provider::claude_code_models::ClaudeCodeModel>& claude);
+  json::array withClaudeCodeModels(json::array models, const std::vector<provider::claude_code_models::ClaudeCodeModel>& claude);
   rt::Task<void> maybeUpdateNormalizedSnapshot(rt::Kv& kv, std::string version, std::string authGeneration, json::object parsed, double updatedAtMs);
   bool etagMatches(const std::optional<std::string>& requestValue, const std::optional<std::string>& etag);
   rt::OrderedMap<std::string, json::object> codexSnapshotRecords(const std::optional<::uos::models::codex_models::CodexModelsSnapshot>& snapshot);
@@ -31,14 +31,14 @@ namespace uos::catalog::models {
     return result;
   }
   json::array deepSeekOfficialCodexModels();
-  json::array withDeepSeekOfficialModels(const json::array& models);
+  json::array withDeepSeekOfficialModels(json::array models);
   json::object buildDeepSeekWaterfallCodexRecord();
-  json::array withDeepSeekWaterfallModel(const json::array& models);
+  json::array withDeepSeekWaterfallModel(json::array models);
   json::array lithosCodexModels();
-  json::array withLithosModels(const json::array& models);
+  json::array withLithosModels(json::array models);
   json::array cerebrasCodexModels();
-  json::array withCerebrasModels(const json::array& models);
+  json::array withCerebrasModels(json::array models);
   json::array openRouterCodexModels();
-  json::array withOpenRouterModels(const json::array& models);
+  json::array withOpenRouterModels(json::array models);
   rt::OrderedSet<std::string> catalogModelIds(const json::array& models);
 }

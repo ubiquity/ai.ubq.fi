@@ -9,6 +9,7 @@
 #include "uos/rt/prelude.hpp"
 
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -22,8 +23,9 @@ namespace uos::catalog::store {
   // `Record<string, unknown> | null`
   std::optional<json::object> parseCatalogBody(std::string_view body);
 
-  // `LoadedCodexCatalog | null`. The memo hands out copies of the memoized catalog.
-  rt::Task<std::optional<types::LoadedCodexCatalog>> loadCatalog(rt::Kv& kv, std::string version, std::string authGeneration, double nowMs);
+  // Requests can share a verified catalog across refresh and memo eviction.
+  using Catalog = std::shared_ptr<const types::LoadedCodexCatalog>;
+  rt::Task<Catalog> loadCatalog(rt::Kv& kv, std::string version, std::string authGeneration, double nowMs);
 
   // Readonly<{ clientVersion: string; authGeneration: string; body: string; etag?: string | null;
   //            contentType?: string | null; fetchedAtMs?: number }>
@@ -56,9 +58,9 @@ namespace uos::catalog::store {
 
   rt::Task<bool> authGenerationIsCurrent(rt::Kv& kv, std::string expected);
 
-  rt::Task<std::optional<types::LoadedCodexCatalog>> loadCurrentGenerationCatalog(rt::Kv& kv, std::string version);
+  rt::Task<Catalog> loadCurrentGenerationCatalog(rt::Kv& kv, std::string version);
 
-  rt::Task<std::optional<types::LoadedCodexCatalog>> waitForColdCatalog(rt::Kv& kv, std::string version);
+  rt::Task<Catalog> waitForColdCatalog(rt::Kv& kv, std::string version);
 
   // `export { CODEX_CATALOG_AUTH_GENERATION_KEY };`
   using types::CODEX_CATALOG_AUTH_GENERATION_KEY;

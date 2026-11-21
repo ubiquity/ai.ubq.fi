@@ -84,7 +84,7 @@ namespace {
   // The served body, or "null".
   rt::Task<std::string> load(std::shared_ptr<rt::Kv> kv, std::string version, double nowMs, std::string generation) {
     auto loading = loadCatalog(*kv, std::move(version), std::move(generation), nowMs);
-    const std::optional<LoadedCodexCatalog> loaded = co_await std::move(loading);
+    const auto loaded = co_await std::move(loading);
     co_return loaded ? loaded->body : std::string("null");
   }
 
@@ -313,7 +313,7 @@ ASYNC_TEST("storeCodexCatalog and loadCatalog round trips match Bun") {
     EXPECT_EQ(metadataText, rt::jsonStringify(vector.at("metadata")));
 
     auto loading = loadCatalog(*store.kv, version, "auth-generation-test", fetchedAtMs + 1);
-    const std::optional<LoadedCodexCatalog> loaded = co_await std::move(loading);
+    const auto loaded = co_await std::move(loading);
     std::string loadedText = "null";
     if (loaded) {
       json::object view;
@@ -391,8 +391,8 @@ ASYNC_TEST("large bodies are split into bounded chunks and inflate back") {
     if (startsWith(row.key, chunks)) bounded = bounded && static_cast<double>(row.value.asBytes().size()) <= CODEX_CATALOG_CHUNK_BYTES;
   EXPECT(bounded);
   auto loading = loadCatalog(*store.kv, "0.152.0", GEN, rt::dateNow());
-  const std::optional<LoadedCodexCatalog> loaded = co_await std::move(loading);
-  EXPECT(loaded.has_value() && loaded->body == text && loaded->source_body == std::optional<std::string>(text));
+  const auto loaded = co_await std::move(loading);
+  EXPECT(loaded && loaded->body == text && loaded->source_body == std::optional<std::string>(text));
   resetCodexCatalogMemoForTest();
 }
 
@@ -441,8 +441,8 @@ ASYNC_TEST("integrity failures and metadata guards load nothing") {
   co_await std::move(writingJunk);
   resetCodexCatalogMemoForTest();
   auto loading = loadCatalog(*source.kv, "1.0.0", GEN, NOW + 1);
-  const std::optional<LoadedCodexCatalog> loaded = co_await std::move(loading);
-  EXPECT(loaded.has_value() && loaded->body == served && !loaded->source_body.has_value());
+  const auto loaded = co_await std::move(loading);
+  EXPECT(loaded && loaded->body == served && !loaded->source_body.has_value());
   resetCodexCatalogMemoForTest();
 }
 
@@ -679,8 +679,8 @@ ASYNC_TEST("cold waits poll until the catalog appears or the deadline passes") {
   const Store store = co_await std::move(opening);
   const double start = rt::dateNow();
   auto waitingEmpty = waitForColdCatalog(*store.kv, "1.0.0");
-  const std::optional<LoadedCodexCatalog> none = co_await std::move(waitingEmpty);
-  EXPECT(!none.has_value());
+  const auto none = co_await std::move(waitingEmpty);
+  EXPECT(!none);
   EXPECT_EQ(rt::dateNow() - start, CODEX_CATALOG_COLD_WAIT_MS);
 
   const double second = rt::dateNow();
@@ -692,17 +692,17 @@ ASYNC_TEST("cold waits poll until the catalog appears or the deadline passes") {
     },
     120);
   auto waiting = waitForColdCatalog(*store.kv, "1.0.0");
-  const std::optional<LoadedCodexCatalog> found = co_await std::move(waiting);
-  EXPECT(found.has_value() && found->body == body("1.0.0"));
+  const auto found = co_await std::move(waiting);
+  EXPECT(found && found->body == body("1.0.0"));
   EXPECT_EQ(rt::dateNow() - second, 150.0);
 
   auto readingCurrent = loadCurrentGenerationCatalog(*store.kv, "1.0.0");
-  const std::optional<LoadedCodexCatalog> current = co_await std::move(readingCurrent);
-  EXPECT(current.has_value() && current->body == body("1.0.0"));
+  const auto current = co_await std::move(readingCurrent);
+  EXPECT(current && current->body == body("1.0.0"));
   auto dropping = deleteKey(store.kv, CODEX_CATALOG_AUTH_GENERATION_KEY);
   co_await std::move(dropping);
   auto readingNone = loadCurrentGenerationCatalog(*store.kv, "1.0.0");
-  const std::optional<LoadedCodexCatalog> absent = co_await std::move(readingNone);
-  EXPECT(!absent.has_value());
+  const auto absent = co_await std::move(readingNone);
+  EXPECT(!absent);
   resetCodexCatalogMemoForTest();
 }

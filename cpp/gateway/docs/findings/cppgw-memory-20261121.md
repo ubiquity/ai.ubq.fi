@@ -4,8 +4,8 @@
 
 - [x] Identify the integration base and qualify the runner, SQLite and namespace prerequisites.
 - [x] Implement a loopback reproduction with a populated Bun/JSC KV database.
-- [ ] Measure Release memory at startup and after 1, 10, 100 and 1,000 sessions. Isolate the catalog and completion paths.
-- [ ] Profile allocation peaks and retained bytes, and measure the effect of `malloc_trim(0)`.
+- [x] Measure Release memory at startup and after 1, 10, 100 and 1,000 sessions. Isolate the catalog and completion paths.
+- [x] Profile allocation peaks and retained bytes, and measure the effect of `malloc_trim(0)`.
 - [ ] Fix measured waste and repeat the same workload after each fix.
 - [ ] Add the Release budget check, document small-board use, and record the focused, shard and registration gates.
 
@@ -25,6 +25,20 @@ The client sends 63,031 bytes and receives 535 model records in 4,812,874 bytes 
 
 ## Baseline attribution
 
+A 975,888,384-byte database and the uninstrumented release package gave the following serial run. The default traffic mode sends a complete catalog request and a completion each time. Each value is KiB. The baseline command used `--no-trim`.
+
+| Checkpoint | VmRSS | RssAnon | VmHWM | [heap] |
+| --- | ---: | ---: | ---: | ---: |
+| Start | 30,496 | 7,136 | 30,496 | 1,656 |
+| Catalog 1 | 121,252 | 93,156 | 121,252 | 1,656 |
+| Completion 1 | 125,788 | 93,212 | 125,788 | 1,712 |
+| Catalog 10 | 127,836 | 95,260 | 127,836 | 1,712 |
+| Completion 10 | 127,836 | 95,260 | 127,836 | 1,712 |
+| Catalog 100 | 127,836 | 95,260 | 127,836 | 1,712 |
+| Completion 100 | 127,836 | 95,260 | 127,836 | 1,712 |
+| Catalog 1,000 | 127,836 | 95,260 | 127,836 | 1,712 |
+| Completion 1,000 | 127,836 | 95,260 | 127,836 | 1,712 |
+
 A first session with the trim probe on the 989,523,968-byte database produced the following readings. `[heap]` is resident KiB from the mapping's `Rss` field in `smaps`. The kernel's status counters can lag slightly across threads.
 
 | Checkpoint | VmRSS KiB | RssAnon KiB | VmHWM KiB | [heap] KiB |
@@ -37,6 +51,15 @@ A first session with the trim probe on the 989,523,968-byte database produced th
 `malloc_trim(0)` returned 1 and released 69,132 KiB of anonymous RSS, with 18,410,496 allocated bytes before and after, three arenas, and free allocator bytes falling from 81,896,448 to 52,536,320. The small `[heap]` mapping covers the main arena. Most of the retained RSS was in other anonymous mappings on this glibc build. A single-arena control moved it to `[heap]` without reducing the untrimmed size.
 
 With only the catalog request, anonymous memory went from 5,216 to 93,288 KiB and fell to 23,468 KiB after a successful trim. With only the completion, it went from 6,464 to 8,568 KiB and fell to 8,292 KiB after a successful trim. The catalog causes a large transient with allocator retention plus a one-time memo. The completion causes a small warm-up from the parser, connections and KV statements. The 2.54 GB control plateaued at 95,884 KiB anonymous between sessions 100 and 1,000. The 1,024-row control also reproduced the jump, from 6,284 to 94,404 KiB, falling to 25,244 KiB after trim.
+
+The glibc defaults start the trim and mmap thresholds at 128 KiB. Dynamic tuning raises the mmap threshold when large direct mappings are freed and sets the trim threshold to twice that value. Setting either threshold fixes the pair. The two fixed-threshold controls removed about 42 MiB of untrimmed anonymous RSS. An arena cap alone gave the same large rise and moved it between mappings. The code-backed live catalog bytes remained after trim with all three controls.
+
+| First session, trim probe | Arenas | RssAnon after catalog KiB | RssAnon after completion KiB | RssAnon after trim KiB | VmHWM KiB |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Defaults | 3 | 93,268 | 93,324 | 24,188 | 127,848 |
+| `glibc.malloc.arena_max=1` | 1 | 91,360 | 91,416 | 20,328 | 123,844 |
+| `glibc.malloc.mmap_threshold=131072` | 3 | 50,256 | 50,308 | 24,504 | 112,124 |
+| `glibc.malloc.trim_threshold=131072` | 3 | 49,876 | 49,876 | 24,060 | 112,108 |
 
 ### Heaptrack
 
@@ -75,3 +98,7 @@ Each tuple lists VmRSS, RssAnon, VmHWM and resident `[heap]` in KiB. The 2.54 GB
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 2.54 GB | 29200/5768/29200/264 | 122004/93836/122004/264 | 126420/93836/126420/264 | 126484/93836/126484/264 | 128532/95884/128532/264 | 127236/95884/128532/264 | 58400/27032/129284/264 |
 | 4.6 MB | 29720/6284/29720/784 | 122524/94352/122524/784 | 127056/94404/127056/836 | | | | 57896/25244/128976/764 |
+
+## Changes under measurement
+
+The first change shares the verified catalog with in-flight requests, applies provider enrichment on one working copy, and moves the serialized result into the response. ETag hashing reads the validated UTF-8 bytes directly. The cold and stale paths still verify durable content and auth generations. Existing catalog store assertions now use the shared handle, with the same comparisons for body, source, eviction and generation.

@@ -79,12 +79,12 @@ namespace {
     if (resolved.auto_compact_token_limit_tokens) result["auto_compact_token_limit"] = *resolved.auto_compact_token_limit_tokens;
     if (resolved.effective_context_window_percent) result["effective_context_window_percent"] = *resolved.effective_context_window_percent;
   }
-  json::array appendConfigured(const json::array& models, const json::array& configured) {
-    auto result = models;
+  json::array appendConfigured(json::array models, const json::array& configured) {
+    if (configured.empty()) return models;
     rt::OrderedSet<std::string> present;
     for (const auto& model : models) present.add(std::string(rt::getString(model, "slug").value_or(rt::getString(model, "id").value_or(""))));
-    for (const auto& model : configured) if (!present.has(rt::toString(rt::get(model, "slug")))) result.push_back(model);
-    return result;
+    for (const auto& model : configured) if (!present.has(rt::toString(rt::get(model, "slug")))) models.push_back(model);
+    return models;
   }
 }
 
@@ -103,16 +103,16 @@ json::array claudeCodeCodexModels(const std::vector<provider::claude_code_models
   }
   return result;
 }
-json::array withClaudeCodeModels(const json::array& models, const std::vector<provider::claude_code_models::ClaudeCodeModel>& claude) {
+json::array withClaudeCodeModels(json::array models, const std::vector<provider::claude_code_models::ClaudeCodeModel>& claude) {
+  if (claude.empty()) return models;
   const auto seen = catalogModelIds(models);
-  auto result = models;
-  for (const auto& model : claudeCodeCodexModels(claude)) if (!seen.has(rt::toString(rt::get(model, "slug")))) result.push_back(model);
-  return result;
+  for (const auto& model : claudeCodeCodexModels(claude)) if (!seen.has(rt::toString(rt::get(model, "slug")))) models.push_back(model);
+  return models;
 }
 rt::Task<void> maybeUpdateNormalizedSnapshot(rt::Kv& kv, std::string version, std::string authGeneration, json::object parsed, double updatedAtMs) {
   ::uos::models::codex_models::CodexModelsPayloadOverrides overrides;
   overrides.source = "chatgpt_codex"; overrides.clientVersion = version; overrides.updatedAtMs = updatedAtMs;
-  const auto next = ::uos::models::codex_models::normalizeCodexModelsPayload(json::value(parsed), overrides);
+  const auto next = ::uos::models::codex_models::normalizeCodexModelsPayload(json::value(std::move(parsed)), overrides);
   if (!next) co_return;
   for (int attempt = 0; attempt < 3; ++attempt) {
     auto generation = co_await kv.get(catalog::types::CODEX_CATALOG_AUTH_GENERATION_KEY);
@@ -198,17 +198,20 @@ json::array deepSeekOfficialCodexModels() {
   }
   return result;
 }
-json::array withDeepSeekOfficialModels(const json::array& models) {
+json::array withDeepSeekOfficialModels(json::array models) {
   const auto configured = deepSeekOfficialCodexModels();
   if (configured.empty()) return models;
   auto id = [](const json::value& row) { auto slug = rt::trim(rt::getString(row, "slug").value_or("")); return !slug.empty() ? slug : rt::trim(rt::getString(row, "id").value_or("")); };
   rt::OrderedMap<std::string, json::value> configuredById;
   for (const auto& row : configured) configuredById.set(id(row), row);
   rt::OrderedSet<std::string> present;
-  json::array result;
-  for (const auto& row : models) { present.add(id(row)); const auto* replacement = configuredById.get(id(row)); result.push_back(replacement ? *replacement : row); }
-  for (const auto& row : configured) if (!present.has(id(row))) result.push_back(row);
-  return result;
+  for (auto& row : models) {
+    const auto name = id(row);
+    present.add(name);
+    if (const auto* replacement = configuredById.get(name)) row = *replacement;
+  }
+  for (const auto& row : configured) if (!present.has(id(row))) models.push_back(row);
+  return models;
 }
 json::object buildDeepSeekWaterfallCodexRecord() {
   namespace w = deepseek::waterfall;
@@ -230,17 +233,16 @@ json::object buildDeepSeekWaterfallCodexRecord() {
   };
   shellDefaults(row, 0); return row;
 }
-json::array withDeepSeekWaterfallModel(const json::array& models) {
+json::array withDeepSeekWaterfallModel(json::array models) {
   const json::value record = buildDeepSeekWaterfallCodexRecord();
-  auto result = models;
   bool present = false;
-  for (auto& row : result) {
+  for (auto& row : models) {
     if (rt::getString(row, "slug").value_or(rt::getString(row, "id").value_or("")) != deepseek::waterfall::DEEPSEEK_WATERFALL_MODEL_ID) continue;
     row = record;
     present = true;
   }
-  if (!present) result.push_back(record);
-  return result;
+  if (!present) models.push_back(record);
+  return models;
 }
 json::array lithosCodexModels() {
   json::array result;
@@ -258,7 +260,7 @@ json::array lithosCodexModels() {
   }
   return result;
 }
-json::array withLithosModels(const json::array& models) { return appendConfigured(models, lithosCodexModels()); }
+json::array withLithosModels(json::array models) { return appendConfigured(std::move(models), lithosCodexModels()); }
 json::array cerebrasCodexModels() {
   json::array result;
   if (!provider::cerebras::readCerebrasApiKey()) return result;
@@ -274,7 +276,7 @@ json::array cerebrasCodexModels() {
   }
   return result;
 }
-json::array withCerebrasModels(const json::array& models) { return appendConfigured(models, cerebrasCodexModels()); }
+json::array withCerebrasModels(json::array models) { return appendConfigured(std::move(models), cerebrasCodexModels()); }
 json::array openRouterCodexModels() {
   json::array result;
   if (!provider::openrouter::readOpenRouterApiKey()) return result;
@@ -289,7 +291,7 @@ json::array openRouterCodexModels() {
   }
   return result;
 }
-json::array withOpenRouterModels(const json::array& models) { return appendConfigured(models, openRouterCodexModels()); }
+json::array withOpenRouterModels(json::array models) { return appendConfigured(std::move(models), openRouterCodexModels()); }
 rt::OrderedSet<std::string> catalogModelIds(const json::array& models) {
   rt::OrderedSet<std::string> ids;
   for (const auto& model : models) if (utils::isRecord(model)) { const auto id = modelId(model, true); if (!id.empty()) ids.add(id); }
