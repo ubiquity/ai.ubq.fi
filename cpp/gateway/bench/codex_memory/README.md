@@ -13,4 +13,13 @@ The setup process seeds an exact-version catalog, a Codex auth pool, eight API k
 
 Use `--traffic catalog`, `--traffic completion` or `--traffic idle` with `--requests 1` to isolate the first allocations. Add `--heaptrack` to capture this trial and stop the fixture with live allocations for attribution. Use `--no-trim` to measure the process without any memory probe.
 
+## CI memory budget
+
+Run this check on the Linux ARM64 runner with its sealed Release package. It fetches the catalog once and sends 100 completions. The process must stay within 68 MiB resident after trim and 32 MiB anonymous at the request checkpoints before trim. The command exits nonzero on a budget or fixture failure and retains the readings in `results.json`.
+
+```sh
+bash cpp/gateway/bench/request_path/isolated.sh --codex-memory \
+  --package "$sealed_package" --out "$scratch/memory-check" --check
+```
+
 [Request-path launcher](../request_path/README.md) · [Package instructions](../../docs/RUNTIME.md) · [Measurements](../../docs/findings/cppgw-memory-20261121.md)

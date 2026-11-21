@@ -3,6 +3,7 @@
 
 import argparse
 from contextlib import ExitStack, closing
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -25,6 +26,9 @@ from fixtures import ADMIN_TOKEN
 from run import LISTEN, check_terminals, command_for, identities_for, process, settled, sparse, stop, verify_namespace, wait_port
 
 CHECKPOINTS = (1, 10, 100, 1000)
+BUDGET_REQUESTS = 100
+TRIMMED_RSS_BUDGET_KIB = 68 * 1024
+WARM_ANON_BUDGET_KIB = 32 * 1024
 SMAPS_HEAP = re.compile(r"^[0-9a-f]+-[0-9a-f]+ .* \[heap\]\n(?:(?!^[0-9a-f]+-[0-9a-f]+ ).*\n)*", re.M)
 TRIM_FIELDS = ("trim_return", "arenas", "allocated_before", "free_before", "mmap_before",
                "allocated_after", "free_after", "mmap_after")
@@ -60,7 +64,7 @@ def traffic(args, client, pid, expected_catalog):
     pause_for_idle()
     samples.append({"after": "start", "iteration": 0, **memory(pid)})
     for index in range(1, args.requests + 1):
-        if args.traffic in ("session", "catalog"):
+        if args.traffic in ("session", "catalog") and (not args.check or index == 1):
             require(catalog(client, "hit") == expected_catalog, "Catalog body or ETag changed across requests")
             if index in CHECKPOINTS:
                 pause_for_idle()
@@ -123,13 +127,18 @@ def main():
     parser.add_argument("--package", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--parent-netns", required=True)
+    parser.add_argument("--check", action="store_true", help="Enforce the Release budget after one catalog and 100 completions")
     parser.add_argument("--traffic", choices=("session", "catalog", "completion", "idle"), default="session")
-    parser.add_argument("--requests", type=int, choices=CHECKPOINTS, default=1000)
+    parser.add_argument("--requests", type=int, choices=CHECKPOINTS)
     parser.add_argument("--rows", type=int, default=ROWS)
     parser.add_argument("--no-trim", action="store_true")
     parser.add_argument("--heaptrack", action="store_true")
     parser.add_argument("--glibc-tunables", help="Set GLIBC_TUNABLES on the measured process")
     args = parser.parse_args()
+    if args.check and (args.traffic != "session" or args.requests or args.rows != ROWS or
+                       args.no_trim or args.heaptrack or args.glibc_tunables):
+        parser.error("--check requires the fixed fixture and native allocator settings")
+    args.requests = BUDGET_REQUESTS if args.check else (args.requests or CHECKPOINTS[-1])
     require(0 < args.rows <= ROWS, "Fixture row count outside its supported range")
     args.package = args.package.resolve(strict=True)
     args.out = args.out.resolve()
@@ -162,13 +171,27 @@ def main():
         require(mock.failures == 0 and mock.catalog_calls == before[0] and
                 mock.completions == before[1] + result["completions"], "Unexpected loopback upstream dispatch")
     models, catalog_bytes, etag = expected_catalog
+    budgets = None
+    if args.check:
+        samples = result["samples_kib"]
+        trimmed = samples[-1]
+        require(trimmed["after"] == "trim", "Memory budget requires a trim sample")
+        budgets = {"trimmed_rss_kib": trimmed["VmRSS"], "trimmed_rss_budget_kib": TRIMMED_RSS_BUDGET_KIB,
+                   "warm_anon_kib": max(sample["RssAnon"] for sample in samples if sample["after"] in ("catalog", "completion")),
+                   "warm_anon_budget_kib": WARM_ANON_BUDGET_KIB}
     receipt = {"package": identities, "release": release, "host": platform.platform(), "network_namespace": namespace,
-               "database": db, "request_bytes": len(BODY), "catalog_bytes": catalog_bytes, "models": models, "etag": etag,
+               "database": db, "request_bytes": len(BODY), "request_sha256": hashlib.sha256(BODY).hexdigest(),
+               "catalog_bytes": catalog_bytes, "models": models, "etag": etag, "budgets": budgets,
                "traffic": args.traffic, "requests": args.requests, "heaptrack": args.heaptrack, "glibc_tunables": args.glibc_tunables,
                **result}
     result_file = args.out / "results.json"
     result_file.write_text(json.dumps(receipt, indent=2) + "\n")
     print(result_file)
+    if budgets:
+        rss, anon = budgets["trimmed_rss_kib"], budgets["warm_anon_kib"]
+        print(f"Post-trim RSS {rss} KiB (budget {TRIMMED_RSS_BUDGET_KIB} KiB), "
+              f"warm anonymous RSS {anon} KiB (budget {WARM_ANON_BUDGET_KIB} KiB)")
+        require(rss <= TRIMMED_RSS_BUDGET_KIB and anon <= WARM_ANON_BUDGET_KIB, "Codex session exceeded its memory budget")
 
 
 if __name__ == "__main__":

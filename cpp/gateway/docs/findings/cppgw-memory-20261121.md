@@ -6,8 +6,9 @@
 - [x] Implement a loopback reproduction with a populated Bun/JSC KV database.
 - [x] Measure Release memory at startup and after 1, 10, 100 and 1,000 sessions. Isolate the catalog and completion paths.
 - [x] Profile allocation peaks and retained bytes, and measure the effect of `malloc_trim(0)`.
-- [ ] Fix measured waste and repeat the same workload after each fix.
-- [ ] Add the Release budget check, document small-board use, and record the focused, shard and registration gates.
+- [x] Fix measured waste and repeat the same workload after each fix.
+- [x] Add the Release budget check and document small-board use.
+- [ ] Record the final focused, shard and registration gates.
 
 ## Runner
 
@@ -16,6 +17,8 @@ The starting tree is `8f11c1a264bcdd6bef668139bf1a59031dd962fe` on `claude/cpp-g
 The runner used the [C++ workflow dependencies](../../../../.github/workflows/cpp-gateway-ci.yml) and built SQLite 3.54.0 under `/usr/local` using the workflow's tarball SHA-256 `134ec0802dda5795816e25d25872d20b312cb3973438c49b30bc40b7705ea9ed`, `./configure --prefix=/usr/local --disable-static --disable-readline CFLAGS='-O2 -DSQLITE_DQS=3'` and `make -j4`. `pkg-config --modversion sqlite3` returned `3.54.0`. The runner permits fresh network, mount and PID namespaces through noninteractive sudo. Measurements use loopback mocks and an environment created from an allowlist.
 
 ## Reproduction
+
+The reported service moved from about 5 MiB anonymous and 15 MiB resident at idle to 57 MiB anonymous and 103 MiB peak resident after the first two requests. The runner reproduces the pattern with synthetic data and its own library mappings. It shows that the first catalog accounts for nearly all of the increase, with a smaller live memo and a much larger allocator high-water effect.
 
 The [benchmark driver](../../bench/codex_memory/README.md) uses the existing package launcher harness and synthetic production-smoke auth and model fixtures. It seeds exact-version catalog chunks through the gateway, restarts on the populated database, verifies local dispatch and validates text, token usage and delivery. Its synthetic catalog repeats an 8 KiB instruction template across 535 upstream records. Production catalog bytes were unavailable.
 
@@ -88,7 +91,7 @@ Each profile restarted the baseline package on the 540,000-row 2.54 GB fixture. 
 
 The catalog memo already has a 32-version LRU and checks durable generation and retention before a hit. A cold hit inflates and verifies both bodies, parses both and keeps the served DOM. A warm hit copies that entire memo. The response path copies the model array again for provider enrichment and filtering, then serializes and hashes it. The large JSON parser buffers are local to a parse above 2 MiB. The 63,031-byte completion exercises the much smaller reusable thread-local parser and padded string. The trace shows OpenSSL startup at about 1.02 MB across all lanes. Static registration on the first HTTP request retains roughly 0.34 MB across asset text copies. ICU, regex compile scratch and terminal log serialization each sit below the largest completion sites. There is one root ICU collator on demand, regex programs belong to their owning objects, and terminal logging writes each record without a growing process-local backlog.
 
-Catalog and auth reads use KV point ranges with `LIMIT 1`; prefix reads use bounded SQL batches. Catalog chunks are reassembled in memory as one document per body. The SQLite WAL connection uses the measured pager defaults `cache_size=-2000` and `mmap_size=0`. The prepared-query cache holds 20 entries. On Heaptrack, SQLite retained 0.21 MB at idle, 0.25 MB after the catalog and 0.25 MB after a standalone completion. The database's total size and statement cache do not explain the jump.
+Catalog and auth reads use KV point ranges with `LIMIT 1`. Prefix reads use bounded SQL batches. Catalog chunks are reassembled in memory as one document per body. The SQLite WAL connection uses the measured pager defaults `cache_size=-2000` and `mmap_size=0`. The prepared-query cache holds 20 entries. On Heaptrack, SQLite retained 0.21 MB at idle, 0.25 MB after the catalog and 0.25 MB after a standalone completion.
 
 ### Early fixture controls
 
@@ -123,6 +126,110 @@ The memo applies its 32-version limit and an 8 MiB budget for the sum of served 
 
 Source `66e0f1a3a234dd8c0e2b8d53f7c129f70b99ae96` has manifest SHA-256 `ca8198148a1aa1adaf463672e17b716f45711b19c0879fb8ddfdbc9237854176` and executable SHA-256 `e36eaa27328780c5b231f24f41876f9e175ef11bb770a1760d1de0ffcd8a1a34`. The first-session anonymous reading fell from 42,992 to 39,220 KiB. Trim returned 1 and left 19,632 KiB, down from 25,548 KiB. The live allocator count went from 18,502,224 to 13,661,936 bytes, including direct mappings, about one original catalog body.
 
+The catalog-only Heaptrack peak dropped from 59.70 to 49.36 MB and live bytes dropped from 17.26 to 12.44 MB. In the 1,000-session run without a trim probe, the adaptive allocator settled at 42,480 KiB anonymous and 74,864 KiB resident from session 10.
+
 ## Fix the glibc mmap threshold
 
 With the bounded memo and the default adaptive thresholds, the warmed allocator still held about 19 MiB of anonymous RSS that trim could release. Setting the mmap threshold to 128 KiB for the same package brought first-session anonymous RSS down to 22,852 KiB, peak RSS to 60,528 KiB and trimmed anonymous RSS to 19,948 KiB. The gateway entry point now fixes glibc's mmap threshold at that initial value before starting runtime threads. Large allocations can use individually releasable mappings throughout the lifetime of the service.
+
+## Final Release measurement
+
+The measured runtime commit is `3bcb04602f530d4d1e0148736ec5919d084cc48a`. The manifest SHA-256 is `203d8151768166b84d517010c13d921265df2f48b08ff617b06a134717138b80` and executable SHA-256 is `60bf72de0a9211b366db6e28f8e247e195f458873fd153d6de674974d25355ff`. The uninstrumented command used `--no-trim` with the default 1,000 sessions on the 989,941,760-byte database. The Responses request SHA-256 is `82da9db93bcfe28856cdb0def03cedf617c52b0b14e734571fda82b03b5a583f`. The final and baseline runs delivered the same catalog bytes and ETag, 1,000 successful streamed responses and 1,000 unique delivery terminals. The test key had 1,016 settled requests after setup and traffic.
+
+| Checkpoint | VmRSS KiB | RssAnon KiB | VmHWM KiB | [heap] KiB |
+| --- | ---: | ---: | ---: | ---: |
+| Start | 30,196 | 6,880 | 30,196 | 1,396 |
+| Catalog 1 | 51,672 | 23,876 | 61,952 | 1,396 |
+| Completion 1 | 56,336 | 23,932 | 61,952 | 1,452 |
+| Catalog 10 | 56,336 | 23,932 | 67,200 | 1,452 |
+| Completion 10 | 56,336 | 23,932 | 67,200 | 1,452 |
+| Catalog 100 | 56,336 | 23,932 | 69,312 | 1,452 |
+| Completion 100 | 56,336 | 23,932 | 69,312 | 1,452 |
+| Catalog 1,000 | 56,336 | 23,932 | 69,312 | 1,452 |
+| Completion 1,000 | 56,336 | 23,932 | 69,312 | 1,452 |
+
+First-session anonymous RSS went from 91.0 to 23.4 MiB. Peak RSS over 1,000 sessions went from 124.8 to 67.7 MiB. Both resident readings were flat from 100 to 1,000 sessions. The final Heaptrack result remained at 49.36 MB peak live and 12.44 MB retained for the catalog. The allocator change reduced resident pages while preserving the live allocation profile.
+
+## Regression check
+
+The check sends one catalog request and 100 completions on the fixed fixture. The two final trials had 53,536 and 53,040 KiB of resident memory after trim. The 68 MiB limit gives 30% headroom above the higher reading. The 32 MiB anonymous limit uses pre-trim checkpoints so the check also detects allocator retention during ordinary use.
+
+| Package | Highest warm RssAnon KiB | Post-trim VmRSS KiB | Trim return | Check |
+| --- | ---: | ---: | ---: | --- |
+| Final | 23,540 | 53,536 | 1 | Pass |
+| Final repeat | 23,272 | 53,040 | 1 | Pass |
+| Baseline | 94,404 | 58,204 | 1 | Fail |
+
+Run the serial measurement, first-session trim sample, profiles or budget with the same package and a fresh output directory per invocation.
+
+```sh
+bash cpp/gateway/bench/request_path/isolated.sh --codex-memory --package "$sealed_package" --out "$scratch/serial" --no-trim
+bash cpp/gateway/bench/request_path/isolated.sh --codex-memory --package "$sealed_package" --out "$scratch/first" --requests 1
+bash cpp/gateway/bench/request_path/isolated.sh --codex-memory --package "$sealed_package" --out "$scratch/catalog" --traffic catalog --requests 1 --heaptrack
+bash cpp/gateway/bench/request_path/isolated.sh --codex-memory --package "$sealed_package" --out "$scratch/check" --check
+```
+
+## Supplemental measurements
+
+Each tuple contains VmRSS, RssAnon, VmHWM, resident [heap] and virtual [heap] size in KiB. Budget rows use the 100th completion. ([heap] denotes the main arena mapping.)
+
+| Trial | Database bytes | Startup | First catalog | Completion | After trim |
+| --- | ---: | --- | --- | --- | --- |
+| baseline first, setup repeat | 989,523,968 | 30464 / 7080 / 30464 / 1580 / 1700 | 121220 / 93100 / 121220 / 1580 / 1700 | 125752 / 93152 / 125752 / 1632 / 1700 | 56620 / 24020 / 127680 / 1560 / 1700 |
+| baseline catalog, setup repeat | 975,888,384 | 28664 / 5216 / 28664 / 1760 / 1884 | 121472 / 93288 / 121472 / 1764 / 1884 |   | 51652 / 23468 / 123520 / 1756 / 1884 |
+| baseline completion, setup repeat | 989,941,760 | 29900 / 6464 / 29900 / 960 / 1084 |   | 40260 / 8568 / 40260 / 1016 / 1084 | 39984 / 8292 / 42240 / 940 / 1084 |
+| baseline first, without probe | 975,888,384 | 29204 / 5824 / 29204 / 340 / 408 | 119960 / 91844 / 119960 / 340 / 408 | 124440 / 91844 / 124440 / 340 / 408 |   |
+| baseline single arena, setup repeat | 989,802,496 | 26944 / 3496 / 26944 / 2092 / 2160 | 119748 / 91564 / 119748 / 90156 / 92272 | 124228 / 91564 / 124228 / 90156 / 92272 | 53136 / 20472 / 124212 / 19060 / 65648 |
+| baseline fixed mmap, setup repeat | 989,802,496 | 30084 / 6636 / 30084 / 1132 / 1256 | 79048 / 50864 / 111968 / 1132 / 1256 | 83584 / 50920 / 111968 / 1188 / 1256 | 57788 / 25124 / 111968 / 1112 / 1256 |
+| baseline fixed trim, setup repeat | 975,888,384 | 30536 / 7088 / 30536 / 1584 / 1708 | 77448 / 49264 / 111712 / 1584 / 1708 | 81984 / 49320 / 111712 / 1640 / 1708 | 56220 / 23556 / 111712 / 1572 / 1708 |
+| baseline first | 989,802,496 | 30700 / 7252 / 30700 / 1748 / 1872 | 121452 / 93268 / 121452 / 1748 / 1872 | 125988 / 93324 / 125988 / 1804 / 1872 | 56852 / 24188 / 127848 / 1736 / 1872 |
+| baseline catalog | 976,490,496 | 28664 / 5216 / 28664 / 1760 / 2044 | 121632 / 93448 / 121632 / 1924 / 2044 |   | 51816 / 23632 / 123676 / 1864 / 2044 |
+| baseline completion | 975,888,384 | 30156 / 6772 / 30156 / 1268 / 1392 |   | 40516 / 8876 / 40516 / 1324 / 1392 | 40224 / 8584 / 42432 / 1248 / 1392 |
+| baseline single arena | 975,888,384 | 28788 / 5340 / 28788 / 1888 / 2012 | 119544 / 91360 / 119544 / 1888 / 2012 | 124080 / 91416 / 124080 / 1944 / 2012 | 52992 / 20328 / 123844 / 1820 / 2012 |
+| baseline fixed mmap | 992,014,336 | 29476 / 6028 / 29476 / 528 / 648 | 78440 / 50256 / 112124 / 528 / 648 | 82972 / 50308 / 112124 / 580 / 648 | 57168 / 24504 / 112124 / 504 / 648 |
+| baseline fixed trim | 989,523,968 | 29080 / 5648 / 29080 / 148 / 216 | 78044 / 49876 / 112108 / 148 / 216 | 82524 / 49876 / 112108 / 148 / 216 | 56708 / 24060 / 112108 / 148 / 216 |
+| baseline idle trim | 992,014,336 | 29536 / 6152 / 29536 / 652 / 772 |   |   | 31428 / 8044 / 31500 / 652 / 772 |
+| baseline Heaptrack idle | 2,540,957,696 | 35316 / 8164 / 36392 / 1696 / 1816 |   |   |   |
+| baseline Heaptrack catalog | 2,540,957,696 | 36136 / 8980 / 37308 / 464 / 540 | 128492 / 97048 / 128652 / 464 / 540 |   |   |
+| baseline Heaptrack completion | 2,540,957,696 | 34960 / 7812 / 35220 / 1344 / 1464 |   | 47932 / 13104 / 48140 / 1388 / 1464 |   |
+| baseline Heaptrack session | 2,541,101,056 | 35028 / 7872 / 36272 / 1404 / 1520 | 127384 / 95940 / 127516 / 1404 / 1520 | 132864 / 97132 / 132996 / 1444 / 1520 |   |
+| shared catalog first | 975,888,384 | 28960 / 5516 / 28960 / 2052 / 2060 | 70788 / 42992 / 72960 / 34820 / 36876 | 75460 / 42992 / 75460 / 34820 / 36876 | 58016 / 25548 / 77312 / 15408 / 20492 |
+| shared catalog fixed mmap | 989,941,760 | 29088 / 5644 / 29088 / 2180 / 2248 | 55140 / 27344 / 65488 / 14468 / 14536 | 59812 / 27344 / 65488 / 14468 / 14536 | 56704 / 24236 / 65488 / 9384 / 14536 |
+| shared catalog Heaptrack | 975,888,384 | 34812 / 7660 / 35988 / 1184 / 1300 | 76192 / 45136 / 78980 / 1184 / 1300 |   |   |
+| bounded memo first | 989,802,496 | 29224 / 5840 / 29224 / 332 / 400 | 67084 / 39220 / 67084 / 332 / 400 | 71692 / 39220 / 71692 / 332 / 400 | 52104 / 19632 / 73608 / 332 / 400 |
+| bounded memo fixed mmap | 989,941,760 | 29244 / 5860 / 29244 / 352 / 420 | 50716 / 22852 / 60528 / 352 / 420 | 55324 / 22852 / 60528 / 352 / 420 | 52420 / 19948 / 60528 / 352 / 420 |
+| bounded memo Heaptrack | 989,941,760 | 35084 / 7992 / 36396 / 1520 / 1640 | 72496 / 41372 / 72720 / 1520 / 1640 |   |   |
+| fixed allocator first | 975,888,384 | 28888 / 5508 / 28888 / 2052 / 2056 | 50364 / 22504 / 59800 / 14340 / 14344 | 54972 / 22504 / 59800 / 14340 / 14344 | 51948 / 19480 / 59800 / 9336 / 14344 |
+| fixed allocator Heaptrack | 976,490,496 | 34488 / 7404 / 34588 / 932 / 1008 | 55516 / 24400 / 65596 / 932 / 1008 |   |   |
+| final budget | 989,941,760 | 29876 / 6492 / 29876 / 984 / 1104 | 51352 / 23488 / 62084 / 984 / 1104 | 56012 / 23540 / 62084 / 1036 / 1104 | 53536 / 21064 / 62084 / 992 / 1104 |
+| final budget repeat | 989,941,760 | 29540 / 6220 / 29540 / 712 / 836 | 51016 / 23216 / 61104 / 712 / 836 | 55680 / 23272 / 61104 / 768 / 836 | 53040 / 20632 / 61104 / 728 / 836 |
+| baseline budget | 989,941,760 | 29664 / 6280 / 29664 / 776 / 900 | 122468 / 94348 / 122468 / 776 / 900 | 127004 / 94404 / 127004 / 832 / 900 | 58204 / 25604 / 128984 / 776 / 900 |
+
+The allocator columns are byte counts from `mallinfo2`. Live arena and mmap bytes were the same before and after each trim.
+
+| Trim trial | Arenas | Live arena bytes | Mmap bytes | Free arena bytes before → after |
+| --- | ---: | ---: | ---: | ---: |
+| baseline first, setup repeat | 3 | 18,410,496 | 0 | 81,896,448 → 52,536,320 |
+| baseline catalog, setup repeat | 3 | 17,811,328 | 0 | 80,586,880 → 53,323,904 |
+| baseline completion, setup repeat | 3 | 2,604,064 | 0 | 6,894,560 → 6,894,560 |
+| baseline single arena, setup repeat | 1 | 18,407,680 | 0 | 76,078,848 → 48,815,872 |
+| baseline fixed mmap, setup repeat | 3 | 8,778,384 | 9,633,792 | 34,450,800 → 34,450,800 |
+| baseline fixed trim, setup repeat | 3 | 8,781,328 | 9,633,792 | 32,813,552 → 32,813,552 |
+| baseline first | 3 | 18,411,472 | 0 | 79,974,448 → 52,711,472 |
+| baseline catalog | 3 | 17,811,648 | 0 | 80,750,400 → 53,487,424 |
+| baseline completion | 3 | 2,577,120 | 0 | 7,236,896 → 7,236,896 |
+| baseline single arena | 1 | 18,409,568 | 0 | 75,925,408 → 48,662,432 |
+| baseline fixed mmap | 3 | 8,756,176 | 9,633,792 | 33,850,416 → 33,850,416 |
+| baseline fixed trim | 3 | 8,760,320 | 9,633,792 | 33,403,904 → 33,403,904 |
+| baseline idle trim | 3 | 1,953,696 | 0 | 5,128,288 → 5,128,288 |
+| shared catalog first | 3 | 13,685,328 | 4,816,896 | 28,270,000 → 11,492,784 |
+| shared catalog fixed mmap | 3 | 8,878,944 | 9,633,792 | 10,200,224 → 10,200,224 |
+| bounded memo first | 3 | 8,845,040 | 4,816,896 | 29,313,296 → 12,536,080 |
+| bounded memo fixed mmap | 3 | 9,007,920 | 4,816,896 | 10,296,528 → 10,296,528 |
+| fixed allocator first | 3 | 8,875,120 | 4,816,896 | 10,007,440 → 10,007,440 |
+| final budget | 3 | 9,374,608 | 4,816,896 | 10,630,256 → 10,630,256 |
+| final budget repeat | 3 | 9,239,856 | 4,816,896 | 10,490,576 → 10,490,576 |
+| baseline budget | 3 | 18,736,224 | 0 | 80,751,520 → 53,488,544 |
+| baseline 1,024 rows | 3 | 18,399,504 | 0 | 81,092,336 → 53,829,360 |
+| baseline 2.54 GB, 1,000 sessions | 3 | 20,040,736 | 0 | 80,962,528 → 51,602,400 |
+| shared catalog, 1,000 sessions | 3 | 15,246,592 | 4,816,896 | 28,338,944 → 9,464,576 |
