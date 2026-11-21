@@ -24,8 +24,8 @@ BindPaths=/srv/uos-native/state
 BindReadOnlyPaths=/srv/uos-native/package
 ReadWritePaths=/srv/uos-native/state
 PrivateTmp=yes
-# SQLite uses state/.data for scratch. Leave the two private temp mounts read-only.
-ReadOnlyPaths=/tmp /var/tmp
+# Keep /run and the private temp mounts read-only. SQLite uses state/.data for scratch.
+ReadOnlyPaths=/run /tmp /var/tmp
 PrivateDevices=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes

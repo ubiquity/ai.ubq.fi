@@ -6,3 +6,5 @@ Base `claude/cpp-gateway-port` at `116f1e972397d80321ee223f3e63f88db9061e97`.
 - [x] Commit the absent-Landlock decision, startup checks, diagnostics and native regression tests. The forced probe uses a seccomp filter linked into test code only.
 - [x] Commit the hardened systemd unit and Raspberry Pi operator instructions.
 - [ ] Record Release, ASan and offline systemd results with the candidate commit and tree. Request the committed-diff review.
+
+The Ubuntu systemd container exposed a writable `/run` and `/run/lock` even with `ProtectSystem=strict`. Adding `/run` to `ReadOnlyPaths` made both mounts read-only while keeping the state writable. The check uses the mount visible to the process, since the kernel also lists hidden mounts below some read-only binds.
