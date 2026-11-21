@@ -8,3 +8,5 @@ Base `claude/cpp-gateway-port` at `116f1e972397d80321ee223f3e63f88db9061e97`.
 - [ ] Record Release, ASan and offline systemd results with the candidate commit and tree. Request the committed-diff review.
 
 The Ubuntu systemd container exposed a writable `/run` and `/run/lock` even with `ProtectSystem=strict`. Adding `/run` to `ReadOnlyPaths` made both mounts read-only while keeping the state writable. The check uses the mount visible to the process, since the kernel also lists hidden mounts below some read-only binds.
+
+In a network-isolated Debian 12 container, systemd 252.39 on the runner kernel mounted the three `ProtectHome=tmpfs` masks writable. The unit now specifies the three read-only tmpfs masks explicitly as well. The revised masks were empty or inaccessible from the service, and the state mount was the only writable non-API mount.

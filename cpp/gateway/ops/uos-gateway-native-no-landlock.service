@@ -19,6 +19,8 @@ NoNewPrivileges=yes
 CapabilityBoundingSet=
 ProtectSystem=strict
 ProtectHome=tmpfs
+# Spell out the read-only home masks for Bookworm's systemd as well.
+TemporaryFileSystem=/home:ro,nodev,mode=0755 /root:ro,nodev,mode=0700 /run/user:ro,nodev,mode=0755
 # Keep the approved state and sealed release visible in the private mount namespace.
 BindPaths=/srv/uos-native/state
 BindReadOnlyPaths=/srv/uos-native/package
