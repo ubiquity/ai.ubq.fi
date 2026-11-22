@@ -12,6 +12,10 @@ The unit masks `/home`, `/root` and `/run/user` and allows writes to the dedicat
 
 The gateway applies no outbound TCP port restriction in this mode. The unit limits socket families to IPv4, IPv6 and Unix sockets. On hosts with systemd IP filtering, `IPAddressDeny=multicast` blocks multicast while leaving unicast DNS and provider HTTPS available. The IP rule operates on addresses. [Raspberry Pi setup](RASPBERRY-PI.md#start-under-systemd-without-landlock)
 
+## Live leader state
+
+The optional same-host follower setting grants only Landlock's read-file right under the leader's separate `.data` directory. Landlock tracks inodes, so a read grant on the current WAL or shared-memory file would be lost when SQLite recreates it. The reader opens the three SQLite files and queries the codec marker and Codex auth pool. In service-manager confinement the unit's mounts govern filesystem access. The SQLite reader applies its read-only policy in either mode. Keep both state trees private to their approved service users. [Runtime requirements](RUNTIME.md#live-codex-login-for-followers)
+
 ## Antigravity CLI
 
 An exact `UOS_GATEWAY_ENABLE_ANTIGRAVITY=1` and a validated CLI installation allow process creation and execution for the whole gateway. Seccomp applies the exception to every gateway thread. Landlock's direct execute grants are limited to the canonical `agy` and ARM64 dynamic loader files. The loader can open compatible ELF files from the gateway's readable paths. A second Landlock ruleset narrows the CLI's view to specific host inputs, its private CLI state and its own workspace. The CLI state and workspace remain readable and writable to support the CLI. [Operator setup and residual risk](RUNTIME.md#enable-the-gemini-subscription)

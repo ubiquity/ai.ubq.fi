@@ -8,16 +8,28 @@
 
 ## Running side by side on one host
 
-1. Keep production as the leader. Put the candidate's initial stopped-consistent copy of production state in a separate owner-private state directory and select a different loopback port. Add `UOS_GATEWAY_UPSTREAM_AUTH_FOLLOWER=1` to **only the candidate's** approved `EnvironmentFile=` before starting it. The leader owns subscription renewal. The follower disables Antigravity even if its opt-in is set.
-2. Check the follower's loopback `GET /health`. Confirm `upstream_auth.follower` is `true`. `upstream_auth.earliest_access_token_expires_in_ms` is the time to the earliest known Codex expiry, `0` for a known expired token, or `null` when expiry is unavailable. Codex starts requiring renewal in the last two minutes of a JWT's lifetime and can also reject a bearer early. Look for `upstream_auth_follower_stale` in the journal if inference changes accounts or reports a credential error.
-3. To update the follower after a leader refresh, stop and drain the follower and retain a private backup of its state. Under the approved state lock, take a private copy of the leader's drained, checkpointed `.data/kv-bun.sqlite3` and place it at `.data/kv-bun.sqlite3` under a separate, canonical snapshot directory. Resume the leader after taking the copy. Both databases must use the `bun-jsc-v1` marker and be free of SQLite `-wal`, `-shm` and `-journal` sidecars. Both state roots and their `.data` directories must be owned by the follower service user with mode `0700`, and the databases must be mode `0600`. If a WAL is present, preserve it with its database and obtain a clean checkpoint before making the import copy. Use the existing offline conversion procedure first if the leader's backup uses the legacy codec. [Runtime state contract](RUNTIME.md#launch-and-state)
-4. As the follower service user, with the approved runtime environment, run the sealed release's launcher against the follower's launch manifest and the leader snapshot. Substitute the three absolute paths.
+1. Keep production as the leader. Put the candidate's initial stopped-consistent copy of production state in a separate owner-private state directory and select a different loopback port. Use these lines in **only the candidate's** systemd unit, under `[Service]`. Substitute the canonical absolute root containing the leader's `.data` directory.
 
-   ```sh
-   UOS_GATEWAY_UPSTREAM_AUTH_FOLLOWER=1 \
-     /absolute/path/to/release/ops/launch-native.sh /absolute/path/to/follower-launch.json \
-     --import-codex-auth-from /absolute/path/to/leader-snapshot
+   ```ini
+   [Service]
+   Environment=UOS_GATEWAY_UPSTREAM_AUTH_FOLLOWER=1
+   Environment=UOS_GATEWAY_UPSTREAM_AUTH_LEADER_STATE=/absolute/path/to/leader-state
    ```
 
-   The command imports newer credentials for matching account IDs after an account-bound, read-only Codex usage check. It preserves follower-only accounts, slot order, quotas, API keys and other KV records. It prints an account count. A replacement that the usage check rejects or that already needs renewal aborts the update. After success, restart the follower with the switch still set and recheck its health.
-5. **Remove `UOS_GATEWAY_UPSTREAM_AUTH_FOLLOWER` before the candidate becomes the only gateway.** First stop the leader and prepare the candidate with the latest authoritative state under the approved cutover procedure. Start the sole gateway with renewal enabled and run the approved health and authenticated inference checks.
+   If the unit uses an approved `EnvironmentFile=` for gateway settings, put those two assignments in that file without the `Environment=` prefixes. Start the follower with its own launch manifest. The leader owns subscription renewal. The follower checks its live SQLite state at startup and on demand when a bearer enters its renewal margin or is rejected. The follower also disables Antigravity.
+2. Check the follower's loopback `GET /health`. Confirm that `upstream_auth.follower` and `upstream_auth.leader_state` are both `true` and that `leader_last_read_outcome` is `ok` or `unchanged`. After startup, check authenticated inference through the follower. The journal logs the account count on adoption. If the leader is unavailable, the follower keeps its last validated local credential. Look for `upstream_auth_follower_stale` in the journal if the bearer expires or the upstream rejects it before the follower can adopt a replacement. [Read access and health fields](RUNTIME.md#live-codex-login-for-followers)
+3. **Remove both `UOS_GATEWAY_UPSTREAM_AUTH_FOLLOWER` and `UOS_GATEWAY_UPSTREAM_AUTH_LEADER_STATE` before the candidate becomes the only gateway.** First stop the leader and prepare the candidate with the latest authoritative state under the approved cutover procedure. Start the sole gateway with renewal enabled and run the approved health and authenticated inference checks.
+
+### Fallback for a follower on another machine
+
+Stop and drain the follower and retain a private backup of its state. Under the approved state lock, take a private copy of the leader's drained, checkpointed `.data/kv-bun.sqlite3` and place it at `.data/kv-bun.sqlite3` under a separate, canonical snapshot directory on the follower host. Resume the leader after taking the copy. Both databases must use the `bun-jsc-v1` marker and be free of SQLite `-wal`, `-shm` and `-journal` sidecars. Both state roots and their `.data` directories must be owned by the follower service user with mode `0700`, and the databases must be mode `0600`. If a WAL is present, preserve it with its database and obtain a clean checkpoint before making the import copy. Use the existing offline conversion procedure first if the leader's backup uses the legacy codec. [Runtime state contract](RUNTIME.md#launch-and-state)
+
+As the follower service user, with the approved runtime environment, run the sealed release's launcher against the follower's launch manifest and the leader snapshot. Substitute the three absolute paths.
+
+```sh
+UOS_GATEWAY_UPSTREAM_AUTH_FOLLOWER=1 \
+  /absolute/path/to/release/ops/launch-native.sh /absolute/path/to/follower-launch.json \
+  --import-codex-auth-from /absolute/path/to/leader-snapshot
+```
+
+The command imports newer credentials for matching account IDs after an account-bound, read-only Codex usage check. It preserves follower-only accounts, slot order, quotas, API keys and other KV records. It prints an account count. A replacement that the usage check rejects or that already needs renewal aborts the update. After success, restart with the follower switch set and recheck its health.
