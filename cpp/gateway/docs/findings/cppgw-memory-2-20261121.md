@@ -5,7 +5,7 @@
 - [x] Identify the integration base and qualify the runner and confinement.
 - [x] Generate realistic state and validate single, tool and resumed sessions through the packaged gateway.
 - [x] Record baseline samples at 1, 10, 100 and 500 sessions, allocation sites and the trim control.
-- [ ] Publish resident, allocator and cache counters in health and request terminals.
+- [x] Publish resident, allocator and cache counters in health and request terminals.
 - [ ] Measure each production change against the baseline and run the 500-session endpoint.
 - [ ] Enforce a 20-session CI memory budget and run the change-scoped Release, ASan and registration gates.
 
@@ -93,7 +93,27 @@ The request path now moves one parsed record into validation. It borrows that re
 
 The change is `703734114fd99b2457ac3a1f56dbb74ee5cc3d95`, tree `0a7394b785955dbb5758d4913ed223079169b2af`. The executable hash was `0723f36a769da410f08f1ebcc6c629ade47f6d0861e1fe79c4214af5ea836d74`, with package manifest `8e2e8893c0241f041afb0638c877e918feba64d1babf36396280bdfc776e49c0`. Release `input_normalization_logprobs_test` passed 5/5 cases. The same real five-session Heaptrack cycle fell from 21.95 MB peak live heap to 16.71 MB. The Boost.JSON string site decreased from 11.30 to 6.33 MB and allocation calls decreased from 855,466 to 580,909. Retained heap was 6.63 MB with telemetry and the large parser scratch still present.
 
+
+## Bound reusable scratch and policies
+
+Commit `90171618d5c3dbcbaf46e6212fa3ec56b801302c` with tree `b2b09adf1c2da5e8b65f07fd0de850dab4ea721d` limits parser reuse to inputs up to 64 KiB. Larger documents use a request-local parser under the existing document limits. The parser gauge fell from 3,216,430 to 234,561 bytes. The five-session Heaptrack peak fell from 16.71 to 13.72 MB, and retained heap from 6.63 to 3.64 MB. The API-key policy memo also has a 1,024-entry and 512 KiB limit and evicts the oldest insertion. Evicted tokens resolve through the existing keyed lookup. The serial fixture uses one policy entry, so it isolates parser savings from high-cardinality cache behavior. The added cache case exercises 1,025 tokens and requires a durable reread after eviction.
+
+The cache package manifest was `b87c977439330c1876f650302575a8dc95f916e1db0b266f787b38bb7f48bfed` and executable `2f484ec41ec65525b9e8ffc9585599cfb550e4299b68319410607e9a9dfd6520`. The Release policy selection passed two binaries and ten cases at this stage. [Memory limits](../../include/uos/rt/limits.hpp)
+
+## Reuse the prepared Codex payload
+
+Commit `5eeb5c3bda2f96b258946808e790ac873024400f` with tree `6837e3d3740a38652c5df142069d98fe83056140` shares the prepared request across transport attempts. Each attempt uses that result's wire text and the same routing, credentials and quota lifecycle. This removes the copies of the prepared object, serialized body and parsed projection from routing-state construction. The Release operations differential test passed its complete state, header and body comparisons. The manifest was `f337c25167d7520af17c3a09499eb35169b45255ed153ffbfa4a9df7bc000f85` and the executable was `c7ac0cefbe7aa1122eb47a92458446dced05b1f1236afdafc57f5260fefebdf1`.
+
+## Read SQLite range rows one at a time
+
+Commit `e90238c3105cdcee86e4a3f5ced1a7a931ddf138` with tree `11b0005ba37c38526fb3fa9949666fd3b70ce09a` visits each SQL row, moving its blobs into the existing bounded KV batch. It explicitly sets a 2,000 KiB pager target and disables mapping the state file. The gateway still reads the same rows in order and returns the same encodings and versionstamps. The SQLite test compiled and passed all 30 cases, including resetting the statement after a failed row conversion. The short native RSS trials vary by a couple of MiB, and the row change removes an intermediate allocation rather than reducing the configured pager target.
+
 | Build, 20 real sessions | First RssAnon KiB | Ending RssAnon KiB | Peak VmHWM KiB |
 | --- | ---: | ---: | ---: |
 | Telemetry | 20,224 | 22,264 | 58,488 |
 | Move the Responses input | 14,464 | 20,184 | 52,732 |
+| Bound reusable scratch and policies | 14,152 | 14,152 | 50,464 |
+| Share the Codex payload | 8,704 | 10,832 | 43,220 |
+| Stream SQLite range rows | 10,980 | 13,028 | 45,288 |
+
+Each trial delivered all 60 successful request terminals and settled exactly 60 additional uses for the active key. The catalog remained 389,001 bytes with ETag `"uos-catalog-a877e72d2e2c6ef38cacf86989f69ca2"`. The final package manifest was `a5a9aad32c91bb4e1d2d72c514eae0a9012897eab462f1395e60b6358aaa968c` and the executable was `63d58f454743c9ec26603747700cd9d347ad4b45b21ba838610159c96bb344e2`. Its five-session Heaptrack peak was 8.91 MB with 3.63 MB retained. The Boost.JSON string site fell to 3.37 MB, compared with 11.30 MB on the integration base. The three per-attempt request-body copies in `createCodexResponseState` disappeared from the top sites.
