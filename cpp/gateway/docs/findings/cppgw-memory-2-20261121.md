@@ -6,8 +6,9 @@
 - [x] Generate realistic state and validate single, tool and resumed sessions through the packaged gateway.
 - [x] Record baseline samples at 1, 10, 100 and 500 sessions, allocation sites and the trim control.
 - [x] Publish resident, allocator and cache counters in health and request terminals.
-- [ ] Measure each production change against the baseline and run the 500-session endpoint.
-- [ ] Enforce a 20-session CI memory budget and run the change-scoped Release, ASan and registration gates.
+- [x] Measure each production change against the baseline and run the 500-session endpoint.
+- [x] Enforce a 20-session CI memory budget and run the change-scoped Release, ASan and registration gates.
+- [ ] Repeat 500 sessions after the builds finish.
 
 ## Starting point
 
@@ -152,3 +153,19 @@ The final single-session trim reduced anonymous RSS by 1,032 KiB, from 11,844 to
 Calibration on the final package measured 13,028 KiB anonymous and 45,288 KiB peak resident with the real CLI. The scripted run measured 12,792 and 44,740 KiB. The gate rounds margins of about 30 percent to 17 MiB anonymous and 58 MiB peak resident. The real `--check` passed at 11,704 / 45,512 KiB with those budgets. The scripted `--check` passed at 11,148 / 44,888 KiB. Both completed 20 sessions and 60 inference requests.
 
 Release shard 1 builds the benchmark from its existing objects and uses the native CLI when installed. The fallback exercises the same state, reply shapes and growing tool history with the scripted client. The workflow saves sample, fixture, upstream and budget receipts in the shard artifact. [CI workflow](../../../../.github/workflows/cpp-gateway-ci.yml) · [Local commands](../../bench/codex_real/README.md)
+
+## Verification
+
+The test driver used Clang 21.1.8, four jobs, the workflow's pinned SQLite 3.54.0 and fresh Linux network, mount and PID namespaces. Release used the frame-pointer and line-table flags used by the profiled packages. The compiler-cache and runtime directories were outside the checkout. The raw SQLite library hash was `2fb9976405cd8f7afcc474acc90b93c087c4ced76b5302ef75dcd79279f9b238`. The benchmark copy, with its package-compatible SONAME and system library placement, was `e1cbbe281d8c6a571930bb04f78e1c05b578abcc15e4e3ef8771d1daddcf2770`.
+
+| Command or selection | Commit and tree | Result |
+| --- | --- | --- |
+| `bash cpp/gateway/tools/ci-build.sh --config release --shard 1/4` | `cd09f702108838147014b21ac647a099eb85089b` / `7f1bbd7b4febdf0e88e48a6978b630fc278b3773` | 114 binaries, 1,334 cases passed |
+| Release `api_key_policy_differential_test` | Same commit and tree as the shard | 2 binaries, 11 cases passed |
+| Remaining Release selectors below | `351e42d620d51ec64eead0a4d1aed9c530e31a8c` / `60455c3671c11ad9160368e9408e576c30b414b4` | 17 binaries, 205 cases passed |
+| ASan selectors below | `e90238c3105cdcee86e4a3f5ced1a7a931ddf138` / `11b0005ba37c38526fb3fa9949666fd3b70ce09a` | 19 binaries, 216 cases passed |
+| ASan `kv_budget_part2_test` | `cd09f702108838147014b21ac647a099eb85089b` / `7f1bbd7b4febdf0e88e48a6978b630fc278b3773` | 1 binary, 24 cases passed |
+
+Each selector ran with `bash cpp/gateway/tools/ci-build.sh --config release <selector>` or the equivalent `--config asan` invocation. The selections were `api_key_policy_differential_test`, `input_normalization_logprobs_test`, `codex_responses_operations_differential_test`, `oss_gateway_http_test`, `rt/json`, `rt/sqlite_test`, `rt/kv_sqlite_test`, `sentinel_replay_retention`, `health` and `codex_catalog`. Release shard 1 also covers `kv_budget_part2_test`. The runs checked the same production code. Later commits updated the test for the new log fields and recorded benchmark evidence.
+
+The first Release shard run found one exact terminal JSON comparison that used the earlier field set. The updated test checks the process fields, cache names, entry counts and byte sizes before comparing the complete terminal record. The former terminal assertions still pass. The registration check `python3 cpp/gateway/tools/links.py --check` resolved all 453 tests, and `git diff --check 707f7182...HEAD` passed. This project's loopback-only rule excludes provider-backed Codex review.
