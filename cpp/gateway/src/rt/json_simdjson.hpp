@@ -99,10 +99,9 @@ namespace uos::rt::detail {
   };
 
   inline json::value parseSimdJson(std::string_view text, std::size_t maxInput) {
-    constexpr std::size_t maxReusableInput = 2 * 1024 * 1024;
     if (text.empty() || text.size() > maxInput || text.starts_with("\xef\xbb\xbf")) throw SyntaxError("Invalid JSON");
     try {
-      if (text.size() <= maxReusableInput) {
+      if (text.size() <= limits::kReusableJsonInputBytes) {
         thread_local JsonInput input(true);
         return input.parse(text);
       }

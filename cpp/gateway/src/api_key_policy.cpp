@@ -9,6 +9,7 @@
 #include "uos/rt/console.hpp"
 #include "uos/rt/date.hpp"
 #include "uos/rt/json.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/rt/number.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/utils.hpp"
@@ -99,9 +100,18 @@ namespace uos::api_key_policy {
     }
     void cachePolicy(const std::string& hash, CachedPolicy entry) {
       auto& cache = policyCache();
-      if (const auto* prior = cache.get(hash)) policyCacheBytes -= policyBytes(hash, *prior);
+      const std::size_t bytes = policyBytes(hash, entry);
+      erasePolicy(hash);
+      if (bytes > rt::limits::kApiKeyPolicyCacheBytes) return;
+      // TTL stays an upper bound on freshness. When the memo is full, an
+      // evicted key goes through the same durable lookup as any cold key.
+      while (cache.size() >= rt::limits::kApiKeyPolicyCacheEntries ||
+             policyCacheBytes > rt::limits::kApiKeyPolicyCacheBytes - bytes) {
+        const auto oldest = cache.begin();
+        erasePolicy(oldest->first);
+      }
       cache.set(hash, std::move(entry));
-      policyCacheBytes += policyBytes(hash, *cache.get(hash));
+      policyCacheBytes += bytes;
       rt::memory::setCache(rt::memory::Cache::api_key_policy, cache.size(), policyCacheBytes);
     }
 

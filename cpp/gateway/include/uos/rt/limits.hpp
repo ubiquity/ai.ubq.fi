@@ -89,4 +89,9 @@ namespace uos::rt::limits {
   inline constexpr std::size_t kTextInputBytes = kImageEditJsonBytes;
   inline constexpr std::size_t kIcuInputBytes = kJsonDocumentBytes;
   inline constexpr std::size_t kKvCursorBytes = 16 * 1024;
+
+  // Keep only small parser scratch and a bounded set of authenticated key policies.
+  inline constexpr std::size_t kReusableJsonInputBytes = 64 * 1024;
+  inline constexpr std::size_t kApiKeyPolicyCacheEntries = 1024;
+  inline constexpr std::size_t kApiKeyPolicyCacheBytes = 512 * 1024;
 }
