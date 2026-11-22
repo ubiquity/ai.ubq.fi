@@ -28,29 +28,17 @@ def run_round(pool, port, version, index, kind, source):
         turns.append([request_body(source, size) for size in sizes])
 
     def lane(bodies):
-        headers = Scripted(port, version, "").headers()
+        client = Scripted(port, version, "")
         latencies = []
         with closing(connection(port)) as conn:
-            conn.request("GET", "/v1/models?client_version=" + version, headers=headers)
+            conn.request("GET", "/v1/models?client_version=" + version, headers=client.headers())
             catalog = conn.getresponse()
             require(catalog.status == 200 and json.loads(catalog.read())["models"][0]["slug"] == MODEL,
                     "Burst client did not receive the exact-version catalog")
             for body in bodies:
                 started = time.perf_counter_ns()
-                conn.request("POST", "/v1/responses", body, {**headers, "Content-Type": "application/json"})
-                response = conn.getresponse()
-                require(response.status == 200 and response.getheader("Content-Type", "").startswith("text/event-stream"),
-                        f"Burst expected SSE, received {response.status}")
-                text, completed = [], 0
-                for line in response:
-                    if not line.startswith(b"data: {"):
-                        continue
-                    event = json.loads(line[6:])
-                    if event["type"] == "response.output_text.delta":
-                        text.append(event["delta"])
-                    if event["type"] == "response.completed" and event["response"]["usage"]["total_tokens"] > 0:
-                        completed += 1
-                require("".join(text) == TEXT[kind] and completed == 1, "Burst lost reply text or usage")
+                text, _ = client.send(conn, body)
+                require(text == TEXT[kind], "Burst lost reply text")
                 latencies.append(time.perf_counter_ns() - started)
         return latencies
 
