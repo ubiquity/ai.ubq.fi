@@ -86,7 +86,7 @@ namespace uos::api_key_policy {
     std::size_t policyCacheBytes = 0;
 
     std::size_t policyBytes(const std::string& hash, const CachedPolicy& entry) {
-      return sizeof(CachedPolicy) + 2 * rt::memory::bytes(hash) + rt::memory::bytes(entry.policy.token_hash) +
+      return sizeof(CachedPolicy) + 2 * (hash.size() + 1) + rt::memory::bytes(entry.policy.token_hash) +
              rt::memory::bytes(entry.policy.key_id) + rt::memory::bytes(entry.policy.policy_version) +
              (entry.policy.paid_fallback_reservation_request_id ? rt::memory::bytes(*entry.policy.paid_fallback_reservation_request_id) : 0);
     }

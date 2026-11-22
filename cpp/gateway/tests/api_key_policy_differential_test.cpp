@@ -15,6 +15,8 @@
 #include "uos/rt/clock.hpp"
 #include "uos/rt/json.hpp"
 #include "uos/rt/kv.hpp"
+#include "uos/rt/limits.hpp"
+#include "uos/rt/memory.hpp"
 #include "uos/rt/test_async.hpp"
 #include "uos/utils.hpp"
 
@@ -496,4 +498,43 @@ ASYNC_TEST("api-key-policy authentication cache, deferred admission and usage he
     const json::value gotRows = rt::canonicalNumbers(steps[index].rows);
     if (!rt::deepEqual(gotRows, wantRows)) EXPECT_EQ(rt::jsonStringify(gotRows), rt::jsonStringify(wantRows) + "  <- rows of " + steps[index].name);
   }
+}
+
+ASYNC_TEST("API key policy memo evicts old entries and reauthenticates them from KV") {
+  resetApiKeyPolicyCacheForTest();
+  const auto cleanup = rt::scopeExit([] { resetApiKeyPolicyCacheForTest(); });
+  const auto kv = std::make_shared<CountingKv>();
+  const AuthenticateApiKeyTokenOptions options{.kv = kv, .nowMs = NOW};
+  const auto tokenFor = [](std::size_t index) {
+    const std::string suffix = std::to_string(index);
+    return "u_" + std::string(64 - suffix.size(), '0') + suffix;
+  };
+  const auto limit = rt::limits::kApiKeyPolicyCacheEntries;
+  for (std::size_t index = 0; index <= limit; ++index) {
+    const auto token = tokenFor(index);
+    auto hashing = uos::utils::sha256Base64Url(token);
+    const auto hash = co_await std::move(hashing);
+    const uos::types::ApiKeyHashRecord record{
+      .id = "cache-fixture-" + std::to_string(index), .expires_at_ms = -1, .revoked_at_ms = {},
+      .usage_limit_requests = 100, .usage_requests = 0, .usage_reset_at_ms = NOW + 60'000,
+      .window_ms = 60'000, .usage_quota_version = 3, .paid_fallback_enabled = false,
+      .paid_fallback_limit_microcredits = 0, .paid_fallback_spent_microcredits = 0,
+      .paid_fallback_reserved_microcredits = 0, .paid_fallback_reservation_request_id = {},
+    };
+    kv->seed(uos::api_keys::apiKeyHashKey(hash), rt::KvValue(json::value_from(record)));
+    auto authenticating = authenticateApiKeyToken(token, options);
+    const auto decision = co_await std::move(authenticating);
+    ASSERT(std::holds_alternative<ApiKeyPolicyDecisionOk>(decision));
+  }
+  const auto memory = rt::memory::snapshot(false);
+  const auto& cache = memory.at("caches").as_object().at("api_key_policy").as_object();
+  EXPECT_EQ(cache.at("entries").as_uint64(), limit);
+  EXPECT(cache.at("bytes").as_uint64() <= rt::limits::kApiKeyPolicyCacheBytes);
+
+  const auto before = kv->commands.size();
+  auto authenticating = authenticateApiKeyToken(tokenFor(0), options);
+  const auto decision = co_await std::move(authenticating);
+  ASSERT(std::holds_alternative<ApiKeyPolicyDecisionOk>(decision));
+  EXPECT_EQ(std::get<ApiKeyPolicyDecisionOk>(decision).policy.key_id, std::string("cache-fixture-0"));
+  EXPECT_EQ(kv->commands.size(), before + 1);
 }

@@ -42,7 +42,14 @@ namespace uos::provider::claude_code_models {
         std::size_t bytes = bucket_count() * sizeof(void*);
         for (const auto& [key, cached] : *this) {
           bytes += sizeof(Cache) + rt::memory::bytes(key) + rt::memory::bytes(cached->identity);
-          if (cached->snapshot) bytes += rt::memory::bytes(json::value_from(*cached->snapshot));
+          if (!cached->snapshot) continue;
+          const auto& models = cached->snapshot->models;
+          bytes += models.capacity() * sizeof(ClaudeCodeModel);
+          for (const auto& model : models) {
+            bytes += rt::memory::bytes(model.id);
+            if (model.display_name) bytes += rt::memory::bytes(*model.display_name);
+            if (model.supported_reasoning_levels) bytes += rt::memory::bytes(*model.supported_reasoning_levels);
+          }
         }
         memory.set(size(), bytes);
       }

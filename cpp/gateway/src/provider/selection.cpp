@@ -47,7 +47,7 @@ namespace uos::provider::selection {
     std::size_t subscriptionHashBytes = 0;
 
     void cacheSelection(std::optional<ProviderSelection> value, double expires) {
-      const auto bytes = value ? sizeof(CachedSelection) + rt::memory::bytes(json::value_from(*value)) : 0;
+      const auto bytes = value ? sizeof(CachedSelection) + rt::memory::bytes(value->provider_ids) : 0;
       rt::memory::setCache(rt::memory::Cache::provider_selection, value ? 1 : 0, bytes);
       cachedSelection = CachedSelection{std::move(value), expires};
     }

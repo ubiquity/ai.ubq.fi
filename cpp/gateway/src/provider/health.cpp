@@ -155,7 +155,7 @@ namespace uos::provider::health {
         const std::string throttleKey = provider + ":" + identity;
         auto& observations = lastObservation();
         if (auto previous = observations.find(throttleKey); previous != observations.end())
-          observationCacheBytes -= observationBytes(throttleKey, previous->second);
+          observationCacheBytes -= observationBytes(previous->first, previous->second);
         auto entry = observations.insert_or_assign(throttleKey, std::move(observation)).first;
         lastHeartbeatWriteAtMs().insert_or_assign(throttleKey, observedAtMs);
         observationCacheBytes += observationBytes(entry->first, entry->second);

@@ -451,7 +451,7 @@ namespace uos::kernel::attestation {
     std::size_t jtiCacheBytes = 0;
 
     std::size_t tokenIdBytes(const std::string& jti) {
-      return sizeof(double) + 2 * (sizeof(jti) + rt::memory::bytes(jti));
+      return sizeof(double) + 2 * (sizeof(jti) + jti.size() + 1);
     }
 
     void pruneKernelTokenJtiCache() {
