@@ -8,7 +8,7 @@
 - [x] Publish resident, allocator and cache counters in health and request terminals.
 - [x] Measure each production change against the baseline and run the 500-session endpoint.
 - [x] Enforce a 20-session CI memory budget and run the change-scoped Release, ASan and registration gates.
-- [ ] Repeat 500 sessions after the builds finish.
+- [x] Repeat 500 sessions after the builds finish.
 
 ## Starting point
 
@@ -167,6 +167,10 @@ The final package completed the same 500 sessions in 162.7 s. It used Codex 0.17
 | 500 | 22,784 | 13,868 | 45,752 | 10,240 |
 
 Peak resident memory fell from 59,016 to 46,080 KiB. The quiet trial had one 2,048 KiB step at session 111 and held exactly 13,868 KiB anonymous through session 500. At the step, resident `[heap]` grew from 8,192 to 10,240 KiB, allocator free bytes rose from 5,874,048 to 8,034,928, and allocator in-use bytes fell from 4,869,760 to 4,806,032. Between sessions 100 and 500 the SQLite pager grew from 679,664 to 1,554,416 bytes within its configured target. The parser shifted by 21 bytes and the other tracked cache sizes held steady. This compares resident growth with the bounded cache warm-up and the allocator's reuse of pages already resident.
+
+A second run completed in 166.6 s with all 1,500 requests delivered and 6,500 committed uses. Anonymous RSS was 12,940 KiB at both sessions 100 and 500 and at 397 of the 401 checkpoints in that interval. Four samples at sessions 416, 420, 425 and 490 reached 14,988 KiB, each with 2,048 KiB more resident heap. All four returned to 12,940 KiB on the following sample. The procfs status and mapping totals agreed, and peak resident RSS was 46,936 KiB. Startup, session 1 and session 10 used 6,744, 10,892 and 12,940 KiB anonymous respectively. The only upstream catalog request was the seed. The repeat reached 428,809-byte upstream requests.
+
+The updated sampler also recorded the anonymous huge-page fields at all 21 checkpoints in a scripted budget run. It ended at 11,808 KiB anonymous and 44,012 KiB peak resident.
 
 ## Verification
 

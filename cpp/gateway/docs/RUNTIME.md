@@ -31,8 +31,8 @@ On Ubuntu ARM64 with a 540,000-row, roughly 1 GB SQLite fixture, the Release gat
 Allow at least 90 MiB of RAM headroom for this serial workload on a small board, alongside memory for the OS and other services. Size additional headroom for concurrent streams and larger inputs, and leave disk space for the SQLite state and WAL. The Release benchmark enforces a 68 MiB post-trim resident budget after one catalog and 100 completions. [Codex memory check](../bench/codex_memory/README.md) · [Measurements](findings/cppgw-memory-20261121.md)
 
 With the real Codex CLI and 512,231 fixture rows, the current Release gateway
-used about 10 MiB anonymous after the first tool session and about 14 MiB after
-500 mixed sessions. The quiet run peaked at 45 MiB resident. Release shard 1
+used about 10–11 MiB anonymous after the first tool session and about 13 MiB
+after 500 mixed sessions. The quiet runs peaked at about 45–46 MiB resident. Release shard 1
 caps its 20-session check at 17 MiB anonymous and 58 MiB peak resident.
 [Real-client benchmark](../bench/codex_real/README.md) · [Comparison](findings/cppgw-memory-2-20261121.md)
 
