@@ -35,6 +35,8 @@ HISTORY = 5000
 CHECK_SESSIONS = 20
 ANONYMOUS_BUDGET_KIB = 17 * 1024
 PEAK_RESIDENT_BUDGET_KIB = 58 * 1024
+BURST_FREE_BUDGET_BYTES = 24 * 1024 * 1024
+BURST_ANONYMOUS_EXCESS_BUDGET_BYTES = 9 * 1024 * 1024
 REPLAY_KEY = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"  # Fixed synthetic key.
 COUNTS = {
     ("uos_ai", "api_key_usage"): 413_480,
@@ -276,7 +278,9 @@ def main():
     parser.add_argument("--version", help="Exact catalog version, normally taken from the installed CLI")
     parser.add_argument("--sessions", type=int)
     parser.add_argument("--burst", action="store_true", help="Run each round on eight mixed-size scripted connections")
-    parser.add_argument("--check", action="store_true", help="Enforce anonymous and peak resident budgets for 20 sessions")
+    checks = parser.add_mutually_exclusive_group()
+    checks.add_argument("--check", action="store_true", help="Enforce anonymous and peak resident budgets for 20 sessions")
+    checks.add_argument("--check-burst", action="store_true", help="Enforce retained heap budgets after 20 concurrent rounds")
     parser.add_argument("--traffic", choices=("mix", "auth", "catalog", "idle", "replay"), default="mix")
     parser.add_argument("--disable-replay", action="store_true")
     profiling = parser.add_mutually_exclusive_group()
@@ -286,8 +290,12 @@ def main():
     if args.check:
         require(args.sessions in (None, CHECK_SESSIONS) and args.traffic == "mix" and not (args.trim or args.heaptrack or args.disable_replay),
                 "The budget uses the fixed 20-session mix without allocator probes")
+    if args.check_burst:
+        require(args.sessions in (None, CHECK_SESSIONS) and not (args.trim or args.disable_replay),
+                "The burst budget uses the fixed 20-round mix without allocator probes")
+        args.burst = True
     if args.sessions is None:
-        args.sessions = CHECK_SESSIONS if args.check else 1
+        args.sessions = CHECK_SESSIONS if args.check or args.check_burst else 1
     require(1 <= args.sessions <= 500, "Unsupported session count")
     require(not (args.traffic == "replay" and args.disable_replay), "Replay control needs a synthetic capture key")
     require(args.traffic == "mix" or args.scripted, "Select the scripted client for isolated attribution")
@@ -366,6 +374,17 @@ def main():
                                  "anonymous_budget_kib": ANONYMOUS_BUDGET_KIB,
                                  "peak_resident_kib": max(row["VmHWM"] for row in samples),
                                  "peak_resident_budget_kib": PEAK_RESIDENT_BUDGET_KIB}
+        if args.check_burst:
+            samples = result["samples_kib"]
+            last = samples[-1]
+            anonymous = last["anonymous_kib"] * 1024
+            live = last["gateway_memory"]["allocator_in_use_bytes"]
+            receipt["budget"] = {"peak_sampled_allocator_free_bytes":
+                                     max(row["gateway_memory"]["allocator_free_bytes"] for row in samples),
+                                 "allocator_free_budget_bytes": BURST_FREE_BUDGET_BYTES,
+                                 "after_idle_anonymous_bytes": anonymous, "after_idle_allocator_in_use_bytes": live,
+                                 "after_idle_anonymous_excess_bytes": max(0, anonymous - live),
+                                 "anonymous_excess_budget_bytes": BURST_ANONYMOUS_EXCESS_BUDGET_BYTES}
         path = args.out / "results.json"
         path.write_text(json.dumps(receipt, indent=2) + "\n")
         print(path, flush=True)
@@ -375,6 +394,14 @@ def main():
                   f"peak resident {budget['peak_resident_kib']} / {PEAK_RESIDENT_BUDGET_KIB} KiB", flush=True)
             require(budget["after_run_anonymous_kib"] <= ANONYMOUS_BUDGET_KIB and
                     budget["peak_resident_kib"] <= PEAK_RESIDENT_BUDGET_KIB, "The gateway exceeded its session memory budget")
+        if args.check_burst:
+            budget = receipt["budget"]
+            print(f"Free arena bytes {budget['peak_sampled_allocator_free_bytes']} / {BURST_FREE_BUDGET_BYTES}, "
+                  f"idle anonymous bytes above live {budget['after_idle_anonymous_excess_bytes']} / "
+                  f"{BURST_ANONYMOUS_EXCESS_BUDGET_BYTES}", flush=True)
+            require(budget["peak_sampled_allocator_free_bytes"] <= BURST_FREE_BUDGET_BYTES and
+                    budget["after_idle_anonymous_excess_bytes"] <= BURST_ANONYMOUS_EXCESS_BUDGET_BYTES,
+                    "The gateway retained too much heap after the request burst")
 
 
 if __name__ == "__main__":
