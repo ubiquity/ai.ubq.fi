@@ -31,8 +31,8 @@ VERSION = "0.171.0"
 MIX = ("tools", "short", "long", "reasoning", "resume")
 HISTORY = 5000
 CHECK_SESSIONS = 20
-ANONYMOUS_BUDGET_KIB = 26 * 1024
-PEAK_RESIDENT_BUDGET_KIB = 67 * 1024
+ANONYMOUS_BUDGET_KIB = 17 * 1024
+PEAK_RESIDENT_BUDGET_KIB = 58 * 1024
 REPLAY_KEY = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"  # Fixed synthetic key.
 COUNTS = {
     ("uos_ai", "api_key_usage"): 413_480,

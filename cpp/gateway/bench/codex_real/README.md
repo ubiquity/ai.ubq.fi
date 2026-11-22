@@ -53,7 +53,7 @@ for isolated attribution, using a fresh output directory each time. Omit
 
 Run the same launch with `--check` in place of `--sessions 500`. The fixed
 profile runs 20 sessions, checks health and terminal memory fields, and compares
-ending anonymous RSS and peak RSS to the Release budgets in `measure.py`.
+ending anonymous RSS and peak RSS to the Release budgets of 17 MiB and 58 MiB.
 It preserves the readings in `results.json` when either budget is exceeded.
 Release shard 1 runs the check with the installed native CLI when available.
 The scripted path uses the same state, reply types, tool history and limits

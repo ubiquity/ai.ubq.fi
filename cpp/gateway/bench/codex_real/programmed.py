@@ -5,6 +5,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import random
 import string
+import sys
 from threading import Thread
 from urllib.parse import parse_qs, urlsplit
 
@@ -165,9 +166,16 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(b"0\r\n\r\n")
 
 
+class ProgrammedServer(ThreadingHTTPServer):
+    def handle_error(self, request, client_address):
+        # A client can reset an idle keep-alive socket when its CLI exits.
+        if not isinstance(sys.exc_info()[1], (ConnectionResetError, BrokenPipeError)):
+            super().handle_error(request, client_address)
+
+
 @contextmanager
 def upstream(auth, version):
-    with ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server:
+    with ProgrammedServer(("127.0.0.1", 0), Handler) as server:
         server.daemon_threads = True
         require(server.server_port not in (7999, 8000), "Mock received a reserved port")
         server.version = version
