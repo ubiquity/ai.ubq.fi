@@ -69,4 +69,6 @@ def trim(reader):
 
 def allocator_info(reader):
     reader.sendall(b"i")
-    return reader.recv(65536).decode("ascii")
+    xml = reader.recv(65536).decode("ascii")
+    require(xml.startswith("<malloc ") and xml.endswith("</malloc>\n"), "Incomplete glibc arena receipt")
+    return xml

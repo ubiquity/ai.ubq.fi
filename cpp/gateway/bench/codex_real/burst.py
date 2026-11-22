@@ -25,9 +25,9 @@ def run_round(pool, port, version, index, kind, source):
     for _ in range(TURN_BATCHES):
         sizes = [int(size * rng.uniform(0.8, 1.2)) for size in SIZES]
         rng.shuffle(sizes)
-        turns.append(sizes)
+        turns.append([request_body(source, size) for size in sizes])
 
-    def lane(sizes):
+    def lane(bodies):
         headers = Scripted(port, version, "").headers()
         latencies = []
         with closing(connection(port)) as conn:
@@ -35,12 +35,7 @@ def run_round(pool, port, version, index, kind, source):
             catalog = conn.getresponse()
             require(catalog.status == 200 and json.loads(catalog.read())["models"][0]["slug"] == MODEL,
                     "Burst client did not receive the exact-version catalog")
-            for size in sizes:
-                width = (size + 6) // 7
-                items = [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": source[offset:offset + width]}]}
-                         for offset in range(0, size, width)]
-                body = encode({"model": MODEL, "instructions": MARKER, "input": items, "stream": True,
-                               "store": False, "reasoning": {"effort": "none"}})
+            for body in bodies:
                 started = time.perf_counter_ns()
                 conn.request("POST", "/v1/responses", body, {**headers, "Content-Type": "application/json"})
                 response = conn.getresponse()
@@ -59,7 +54,17 @@ def run_round(pool, port, version, index, kind, source):
                 latencies.append(time.perf_counter_ns() - started)
         return latencies
 
-    return [elapsed for lane_times in pool.map(lane, zip(*turns, strict=True)) for elapsed in lane_times]
+    started = time.perf_counter()
+    latencies = [elapsed for lane_times in pool.map(lane, zip(*turns, strict=True)) for elapsed in lane_times]
+    return latencies, time.perf_counter() - started
+
+
+def request_body(source, size):
+    width = (size + 6) // 7
+    items = [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": source[offset:offset + width]}]}
+             for offset in range(0, size, width)]
+    return encode({"model": MODEL, "instructions": MARKER, "input": items, "stream": True,
+                   "store": False, "reasoning": {"effort": "none"}})
 
 
 def source_text():

@@ -207,14 +207,14 @@ def measure(args, state, command, environment, mock):
                 cpu_before = cpu(pid)
             for index in range(1, args.sessions + 1):
                 kind = MIX[(index - 1) % len(MIX)] if args.traffic == "mix" else args.traffic
+                if args.burst:
+                    kind = "long" if index % 4 == 0 else "short"
                 start = len(mock.calls)
                 mock.script = kind, start
                 if args.burst:
-                    kind = "long" if index % 4 == 0 else "short"
-                    mock.script = kind, start
-                    tick = time.perf_counter()
-                    latencies.extend(run_round(pool, port, mock.version, index, kind, source))
-                    traffic_seconds += time.perf_counter() - tick
+                    timings, seconds = run_round(pool, port, mock.version, index, kind, source)
+                    latencies.extend(timings)
+                    traffic_seconds += seconds
                     count = start + CONNECTIONS * TURN_BATCHES
                     require(len(mock.calls) == count and not mock.failures, "Burst had unexpected mock calls or validation failures")
                     terminals(log, reader, count, pending, check_memory=True)
