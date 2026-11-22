@@ -39,9 +39,10 @@ namespace {
   const tel::UsageContext* contextFor(const Delivery& delivery) { return delivery->usageContext ? &*delivery->usageContext : nullptr; }
   std::shared_ptr<tel::ResponseTelemetryState> telemetryFor(const State& state) { const auto* context = contextFor(state); return context ? context->responseTelemetry : nullptr; }
   std::shared_ptr<tel::ResponseTelemetryState> telemetryFor(const Delivery& delivery) { const auto* context = contextFor(delivery); return context ? context->responseTelemetry : nullptr; }
-  rt::Task<reqs::ResponsesRoutingState> prepareResponsesRouting(rt::Request req, reqs::ResponsesRequestState state, std::string model) {
-    const auto* context = state.usageContext ? &*state.usageContext : nullptr;
-    const auto downstream = openai::downstreamSignalFor(req, context); const auto signal = state.clientWantsStream ? downstream : openai::inferenceSignal(req, context);
+  rt::Task<reqs::ResponsesRoutingState> prepareResponsesRouting(rt::Request req, const tel::UsageContext* context, bool clientWantsStream,
+                                                               const std::string& model) {
+    const auto downstream = openai::downstreamSignalFor(req, context);
+    const auto signal = clientWantsStream ? downstream : openai::inferenceSignal(req, context);
     const auto deadline = inference_deadline::createStreamFirstEventDeadline(signal);
     const auto apiKey = request_policy::isTemporaryFreeSurplusModel(model) ? std::nullopt : removed::readRemovedProviderApiKey();
     const auto selection = co_await provider::selection::loadProviderSelectionCached(); co_await rt::microtask();
@@ -54,29 +55,46 @@ namespace {
     const auto route = debug.scenario == "removed_provider_first" && apiKey && !apiKey->empty() ? "removed_provider" : selected ? selected->route : "codex";
     co_return reqs::ResponsesRoutingState{downstream, signal, deadline, apiKey, paidAvailable, sessionId, route, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, 0};
   }
-  rt::Task<reqs::ResponsesStep<State>> prepareResponsesRequest(rt::Request req, json::object rawRecord, ::uos::types::ResponsesRequest rawBody,
-    const tel::UsageContext* context, ResponsesTailOptions options) {
-    const auto settingsResult = reqs::resolveResponsesStreamSettings(rawRecord, rawBody);
+  rt::Task<reqs::ResponsesStep<State>> prepareResponsesRequest(rt::Request req, json::object rawRecord, const json::object* separateBody,
+                                                              const tel::UsageContext* context, ResponsesTailOptions options) {
+    const auto& rawBody = separateBody ? *separateBody : rawRecord;
+    auto settingsResult = reqs::resolveResponsesStreamSettings(rawRecord, rawBody);
     if (const auto* error = std::get_if<reqs::ResponsesStepNotOk>(&settingsResult)) co_return *error;
-    const auto settings = std::get<reqs::ResponsesStepOk<reqs::ResponsesStreamSettings>>(settingsResult).value;
+    auto settings = std::get<reqs::ResponsesStepOk<reqs::ResponsesStreamSettings>>(std::move(settingsResult)).value;
     const reqs::ResolveResponsesModelOptions modelOptions{options.allowedPaidProviders, options.deepSeekWaterfallPaidHop};
-    auto modelTask = reqs::resolveResponsesModel(rawRecord, context, modelOptions); rt::Promise<reqs::ResponsesStep<reqs::ResponsesModel>> modelPending(std::move(modelTask)); const auto modelResult = co_await modelPending.wait();
+    auto modelTask = reqs::resolveResponsesModel(rawRecord, context, modelOptions);
+    auto modelResult = co_await std::move(modelTask);
+    co_await rt::microtask();
     if (const auto* error = std::get_if<reqs::ResponsesStepNotOk>(&modelResult)) co_return *error;
-    const auto model = std::get<reqs::ResponsesStepOk<reqs::ResponsesModel>>(modelResult).value;
-    const auto inputResult = reqs::normalizeResponsesInput(rt::get(rawBody, "input"));
+    auto model = std::get<reqs::ResponsesStepOk<reqs::ResponsesModel>>(std::move(modelResult)).value;
+    auto inputResult = reqs::normalizeResponsesInput(rt::get(rawBody, "input"));
     if (const auto* error = std::get_if<reqs::ResponsesStepNotOk>(&inputResult)) co_return *error;
-    const auto input = std::get<reqs::ResponsesStepOk<std::vector<::uos::types::ResponseInputItem>>>(inputResult).value;
-    const auto cacheError = request_policy::validateKnownUnsupportedPromptCacheUse(model.modelRaw, model.modelMetadata, rawRecord, input, "input"); if (cacheError) co_return reqs::ResponsesStepNotOk{*cacheError};
-    auto reasoningTask = reqs::resolveResponsesReasoning(rawRecord, rawBody, model.modelMetadata, context); rt::Promise<reqs::ResponsesStep<reqs::ResponsesReasoning>> reasoningPending(std::move(reasoningTask)); const auto reasoningResult = co_await reasoningPending.wait();
+    auto input = std::get<reqs::ResponsesStepOk<std::vector<::uos::types::ResponseInputItem>>>(std::move(inputResult)).value;
+    const auto cacheError = request_policy::validateKnownUnsupportedPromptCacheUse(model.modelRaw, model.modelMetadata, rawRecord, input, "input");
+    if (cacheError) co_return reqs::ResponsesStepNotOk{*cacheError};
+    auto reasoningTask = reqs::resolveResponsesReasoning(rawRecord, rawBody, model.modelMetadata, context);
+    auto reasoningResult = co_await std::move(reasoningTask);
+    co_await rt::microtask();
     if (const auto* error = std::get_if<reqs::ResponsesStepNotOk>(&reasoningResult)) co_return *error;
-    const auto reasoning = std::get<reqs::ResponsesStepOk<reqs::ResponsesReasoning>>(reasoningResult).value;
-    const auto bodies = reqs::buildResponsesUpstreamBodies(model.model, input, reasoning.instructions, reasoning.reasoning, rawRecord);
+    auto reasoning = std::get<reqs::ResponsesStepOk<reqs::ResponsesReasoning>>(std::move(reasoningResult)).value;
+    auto bodies = reqs::buildResponsesUpstreamBodies(model.model, input, reasoning.instructions, reasoning.reasoning, rawRecord);
+    const double breakpointCount = tel::countExplicitPromptCacheBreakpoints(input);
+    input.clear();
+    // Both upstream bodies now own their projected input. The raw record is
+    // needed only for the later warning and structured-output checks.
+    rawRecord.erase("input");
     const tel::RecordRequestUsageDetails usage{.model = model.modelRaw, .route = "responses", .stream = settings.clientWantsStream, .reasoning = reasoning.reasoningLabel,
-      .promptCacheKeyPresent = tel::promptCacheKeyPresent(rawRecord), .promptCacheMode = tel::promptCacheModeFor(rawRecord), .explicitBreakpointCount = tel::countExplicitPromptCacheBreakpoints(input)};
+      .promptCacheKeyPresent = tel::promptCacheKeyPresent(rawRecord), .promptCacheMode = tel::promptCacheModeFor(rawRecord), .explicitBreakpointCount = breakpointCount};
     co_await tel::recordRequestUsage(context, usage).wait();
-    reqs::ResponsesRequestState requestState{context ? std::optional(*context) : std::nullopt, rawRecord, settings.warnings, settings.clientWantsStream, model.modelRaw, model.model, model.modelMetadata, input, reasoning.reasoningLabel, bodies.codexBody, bodies.removedProviderBody};
-    auto routingTask = prepareResponsesRouting(req, requestState, model.model); rt::Promise<reqs::ResponsesRoutingState> routingPending(std::move(routingTask)); const auto routingState = co_await routingPending.wait();
-    auto state = std::make_shared<reqs::ResponsesHandlerState>(reqs::ResponsesHandlerState{requestState, routingState}); co_return reqs::ResponsesStepOk<State>{state};
+    auto routingTask = prepareResponsesRouting(req, context, settings.clientWantsStream, model.model);
+    auto routing = co_await std::move(routingTask);
+    co_await rt::microtask();
+    reqs::ResponsesRequestState requestState{
+      context ? std::optional(*context) : std::nullopt, std::move(rawRecord), std::move(settings.warnings),
+      settings.clientWantsStream, std::move(model.modelRaw), std::move(model.model), std::move(model.modelMetadata),
+      breakpointCount, std::move(reasoning.reasoningLabel), std::move(bodies.codexBody), std::move(bodies.removedProviderBody)};
+    auto state = std::make_shared<reqs::ResponsesHandlerState>(reqs::ResponsesHandlerState{std::move(requestState), std::move(routing)});
+    co_return reqs::ResponsesStepOk<State>{std::move(state)};
   }
   void releaseResponsesProbeIfSet(const std::optional<circuit::RemovedProviderCircuitProbe>& probe) { if (probe) (void)circuit::releaseRemovedProviderCircuitProbe(probe).catch_([](rt::Reason) {}); }
   rt::Response releaseResponsesProbeAndReturn(const std::optional<circuit::RemovedProviderCircuitProbe>& probe, rt::Response response) { releaseResponsesProbeIfSet(probe); return response; }
@@ -295,7 +313,7 @@ namespace {
     if (!state->removedProviderAttempt) return warnings;
     std::vector<std::string> result;
     for (const auto& warning : warnings) {
-      if (warning == "prompt_cache_breakpoint_ignored" && tel::countExplicitPromptCacheBreakpoints(state->input) > 0) continue;
+      if (warning == "prompt_cache_breakpoint_ignored" && state->explicitBreakpointCount > 0) continue;
       bool forwarded = false;
       for (const auto& key : controls) { const auto* mapped = request_policy::WARNING_KEY_MAP.get(key); if (rt::hasOwn(state->rawRecord, key) && warning == (mapped ? *mapped : key + "_ignored")) { forwarded = true; break; } }
       if (!forwarded) result.push_back(warning);
@@ -366,12 +384,35 @@ namespace {
     if (!delivery->clientWantsStream) { auto task = deliverBufferedResponses(delivery); rt::Promise<rt::Response> pending(std::move(task)); auto awaitedResult5 = co_await pending.wait(); co_return awaitedResult5; }
     co_return deliverStreamingResponses(delivery);
   }
+  rt::Task<rt::Response> runResponsesTail(rt::Request req, json::object rawRecord, const json::object* separateBody,
+                                        const tel::UsageContext* context, ResponsesTailOptions options) {
+    auto task = prepareResponsesRequest(req, std::move(rawRecord), separateBody, context, options);
+    auto prepared = co_await std::move(task);
+    co_await rt::microtask();
+    if (const auto* error = std::get_if<reqs::ResponsesStepNotOk>(&prepared)) co_return error->response;
+    auto state = std::get<reqs::ResponsesStepOk<State>>(std::move(prepared)).value;
+    auto failoverTask = runResponsesFailover(state, options);
+    rt::Promise<std::optional<rt::Response>> failoverPending(std::move(failoverTask));
+    const auto failover = co_await failoverPending.wait();
+    if (failover) co_return *failover;
+    auto delivery = buildResponsesDelivery(state);
+    if (const auto* error = std::get_if<reqs::ResponsesStepNotOk>(&delivery)) co_return error->response;
+    state->codexBody = json::object{};
+    state->removedProviderBody = json::object{};
+    state->rawRecord = json::object{};
+    auto deliveryTask = deliverPreparedResponses(std::get<reqs::ResponsesStepOk<Delivery>>(std::move(delivery)).value);
+    rt::Promise<rt::Response> deliveryPending(std::move(deliveryTask));
+    co_return co_await deliveryPending.wait();
+  }
+
   rt::Task<rt::Response> handleResponsesInternal(rt::Request req, const tel::UsageContext* context, const json::value* parsedBody) {
-    auto requestTask = reqs::readResponsesRequest(req, parsedBody); rt::Promise<reqs::ResponsesStep<reqs::ReadResponsesRequestValue>> requestPending(std::move(requestTask)); const auto request = co_await requestPending.wait();
+    auto requestTask = reqs::readResponsesRequest(req, parsedBody);
+    auto request = co_await std::move(requestTask);
+    co_await rt::microtask();
     if (const auto* error = std::get_if<reqs::ResponsesStepNotOk>(&request)) co_return error->response;
-    const auto value = std::get<reqs::ResponsesStepOk<reqs::ReadResponsesRequestValue>>(request).value; const auto& rawRecord = value.rawRecord; const auto& rawBody = value.rawBody;
+    auto rawRecord = std::get<reqs::ResponsesStepOk<reqs::ReadResponsesRequestValue>>(std::move(request)).value.rawRecord;
     auto extensionsTask = provider::openrouter_request_controls::openRouterPromptCacheRequestExtensions(rawRecord); rt::Promise<std::optional<rt::OrderedSet<std::string>>> extensionsPending(std::move(extensionsTask)); const auto extensions = co_await extensionsPending.wait();
-    const auto invalid = reqs::validateResponsesRequestFields(rawRecord, rawBody, extensions ? &*extensions : nullptr); if (invalid) co_return *invalid;
+    const auto invalid = reqs::validateResponsesRequestFields(rawRecord, rawRecord, extensions ? &*extensions : nullptr); if (invalid) co_return *invalid;
     const auto dispatchContext = responses_native_headers::nativeHeaderUsageContext(req, rawRecord, context); const auto* dispatch = dispatchContext ? &*dispatchContext : nullptr;
     const auto requested = rt::trim(rt::getString(rawRecord, "model").value_or(""));
     if (provider::gemini::isGeminiModel(requested) && provider::gemini::geminiOperatorOptIn()) {
@@ -383,7 +424,7 @@ namespace {
         co_return co_await pending.wait();
       }
     }
-    if (!requested.empty() && deepseek::waterfall::isDeepSeekWaterfallModel(requested)) { auto task = deepseek::waterfall_handler::handleDeepSeekWaterfallResponses(req, rawRecord, rawBody, dispatch); rt::Promise<rt::Response> pending(std::move(task)); auto awaitedResult6 = co_await pending.wait(); co_return awaitedResult6; }
+    if (!requested.empty() && deepseek::waterfall::isDeepSeekWaterfallModel(requested)) { auto task = deepseek::waterfall_handler::handleDeepSeekWaterfallResponses(req, rawRecord, rawRecord, dispatch); rt::Promise<rt::Response> pending(std::move(task)); auto awaitedResult6 = co_await pending.wait(); co_return awaitedResult6; }
     if (!requested.empty() && deepseek::index::deepSeekUpstreamModelFor(requested)) {
       const auto selection = co_await provider::selection::loadProviderSelectionCached(); co_await rt::microtask();
       if (provider::selection::isProviderEnabled("deepseek", selection)) { auto task = deepseek::handlers::handleDeepSeekResponses(req, rawRecord, requested, dispatch); rt::Promise<rt::Response> pending(std::move(task)); auto awaitedResult7 = co_await pending.wait(); co_return awaitedResult7; }
@@ -403,7 +444,9 @@ namespace {
         if (model && !model->empty()) { auto task = provider::openrouter_handlers::handleOpenRouterResponses(req, rawRecord, requested, dispatch); rt::Promise<rt::Response> pending(std::move(task)); auto awaitedResult10 = co_await pending.wait(); co_return awaitedResult10; }
       }
     }
-    auto task = runOrdinaryResponsesTail(req, rawRecord, rawBody, dispatch); rt::Promise<rt::Response> pending(std::move(task)); auto awaitedResult11 = co_await pending.wait(); co_return awaitedResult11;
+    const ResponsesTailOptions options;
+    auto task = runResponsesTail(req, std::move(rawRecord), nullptr, dispatch, options);
+    co_return co_await std::move(task);
   }
   rt::Task<rt::Response> runResponsesTelemetryBody(rt::Request req, std::optional<json::value> parsedBody, tel::UsageContext context) {
     std::optional<rt::Response> response; rt::Reason error;
@@ -423,15 +466,14 @@ namespace {
 }
 void recordRemovedProviderCircuitTransition(const tel::UsageContext* context, const std::string& transition) { if (transition != "none") { tel::RecordRemovedProviderFieldsFields fields; fields.circuitTransition = transition; tel::recordRemovedProviderFields(context, fields); } }
 rt::Task<rt::Response> runOrdinaryResponsesTail(rt::Request req, json::object rawRecord, ::uos::types::ResponsesRequest rawBody, const tel::UsageContext* context) {
-  const ResponsesTailOptions options; auto task = runOrdinaryResponsesTail(req, rawRecord, rawBody, context, options); auto awaitedResult14 = co_await std::move(task); co_return awaitedResult14;
+  const ResponsesTailOptions options;
+  auto task = runOrdinaryResponsesTail(std::move(req), std::move(rawRecord), std::move(rawBody), context, options);
+  co_return co_await std::move(task);
 }
-rt::Task<rt::Response> runOrdinaryResponsesTail(rt::Request req, json::object rawRecord, ::uos::types::ResponsesRequest rawBody, const tel::UsageContext* context, ResponsesTailOptions options) {
-  auto task = prepareResponsesRequest(req, rawRecord, rawBody, context, options); rt::Promise<reqs::ResponsesStep<State>> pending(std::move(task)); const auto prepared = co_await pending.wait();
-  if (const auto* error = std::get_if<reqs::ResponsesStepNotOk>(&prepared)) co_return error->response;
-  const auto state = std::get<reqs::ResponsesStepOk<State>>(prepared).value;
-  auto failoverTask = runResponsesFailover(state, options); rt::Promise<std::optional<rt::Response>> failoverPending(std::move(failoverTask)); const auto failover = co_await failoverPending.wait(); if (failover) co_return *failover;
-  const auto delivery = buildResponsesDelivery(state); if (const auto* error = std::get_if<reqs::ResponsesStepNotOk>(&delivery)) co_return error->response;
-  auto deliveryTask = deliverPreparedResponses(std::get<reqs::ResponsesStepOk<Delivery>>(delivery).value); rt::Promise<rt::Response> deliveryPending(std::move(deliveryTask)); auto awaitedResult15 = co_await deliveryPending.wait(); co_return awaitedResult15;
+rt::Task<rt::Response> runOrdinaryResponsesTail(rt::Request req, json::object rawRecord, ::uos::types::ResponsesRequest rawBody,
+                                               const tel::UsageContext* context, ResponsesTailOptions options) {
+  auto task = runResponsesTail(std::move(req), std::move(rawRecord), &rawBody, context, std::move(options));
+  co_return co_await std::move(task);
 }
 rt::Task<rt::Response> runResponsesHandler(rt::Request req, const tel::UsageContext* context, const json::value* parsedBody) {
   const std::optional<json::value> body = parsedBody ? std::optional(*parsedBody) : std::nullopt;
