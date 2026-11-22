@@ -1,4 +1,5 @@
 #include "uos/runtime_config.hpp"
+#include "uos/rt/memory.hpp"
 #include "uos/rt/kv_js.hpp"
 
 #include "uos/kv.hpp"
@@ -42,6 +43,13 @@ namespace uos::runtime_config {
     std::optional<CachedRuntimeConfig>& cachedRuntimeConfig() {
       static std::optional<CachedRuntimeConfig> value;
       return value;
+    }
+
+    void setCachedRuntimeConfig(CachedRuntimeConfig cached) {
+      const auto& config = cached.value;
+      const auto size = sizeof(CachedRuntimeConfig) + rt::memory::bytes(toJson(config));
+      cachedRuntimeConfig() = std::move(cached);
+      rt::memory::setCache(rt::memory::Cache::runtime_config, 1, size);
     }
 
     std::optional<rt::Promise<std::optional<RuntimeConfigV2>>>& runtimeConfigLoadInFlight() {
@@ -206,7 +214,7 @@ namespace uos::runtime_config {
           kv = *kvOverride;
         }
         if (!kv) {
-          if (stale) cachedRuntimeConfig() = CachedRuntimeConfig{*stale, nowMs + RUNTIME_CONFIG_CACHE_TTL_MS};
+          if (stale) setCachedRuntimeConfig(CachedRuntimeConfig{*stale, nowMs + RUNTIME_CONFIG_CACHE_TTL_MS});
           result = stale;
         } else {
           const rt::KvGetOptions options{.consistency = rt::KvConsistencyLevel::strong};
@@ -214,12 +222,12 @@ namespace uos::runtime_config {
           const rt::KvEntryMaybe<> entry = co_await reading.wait();
           std::optional<RuntimeConfigV2> value = normalizeRuntimeConfig(entry.value);
           if (!value) value = stale;
-          if (value) cachedRuntimeConfig() = CachedRuntimeConfig{*value, nowMs + RUNTIME_CONFIG_CACHE_TTL_MS};
+          if (value) setCachedRuntimeConfig(CachedRuntimeConfig{*value, nowMs + RUNTIME_CONFIG_CACHE_TTL_MS});
           result = std::move(value);
         }
       } catch (...) {
         rt::console::warn("[ai.ubq.fi] Runtime configuration refresh failed; using stale configuration:", std::current_exception());
-        if (stale) cachedRuntimeConfig() = CachedRuntimeConfig{*stale, nowMs + RUNTIME_CONFIG_CACHE_TTL_MS};
+        if (stale) setCachedRuntimeConfig(CachedRuntimeConfig{*stale, nowMs + RUNTIME_CONFIG_CACHE_TTL_MS});
         result = stale;
       }
       // `finally`: when the body finished without suspending, this runs before loadRuntimeConfig
@@ -357,11 +365,12 @@ namespace uos::runtime_config {
     const json::value value = toJson(config);
     std::optional<RuntimeConfigV2> normalized = normalizeRuntimeConfig(value);
     if (!normalized) throw RuntimeConfigError("runtime config is invalid or exceeds one 4 KiB read unit");
-    cachedRuntimeConfig() = CachedRuntimeConfig{std::move(*normalized), nowMs + RUNTIME_CONFIG_CACHE_TTL_MS};
+    setCachedRuntimeConfig(CachedRuntimeConfig{std::move(*normalized), nowMs + RUNTIME_CONFIG_CACHE_TTL_MS});
   }
 
   void resetRuntimeConfigCacheForTest() {
     cachedRuntimeConfig().reset();
+    rt::memory::setCache(rt::memory::Cache::runtime_config, 0, 0);
     runtimeConfigLoadInFlight().reset();
   }
 

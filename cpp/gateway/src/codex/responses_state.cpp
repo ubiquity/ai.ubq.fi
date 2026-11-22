@@ -10,13 +10,12 @@
 #include <utility>
 
 namespace uos::codex::responses_state {
-  rt::Task<CreateCodexResponseStateResult> createCodexResponseState(dispatch::PreparedCodexSubscriptionRequest prepared,
+  rt::Task<CreateCodexResponseStateResult> createCodexResponseState(std::shared_ptr<const dispatch::PreparedCodexSubscriptionRequest> prepared,
                                                                     dispatch::FetchCodexResponsesOptions options,
                                                                     dispatch::CodexProviderDispatchCoordinator providerDispatch) {
     rt::Promise<void> settling(dispatch::awaitPendingCodexProbeTransitions());
     co_await settling.wait();
-    const json::value body = prepared.body;
-    const std::optional<std::string> requestedModel = dispatch::requestedCodexModel(body);
+    const auto requestedModel = dispatch::requestedCodexModel(prepared->body);
     rt::Promise<auth::CodexAuthPoolEntry> loading(auth::getAuthPoolEntry(true, true));
     const auth::CodexAuthPoolEntry poolEntry = co_await loading.wait();
     // Refresh the per-account overage switch once per request so the synchronous
@@ -42,15 +41,14 @@ namespace uos::codex::responses_state {
       }
     }
     const std::string url = ::uos::config::config.codexBaseUrl + "/responses";
-    const std::string serializedBody = prepared.serializedBody;
     rt::Headers baseHeaders{
       {"originator", std::string(auth::CODEX_ORIGINATOR)},
       {"user-agent", auth::codexUserAgent(options.clientVersion)},
       {"Content-Type", "application/json"},
       {"Accept", "text/event-stream"},
-      {"conversation_id", prepared.conversationIdentity},
+      {"conversation_id", prepared->conversationIdentity},
     };
-    dispatch::applyNativeSessionHeaders(baseHeaders, prepared.nativeSessionIdentity);
+    dispatch::applyNativeSessionHeaders(baseHeaders, prepared->nativeSessionIdentity);
     const std::optional<dispatch::CodexBankedResetOptions> configuredBankedReset = options.bankedReset;
     const std::optional<banked_reset::CodexBankedResetConfig> configuredBankedResetConfig =
       configuredBankedReset.has_value() ? configuredBankedReset->config : std::nullopt;
@@ -76,16 +74,14 @@ namespace uos::codex::responses_state {
     }
 
     const auto state = std::make_shared<CodexResponseContext>();
-    state->prepared = prepared;
+    state->prepared = std::move(prepared);
     state->options = options;
     state->providerDispatch = providerDispatch;
-    state->body = body;
     state->requestedModel = requestedModel;
     state->poolEntry = poolEntry;
     state->selected = selected;
     state->accountEntries = std::move(accountEntries);
     state->url = url;
-    state->serializedBody = serializedBody;
     state->baseHeaders = baseHeaders;
     state->configuredBankedReset = configuredBankedReset;
     state->configuredBankedResetConfig = configuredBankedResetConfig;

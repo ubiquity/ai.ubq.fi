@@ -30,6 +30,26 @@ On Ubuntu ARM64 with a 540,000-row, roughly 1 GB SQLite fixture, the Release gat
 
 Allow at least 90 MiB of RAM headroom for this serial workload on a small board, alongside memory for the OS and other services. Size additional headroom for concurrent streams and larger inputs, and leave disk space for the SQLite state and WAL. The Release benchmark enforces a 68 MiB post-trim resident budget after one catalog and 100 completions. [Codex memory check](../bench/codex_memory/README.md) · [Measurements](findings/cppgw-memory-20261121.md)
 
+With the real Codex CLI and 512,231 fixture rows, the current Release gateway
+used about 10–11 MiB anonymous after the first tool session and about 13 MiB
+after 500 mixed sessions. The quiet runs peaked at about 45–46 MiB resident. Release shard 1
+caps its 20-session check at 17 MiB anonymous and 58 MiB peak resident.
+[Real-client benchmark](../bench/codex_real/README.md) · [Comparison](findings/cppgw-memory-2-20261121.md)
+
+### Process memory telemetry
+
+`GET /health` and the request terminal log include a `memory` object. Its
+`resident_bytes` and `anonymous_bytes` fields describe the gateway process.
+Health uses Linux `smaps_rollup` when readable, and terminals use the fast
+`statm` counters. On glibc, `allocator_in_use_bytes` includes active heap
+blocks and direct mappings. `allocator_free_bytes` counts free allocator
+blocks and `allocator_mmap_bytes` reports the directly mapped bytes.
+
+Each named entry in `memory.caches` has an `entries` count and a retained
+`bytes` estimate. Estimates include owned payload capacity where available.
+SQLite reports pager bytes and estimates resident page count from the page
+size. The counters expose sizes and counts. [Real-client measurements](findings/cppgw-memory-2-20261121.md)
+
 ## Input limits
 
 The shared constants in [limits.hpp](../include/uos/rt/limits.hpp) record the target defaults. The enforced limits below apply at the parser, library or transport boundary. Keep smaller existing limits on the same operation and record a larger allowance only for a proven application flow. Map failures to the boundary's established status, close code or exception. Source wiring and executed acceptance are recorded separately below.

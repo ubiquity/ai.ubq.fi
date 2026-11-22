@@ -4,6 +4,7 @@
 #endif
 
 #include "uos/rt/json.hpp"
+#include "uos/rt/memory.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/rt/text_codec.hpp"
 
@@ -345,6 +346,19 @@ namespace uos::rt::sqlite {
     // The query() cache, least recently used first.
     std::vector<std::pair<std::string, std::shared_ptr<Statement::Impl>>> queryCache;
     std::shared_ptr<const detail::TransactionController> controller;
+    memory::ScopedCache pageMemory{memory::Cache::sqlite_pages};
+    memory::ScopedCache statementMemory{memory::Cache::sqlite_statements};
+
+    void reportStatements() noexcept {
+#if defined(UOS_GATEWAY_NATIVE_LIBRARIES)
+      std::size_t bytes = queryCache.capacity() * sizeof(queryCache.front());
+      for (const auto& [sql, cached] : queryCache) {
+        bytes += memory::bytes(sql) + sizeof(Statement::Impl);
+        if (cached->statement) bytes += static_cast<std::size_t>(::sqlite3_stmt_status(cached->statement, SQLITE_STMTSTATUS_MEMUSED, 0));
+      }
+      statementMemory.set(queryCache.size(), bytes);
+#endif
+    }
   };
 
   struct detail::TransactionController {
@@ -614,17 +628,27 @@ namespace uos::rt::sqlite {
       return row;
     }
 
-    std::vector<Row> allRows(Statement::Impl& statement) {
+    template <class Visit>
+    void visitRows(Statement::Impl& statement, Visit&& visit) {
       const Api& sqlite = api();
-      std::vector<Row> rows;
       std::optional<Columns> columns;
       int status = sqlite.step(statement.statement);
-      while (status == SQLITE_ROW) {
-        if (!columns) columns = columnsOf(statement.statement);
-        rows.push_back(readRow(statement.statement, *columns, statement.safeIntegers));
-        status = sqlite.step(statement.statement);
+      try {
+        while (status == SQLITE_ROW) {
+          if (!columns) columns = columnsOf(statement.statement);
+          visit(readRow(statement.statement, *columns, statement.safeIntegers));
+          status = sqlite.step(statement.statement);
+        }
+      } catch (...) {
+        sqlite.reset(statement.statement);
+        throw;
       }
       finish(statement, status);
+    }
+
+    std::vector<Row> allRows(Statement::Impl& statement) {
+      std::vector<Row> rows;
+      visitRows(statement, [&rows](Row row) { rows.push_back(std::move(row)); });
       return rows;
     }
 
@@ -814,6 +838,11 @@ namespace uos::rt::sqlite {
     return allRows(*impl);
   }
 
+  void Statement::forEachRow(const std::vector<Binding>& params, const std::function<void(Row)>& visit) const {
+    restart(*impl, takesArguments(*impl, params) ? &params : nullptr, nullptr);
+    visitRows(*impl, visit);
+  }
+
   RowIterator Statement::iterate() const { return RowIterator(impl); }
   RowIterator Statement::iterate(const std::vector<Binding>& params) const {
     RowIterator iterator(impl);
@@ -915,14 +944,17 @@ namespace uos::rt::sqlite {
     if (cached != cache.end()) {
       std::shared_ptr<Statement::Impl> statement = cached->second;
       cache.erase(cached);
-      if (statement->state != Statement::Impl::State::alive) statement = prepareStatement(*impl, sql, constants::SQLITE_PREPARE_PERSISTENT, true);
+      const bool finalized = statement->state != Statement::Impl::State::alive;
+      if (finalized) statement = prepareStatement(*impl, sql, constants::SQLITE_PREPARE_PERSISTENT, true);
       cache.emplace_back(std::string(sql), statement);
+      if (finalized) impl->reportStatements();
       return Statement(std::move(statement));
     }
     std::shared_ptr<Statement::Impl> statement = prepareStatement(*impl, sql, constants::SQLITE_PREPARE_PERSISTENT, true);
     if (MAX_QUERY_CACHE_SIZE > 0) {
       if (cache.size() >= MAX_QUERY_CACHE_SIZE) cache.erase(cache.begin());
       cache.emplace_back(std::string(sql), statement);
+      impl->reportStatements();
     }
     return Statement(std::move(statement));
   }
@@ -948,8 +980,24 @@ namespace uos::rt::sqlite {
     return api().file_control(connection.handle, nullptr, op, &argument);
   }
 
+  void Database::reportPageCacheMemory(std::size_t pageBytes) const noexcept {
+#if defined(UOS_GATEWAY_NATIVE_LIBRARIES)
+    if (impl->connection->closed || pageBytes == 0) return;
+    int used = 0;
+    int unused = 0;
+    if (::sqlite3_db_status(impl->connection->handle, SQLITE_DBSTATUS_CACHE_USED, &used, &unused, 0) == SQLITE_OK && used >= 0) {
+      const auto bytes = static_cast<std::size_t>(used);
+      impl->pageMemory.set(bytes / pageBytes, bytes);
+    }
+#else
+    (void)pageBytes;
+#endif
+  }
+
   void Database::close(bool throwOnError) const {
     impl->queryCache.clear();
+    impl->statementMemory.set(0, 0);
+    impl->pageMemory.set(0, 0);
     impl->controller.reset();
     Connection& connection = *impl->connection;
     for (const std::weak_ptr<Statement::Impl>& entry : connection.statements) {

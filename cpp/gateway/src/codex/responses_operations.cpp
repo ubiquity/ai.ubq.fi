@@ -814,7 +814,7 @@ namespace uos::codex::responses_operations {
           if (ctx->options.sentinelUpstreamRecorder.has_value()) *upstreamAttempt = ctx->options.sentinelUpstreamRecorder->startAttempt("chatgpt_codex");
           else *upstreamAttempt = std::nullopt;
         };
-        rt::Promise<rt::Response> fetching(dispatch::fetchCodexResponseWithAuth(auth, ctx->url, ctx->serializedBody, ctx->baseHeaders, ctx->options.signal,
+        rt::Promise<rt::Response> fetching(dispatch::fetchCodexResponseWithAuth(auth, ctx->url, ctx->prepared->serializedBody, ctx->baseHeaders, ctx->options.signal,
                                                                                 std::move(preTransport), std::move(onDispatch)));
         const rt::Response response = co_await fetching.wait();
         // Wrap before the response WeakMap account/health registration

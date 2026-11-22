@@ -300,7 +300,7 @@ namespace uos::codex::responses_state {
   };
   using CreateCodexResponseStateResult = std::variant<CreateCodexResponseStateResultTerminal, CreateCodexResponseStateResultState>;
 
-  [[nodiscard]] rt::Task<CreateCodexResponseStateResult> createCodexResponseState(dispatch::PreparedCodexSubscriptionRequest prepared,
+  [[nodiscard]] rt::Task<CreateCodexResponseStateResult> createCodexResponseState(std::shared_ptr<const dispatch::PreparedCodexSubscriptionRequest> prepared,
                                                                                   dispatch::FetchCodexResponsesOptions options,
                                                                                   dispatch::CodexProviderDispatchCoordinator providerDispatch);
 
@@ -329,17 +329,14 @@ namespace uos::codex::responses_state {
       std::optional<Current> current;
     };
 
-    dispatch::PreparedCodexSubscriptionRequest prepared;
+    std::shared_ptr<const dispatch::PreparedCodexSubscriptionRequest> prepared;
     dispatch::FetchCodexResponsesOptions options;
     dispatch::CodexProviderDispatchCoordinator providerDispatch;
-    // `unknown`: prepared.body.
-    json::value body;
     std::optional<std::string> requestedModel;
     auth::CodexAuthPoolEntry poolEntry;
     routing_state::RouteSelection selected;
     std::vector<auth::CodexDispatchAccountEntry> accountEntries;
     std::string url;
-    std::string serializedBody;
     rt::Headers baseHeaders;
     // `options.bankedReset` and its `config`: std::nullopt is undefined.
     std::optional<dispatch::CodexBankedResetOptions> configuredBankedReset;

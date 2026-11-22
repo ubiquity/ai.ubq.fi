@@ -1,4 +1,5 @@
 #include "uos/models/openrouter_models.hpp"
+#include "uos/rt/memory.hpp"
 
 #include "uos/rt/clock.hpp"
 #include "uos/rt/error.hpp"
@@ -208,6 +209,17 @@ namespace uos::models::openrouter_models {
       ModuleState& state = moduleState();
       if (state.failIndexAllocationForTest) throw std::bad_alloc();
       auto index = std::make_shared<const OpenRouterMatchIndex>(buildMatchIndex(snapshot->models));
+      std::size_t bytes = snapshot->models.capacity() * sizeof(OpenRouterModelMetadata);
+      for (const auto& model : snapshot->models) {
+        bytes += rt::memory::bytes(model.id);
+        if (model.reasoning) bytes += rt::memory::bytes(model.reasoning->supported_efforts);
+        if (model.output_modalities) bytes += rt::memory::bytes(*model.output_modalities);
+      }
+      for (const auto* tier : {&index->exactId, &index->exactSlug, &index->normalizedId, &index->normalizedSlug, &index->alias, &index->base}) {
+        bytes += tier->bucket_count() * sizeof(void*);
+        for (const auto& entry : *tier) bytes += sizeof(entry) + rt::memory::bytes(entry.first);
+      }
+      rt::memory::setCache(rt::memory::Cache::openrouter_models, snapshot->models.size(), bytes);
       state.cache = snapshot;
       state.index = std::move(index);
       state.retryAfterMs = 0;
@@ -313,6 +325,7 @@ namespace uos::models::openrouter_models {
   void resetOpenRouterModelsCacheForTest() {
     ModuleState& state = moduleState();
     state.cache.reset();
+    rt::memory::setCache(rt::memory::Cache::openrouter_models, 0, 0);
     state.index.reset();
     state.fetchInFlight.reset();
     state.retryAfterMs = 0;

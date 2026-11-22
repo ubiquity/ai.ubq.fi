@@ -64,11 +64,11 @@ rt::Task<ResponsesStep<ReadResponsesRequestValue>> readResponsesRequest(rt::Requ
   if (!rt::truthy(rawBody) || !utils::isRecord(rawBody)) co_return ResponsesStepNotOk{invalid("Invalid JSON body")};
   // A TypeScript array passes the original isRecord guard, then has no named request fields.
   json::object record;
-  if (rawBody.is_object()) record = rawBody.get_object();
-  else for (std::size_t i = 0; i < rawBody.get_array().size(); ++i) record[rt::numberToString(static_cast<double>(i))] = rawBody.get_array()[i];
+  if (rawBody.is_object()) record = std::move(rawBody.get_object());
+  else for (std::size_t i = 0; i < rawBody.get_array().size(); ++i) record[rt::numberToString(static_cast<double>(i))] = std::move(rawBody.get_array()[i]);
   if (rt::trim(rt::getString(record, "model").value_or("")).size() > rt::limits::kRegexSubjectBytes)
     co_return ResponsesStepNotOk{invalid("model is too long", "model")};
-  co_return ResponsesStepOk<ReadResponsesRequestValue>{{record, record}};
+  co_return ResponsesStepOk<ReadResponsesRequestValue>{{std::move(record)}};
 }
 std::optional<rt::Response> validateResponsesRequestFields(const json::object& rawRecord, const ::uos::types::ResponsesRequest& rawBody, const rt::OrderedSet<std::string>* providerExtensions) {
   auto extensions = openai::CODEX_RESPONSES_EXTENSION_KEYS;
@@ -96,10 +96,10 @@ ResponsesStep<ResponsesStreamSettings> resolveResponsesStreamSettings(const json
   if (const auto* error = std::get_if<policy::ParseFieldNotOk>(&parsedStream)) return ResponsesStepNotOk{invalid(error->message, "stream")};
   return ResponsesStepOk<ResponsesStreamSettings>{{warnings, std::get<policy::ParseStreamFieldOk>(parsedStream).value}};
 }
-rt::Task<ResponsesStep<ResponsesModel>> resolveResponsesModel(json::object rawRecord, const openai_telemetry::UsageContext* usageContext) {
+rt::Task<ResponsesStep<ResponsesModel>> resolveResponsesModel(const json::object& rawRecord, const openai_telemetry::UsageContext* usageContext) {
   const ResolveResponsesModelOptions options; auto task = resolveResponsesModel(rawRecord, usageContext, options); auto awaitedResult1 = co_await std::move(task); co_return awaitedResult1;
 }
-rt::Task<ResponsesStep<ResponsesModel>> resolveResponsesModel(json::object rawRecord, const openai_telemetry::UsageContext* usageContext, ResolveResponsesModelOptions options) {
+rt::Task<ResponsesStep<ResponsesModel>> resolveResponsesModel(const json::object& rawRecord, const openai_telemetry::UsageContext* usageContext, ResolveResponsesModelOptions options) {
   const auto* rawModelValue = rt::get(rawRecord, "model"); const auto modelRawValue = rt::getString(rawRecord, "model");
   if (rt::hasOwn(rawRecord, "model") && !modelRawValue && !rt::isNullish(rawModelValue)) co_return ResponsesStepNotOk{invalid("model must be a string")};
   auto modelRaw = rt::trim(modelRawValue.value_or(""));
@@ -132,10 +132,10 @@ ResponsesStep<std::vector<::uos::types::ResponseInputItem>> normalizeResponsesIn
     if (error) return ResponsesStepNotOk{*error};
   }
   if (!accumulator.sawNonContentItem || !accumulator.contentBuffer.empty()) flushResponsesContentBuffer(accumulator);
-  return Result{accumulator.converted};
+  return Result{std::move(accumulator.converted)};
 }
-rt::Task<ResponsesStep<ResponsesReasoning>> resolveResponsesReasoning(json::object rawRecord, ::uos::types::ResponsesRequest rawBody,
-  policy::CodexModelMetadata modelMetadata, const openai_telemetry::UsageContext* usageContext) {
+rt::Task<ResponsesStep<ResponsesReasoning>> resolveResponsesReasoning(const json::object& rawRecord, const ::uos::types::ResponsesRequest& rawBody,
+  const policy::CodexModelMetadata& modelMetadata, const openai_telemetry::UsageContext* usageContext) {
   const auto reasoning = policy::parseReasoningParam(rt::get(rawBody, "reasoning"));
   if (const auto* error = std::get_if<policy::ParseFieldNotOk>(&reasoning)) co_return ResponsesStepNotOk{invalid(error->message, "reasoning")};
   std::optional<std::string> instructions;
@@ -153,7 +153,7 @@ rt::Task<ResponsesStep<ResponsesReasoning>> resolveResponsesReasoning(json::obje
   if (usageContext && usageContext->responseTelemetry) usageContext->responseTelemetry->reasoning = label;
   auto value = policy::normalizeReasoningParamForCodex(parsed, modelReasoning);
   if (!value && !parsed) value = json::object{{"effort", policy::reasoningEffortForCodexRequest(defaultLabel, modelReasoning)}};
-  co_return ResponsesStepOk<ResponsesReasoning>{{label, instructions, value}};
+  co_return ResponsesStepOk<ResponsesReasoning>{{label, std::move(instructions), std::move(value)}};
 }
 ResponsesUpstreamBodies buildResponsesUpstreamBodies(const std::string& model, const std::vector<::uos::types::ResponseInputItem>& input,
   const std::optional<std::string>& instructions, const std::optional<json::object>& reasoning, const json::object& rawRecord) {
@@ -164,6 +164,6 @@ ResponsesUpstreamBodies buildResponsesUpstreamBodies(const std::string& model, c
   policy::applyPassthroughToCodexRequest(codexBody, rawRecord, keys); codexBody["model"] = model; codexBody["stream"] = true; codexBody["store"] = false;
   auto removedProviderBody = codexBody; removedProviderBody["input"] = json::value_from(input);
   for (const auto* key : {"max_output_tokens", "max_tool_calls", "metadata", "safety_identifier", "service_tier", "temperature", "top_p", "truncation", "user"}) if (const auto* value = rt::get(rawRecord, key)) removedProviderBody[key] = *value;
-  return {codexBody, removedProviderBody};
+  return {std::move(codexBody), std::move(removedProviderBody)};
 }
 }

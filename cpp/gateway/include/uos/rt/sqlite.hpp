@@ -263,6 +263,9 @@ namespace uos::rt::sqlite {
       return all(std::vector<Binding>{Binding(std::forward<A>(params))...});
     }
 
+    // Visit owned rows in order, with the same reset and binding behavior as all().
+    void forEachRow(const std::vector<Binding>& params, const std::function<void(Row)>& visit) const;
+
     // `statement.iterate(...)`: a lazy generator; the parameters are bound by the first next()
     // without resetting the statement (Error "bad parameter or other API misuse" when the
     // statement is in the middle of another iteration, as in Bun).
@@ -426,6 +429,7 @@ namespace uos::rt::sqlite {
 
     // `db.inTransaction`: Error "Database has closed" after close().
     bool inTransaction() const;
+    void reportPageCacheMemory(std::size_t pageBytes) const noexcept;
     // `db.fileControl(op, value)`: SQLite's result code (SQLITE_NOTFOUND 12 for an in-memory
     // database); std::nullopt (undefined) after close().
     std::optional<int> fileControl(int op, int value) const;

@@ -1,4 +1,5 @@
 #include "uos/provider/lithos_models.hpp"
+#include "uos/rt/memory.hpp"
 #include "uos/provider/lithos.hpp"
 #include "uos/utils.hpp"
 #include "uos/rt/clock.hpp"
@@ -44,7 +45,15 @@ namespace {
       const auto* data = rt::getArray(payload, "data");
       if (!payload.is_object() || !data) { lithosModelsRetryAfterMs = rt::dateNow() + LITHOS_MODELS_FAILURE_BACKOFF_MS; co_return lithosModelsCache; }
       const LithosModelsSnapshot snapshot{listedLithosModels(*data), rt::dateNow()};
-      if (generation > lithosModelsCacheGeneration) { lithosModelsCacheGeneration = generation; lithosModelsCache = snapshot; lithosModelsRetryAfterMs = 0; }
+      if (generation > lithosModelsCacheGeneration) {
+        lithosModelsCacheGeneration = generation;
+        lithosModelsCache = snapshot;
+        lithosModelsRetryAfterMs = 0;
+        const auto& models = lithosModelsCache->models;
+        std::size_t bytes = models.capacity() * sizeof(LithosModel);
+        for (const auto& model : models) bytes += rt::memory::bytes(model.id);
+        rt::memory::setCache(rt::memory::Cache::lithos_models, models.size(), bytes);
+      }
       co_return lithosModelsCache;
     } catch (...) { failure = std::current_exception(); }
     if (signal.aborted() && options.signal && options.signal->aborted()) std::rethrow_exception(failure);

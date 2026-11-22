@@ -143,6 +143,12 @@ namespace uos::rt {
       if (const sqlite::Bytes* bytes = sqlite::getBytes(&value)) return *bytes;
       invalidColumnType(value, index, name);
     }
+    KvBytes takeBlobColumn(sqlite::Row& row, std::string_view name, std::size_t index) {
+      auto* value = row.get(name);
+      if (!value) throw JsError("Invalid column name: " + std::string(name));
+      if (auto* bytes = std::get_if<sqlite::Bytes>(value)) return std::move(*bytes);
+      invalidColumnType(*value, index, name);
+    }
     std::int64_t integerColumn(const sqlite::Row& row, std::string_view name, std::size_t index) {
       const sqlite::Value& value = column(row, name);
       if (const std::int64_t* integer = sqlite::getBigInt(&value)) return *integer;
@@ -238,6 +244,11 @@ namespace uos::rt {
         } catch (const sqlite::SQLiteError&) {
         }
         db_.run("PRAGMA synchronous = FULL");
+        // Keep a small per-connection pager and avoid mapping the state file.
+        db_.run("PRAGMA cache_size = -2000");
+        db_.run("PRAGMA mmap_size = 0");
+        if (const auto page = db_.query("PRAGMA page_size").get())
+          pageBytes_ = static_cast<std::size_t>(integerColumn(*page, "page_size", 0));
         try {
           migrate();
         } catch (const sqlite::SQLiteError& error) {
@@ -261,14 +272,14 @@ namespace uos::rt {
             parameters.emplace_back(range.end);
             parameters.emplace_back(static_cast<std::int64_t>(range.limit));
             kv_sdk::RangeEntries entries;
-            for (const sqlite::Row& row : statement.all(parameters)) {
-              KvBytes key = blobColumn(row, "k", 0);
-              KvBytes value = blobColumn(row, "v", 1);
+            statement.forEachRow(parameters, [&](sqlite::Row row) {
+              KvBytes key = takeBlobColumn(row, "k", 0);
+              KvBytes value = takeBlobColumn(row, "v", 1);
               const std::int64_t encoding = integerColumn(row, "v_encoding", 2);
               checkEncoding(encoding, value);
               const std::int64_t version = integerColumn(row, "version", 3);
               entries.push_back(kv_sdk::NativeEntry{std::move(key), kv_sdk::EncodedValue{std::move(value), static_cast<int>(encoding)}, static_cast<std::uint64_t>(version)});
-            }
+            });
             responses.push_back(std::move(entries));
           }
           // The snapshot's versionstamp, which napi discards.
@@ -344,6 +355,7 @@ namespace uos::rt {
             db_.run("BEGIN DEFERRED");
             auto result = body();
             db_.run("COMMIT");
+            db_.reportPageCacheMemory(pageBytes_);
             return result;
           } catch (const sqlite::SQLiteError& error) {
             rollback();
@@ -492,6 +504,7 @@ namespace uos::rt {
         db_.query(STATEMENT_QUEUE_REMOVE_RUNNING).run(id);
       }
 
+      std::size_t pageBytes_ = 0;
       sqlite::Database db_;
       std::function<std::uint64_t()> versionIncrement_;
       std::mt19937_64 random_{std::random_device{}()};

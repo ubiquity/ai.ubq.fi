@@ -78,6 +78,25 @@ jobs:
         run: |
           mkdir -p "$UOS_CI_BUILD_DIR"
           bash cpp/gateway/tools/ci-build.sh --config "$CONFIG" --shard "$SHARD/4" 2>&1 | tee "$UOS_CI_BUILD_DIR/driver.log"
+      - name: Check native gateway session memory
+        if: matrix.config == 'release' && matrix.shard == 1
+        env:
+          UOS_CI_BUILD_DIR: ${{ runner.temp }}/uos-gateway-build
+        run: |
+          sudo apt-get install -y -qq patchelf libsqlite3-dev
+          bench=cpp/gateway/bench
+          receipt=$(find "$UOS_CI_BUILD_DIR" -path '*/release/receipt.json' -type f -print -quit)
+          test -n "$receipt"
+          memory_build="$RUNNER_TEMP/codex-memory-package"
+          bash "$bench/codex_real/sqlite.sh" python3 -B "$bench/codex_real/build.py" \
+            --receipt "$receipt" --out "$memory_build"
+          client=(--scripted)
+          if codex_native=$(python3 -I "$bench/codex_real/measure.py" --find-codex codex); then
+            client=(--codex "$codex_native")
+          fi
+          bash "$bench/codex_real/sqlite.sh" bash "$bench/request_path/isolated.sh" --codex-real \
+            --package "$memory_build/package" --seed-state "$memory_build/seed-state" \
+            --out "$RUNNER_TEMP/codex-memory" --check "${client[@]}"
       - name: Save compiler cache
         if: matrix.shard == 1 && steps.ccache.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -109,6 +128,10 @@ jobs:
             ${{ runner.temp }}/uos-gateway-build/*/${{ matrix.config }}/results.tsv
             ${{ runner.temp }}/uos-gateway-build/**/*.log
             ${{ runner.temp }}/uos-gateway-build/summary.md
+            ${{ runner.temp }}/codex-memory/fixture.json
+            ${{ runner.temp }}/codex-memory/results.json
+            ${{ runner.temp }}/codex-memory/samples.jsonl
+            ${{ runner.temp }}/codex-memory/upstream.json
           if-no-files-found: warn
           retention-days: 14
 

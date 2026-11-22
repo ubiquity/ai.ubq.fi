@@ -1,4 +1,5 @@
 #include "uos/auth/passkeys.hpp"
+#include "uos/rt/memory.hpp"
 
 #include "uos/auth/relay.hpp"
 #include "uos/http.hpp"
@@ -1997,7 +1998,14 @@ jAGGiQIwHFj+dJZYUJR786osByBelJYsVZd2GbHQu209b5RCmGQ21gpSAk9QZW4B
         co_return false;
       }
       // Cache the results
-      if (!keyIdentifier.empty()) cacheRevokedCerts()[keyIdentifier] = newCached;
+      if (!keyIdentifier.empty()) {
+        auto& cache = cacheRevokedCerts();
+        cache[keyIdentifier] = newCached;
+        std::size_t size = 0;
+        for (const auto& [identifier, crl] : cache)
+          size += sizeof(crl) + rt::memory::bytes(identifier) + rt::memory::bytes(crl.revokedCerts);
+        rt::memory::setCache(rt::memory::Cache::passkey_crls, cache.size(), size);
+      }
       co_return rt::includes(newCached.revokedCerts, serialNumber);
     }
 

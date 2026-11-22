@@ -1,4 +1,5 @@
 #include "uos/provider/claude_code_models.hpp"
+#include "uos/rt/memory.hpp"
 
 #include "uos/kv.hpp"
 #include "uos/provider/claude_code.hpp"
@@ -34,7 +35,25 @@ namespace uos::provider::claude_code_models {
       std::optional<rt::Promise<std::optional<ClaudeCodeModelsSnapshot>>> pending;
     };
     // `Map<string, Cache>`: Cache objects are compared by identity.
-    using Scoped = std::unordered_map<std::string, std::shared_ptr<Cache>>;
+    struct Scoped : std::unordered_map<std::string, std::shared_ptr<Cache>> {
+      rt::memory::ScopedCache memory{rt::memory::Cache::claude_models};
+
+      void reportMemory() {
+        std::size_t bytes = bucket_count() * sizeof(void*);
+        for (const auto& [key, cached] : *this) {
+          bytes += sizeof(Cache) + rt::memory::bytes(key) + rt::memory::bytes(cached->identity);
+          if (!cached->snapshot) continue;
+          const auto& models = cached->snapshot->models;
+          bytes += models.capacity() * sizeof(ClaudeCodeModel);
+          for (const auto& model : models) {
+            bytes += rt::memory::bytes(model.id);
+            if (model.display_name) bytes += rt::memory::bytes(*model.display_name);
+            if (model.supported_reasoning_levels) bytes += rt::memory::bytes(*model.supported_reasoning_levels);
+          }
+        }
+        memory.set(size(), bytes);
+      }
+    };
 
     constexpr double CACHE_TTL_MS = 5 * 60'000;
     constexpr double RETRY_MS = 30'000;
@@ -286,6 +305,7 @@ namespace uos::provider::claude_code_models {
       if (!sameState || !latest || latest->identity != current.identity || current.generation != claude_code_credentials::claudeCodeStateGeneration(kv))
         co_return std::nullopt;
       state->snapshot = snapshot;
+      scoped->reportMemory();
       state->expires = now + (snapshot && !snapshot->stale.value_or(false) ? CACHE_TTL_MS : RETRY_MS);
       co_return snapshot;
     }
@@ -376,6 +396,7 @@ namespace uos::provider::claude_code_models {
     if (!cached || cached->identity != current->identity) {
       cached = std::make_shared<Cache>(Cache{.identity = current->identity, .snapshot = std::nullopt, .expires = 0, .pending = std::nullopt});
       (*scoped)[current->cacheKey] = cached;
+      scoped->reportMemory();
     }
     const std::shared_ptr<Cache> state = cached;
     const double now = options.now ? options.now() : rt::dateNow();
@@ -412,6 +433,7 @@ namespace uos::provider::claude_code_models {
     if (!scoped) scoped = std::make_shared<Scoped>();
     (*scoped)[current->cacheKey] =
       std::make_shared<Cache>(Cache{.identity = current->identity, .snapshot = std::move(snapshot), .expires = rt::dateNow() + CACHE_TTL_MS, .pending = std::nullopt});
+    scoped->reportMemory();
     caches()->byKv.set(*kv, scoped);
   }
   rt::Task<void> cacheValidatedClaudeCodeModels(std::shared_ptr<rt::Kv> kv, std::string secret, std::optional<std::string> workspaceId,

@@ -1,4 +1,5 @@
 #include "uos/sentinel/replay_retention_bootstrap.hpp"
+#include "uos/rt/memory.hpp"
 
 #include "uos/sentinel/replay_model.hpp"
 #include "uos/sentinel/replay_observation.hpp"
@@ -332,6 +333,8 @@ namespace uos::sentinel::replay_retention_bootstrap {
       rt::Promise<void> filled;
       // `failure: Readonly<{ error: unknown }> | null`
       std::optional<rt::Reason> failure;
+      std::size_t ownerBytes = 0;
+      rt::memory::ScopedCache memory{rt::memory::Cache::sentinel_replay_owners};
     };
     using ChunkOwnerIndexHandle = std::shared_ptr<ChunkOwnerIndex>;
 
@@ -400,7 +403,7 @@ namespace uos::sentinel::replay_retention_bootstrap {
         while (const std::optional<rt::KvEntry<>> entry = co_await iterator->next()) {
           read += 1;
           const std::optional<std::string> owner = ownerCaptureId(prefix, *entry);
-          if (owner) index->owners.insert(*owner);
+          if (owner && index->owners.insert(*owner).second) index->ownerBytes += sizeof(*owner) + rt::memory::bytes(*owner);
         }
         if (read < budget) {
           index->prefix += 1;
@@ -410,6 +413,7 @@ namespace uos::sentinel::replay_retention_bootstrap {
         }
         budget -= read;
       }
+      index->memory.set(index->owners.size(), index->ownerBytes + index->owners.bucket_count() * sizeof(void*));
       co_return index->prefix >= static_cast<double>(ownerPrefixes.size());
     }
 

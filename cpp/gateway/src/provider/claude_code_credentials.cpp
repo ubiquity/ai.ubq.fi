@@ -1,4 +1,5 @@
 #include "uos/provider/claude_code_credentials.hpp"
+#include "uos/rt/memory.hpp"
 #include "uos/rt/kv_js.hpp"
 
 #include "uos/provider/claude_code_accounts.hpp"
@@ -59,6 +60,12 @@ namespace uos::provider::claude_code_credentials {
     void advanceStateGeneration(const std::shared_ptr<rt::Kv>& kv) { stateGenerations.set(*kv, claudeCodeStateGeneration(kv) + 1); }
 
     void cacheStoredCredential(std::optional<ClaudeCodeStoredCredential> credential) {
+      std::size_t bytes = 0;
+      if (credential) {
+        bytes = sizeof(*credential) + rt::memory::bytes(credential->kind) + rt::memory::bytes(credential->secret) + rt::memory::bytes(credential->hint);
+        if (credential->label) bytes += rt::memory::bytes(*credential->label);
+      }
+      rt::memory::setCache(rt::memory::Cache::claude_credentials, credential ? 1 : 0, bytes);
       cachedCredential = std::move(credential);
       cachedCredentialExpiresAtMs = rt::dateNow() + CLAUDE_CODE_CREDENTIAL_CACHE_TTL_MS;
     }
@@ -153,6 +160,7 @@ namespace uos::provider::claude_code_credentials {
 
   void resetClaudeCodeCredentialCacheForTest() {
     cachedCredential = std::nullopt;
+    rt::memory::setCache(rt::memory::Cache::claude_credentials, 0, 0);
     cachedCredentialExpiresAtMs = 0;
     cachedCredentialKv.reset();
   }

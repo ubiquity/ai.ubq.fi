@@ -40,6 +40,7 @@
 #include "uos/rt/env.hpp"
 #include "uos/rt/fetch.hpp"
 #include "uos/rt/json.hpp"
+#include "uos/rt/memory.hpp"
 #include "uos/rt/test_async.hpp"
 #include "uos/rt/kv_js.hpp"
 #include "uos/rt/string.hpp"
@@ -164,6 +165,33 @@ ASYNC_TEST("KV budget: malformed tokens are rejected without KV and policy expir
 
 namespace {
   json::object expectedTerminal(const json::value& terminal,const std::string& requestId,const std::string& cohort);
+  void expectTerminalMemory(const json::object& memory) {
+    const auto shape = rt::memory::snapshot(false);
+    EXPECT_EQ(memory.size(), shape.size());
+    for (const auto& field : shape) {
+      if (field.key() == "caches") continue;
+      const auto* actual = rt::get(memory, field.key());
+      ASSERT(actual);
+      if (field.value().is_null()) EXPECT(actual->is_null());
+      else EXPECT(rt::isNumber(*actual) && rt::toNumber(*actual) >= 0);
+    }
+
+    const auto* caches = rt::getObject(memory, "caches");
+    ASSERT(caches);
+    const auto& expectedCaches = shape.at("caches").as_object();
+    EXPECT_EQ(caches->size(), expectedCaches.size());
+    for (const auto& cache : expectedCaches) {
+      const auto* measured = rt::getObject(*caches, cache.key());
+      ASSERT(measured);
+      EXPECT_EQ(measured->size(), 2U);
+      for (const auto* field : {"entries", "bytes"}) {
+        const auto value = rt::getNumber(*measured, field);
+        EXPECT(value && *value >= 0 && rt::Number::isSafeInteger(*value));
+      }
+    }
+    EXPECT_EQ(rt::getNumber(caches->at("api_key_policy"), "entries"), 1);
+  }
+
   struct ControlledUpstream {std::optional<rt::ReadableStreamDefaultController<rt::ByteChunk>> controller;unsigned cancellations=0;};
   rt::Response controlledSse(const std::shared_ptr<ControlledUpstream>& state,bool created=true,bool semantic=true){
     rt::UnderlyingSource<rt::ByteChunk> source;source.start=[state,created,semantic](rt::ReadableStreamDefaultController<rt::ByteChunk> controller){state->controller=controller;if(created)controller.enqueue(rt::encodeUtf8("data: {\"type\":\"response.created\",\"response\":{\"id\":\"stream\"}}\n\n"));if(semantic)controller.enqueue(rt::encodeUtf8(h::semanticSseEvent()));};source.cancel=[state](rt::Reason){++state->cancellations;};return rt::Response(rt::ByteStream(source),rt::ResponseInit{.status=200,.headers=rt::Headers{{"Content-Type","text/event-stream"}}});
@@ -173,7 +201,13 @@ namespace {
 ASYNC_TEST("terminal inference telemetry includes resolved defaults and response usage") {
   HarnessScope scope;seedRuntime();rt::console::Capture logs({rt::console::Method::info});const auto token="u_"+std::string(64,'5');AWAIT(seeded,h::seedKey(token,"telemetry",-1));(void)seeded;rt::env::remove("GIT_REVISION");rt::env::remove("GITHUB_SHA");rt::env::remove("DENO_DEPLOY_BUILD_ID");rt::env::remove("DENO_DEPLOYMENT_ID");
   json::object usage{{"input_tokens",1},{"input_tokens_details",json::object{{"cached_tokens",0},{"cache_write_tokens",1}}},{"output_tokens",1},{"total_tokens",2}};
-  rt::GlobalFetchOverride fetch(rt::Fetch([&](rt::RequestInfo,rt::RequestInit){return h::sse(usage);}));const std::string cacheKey="must-not-appear-in-terminal-telemetry";const json::object body{{"input","ping"},{"prompt_cache_key",cacheKey}};AWAIT(response,h::handler(inference(token,body)));EXPECT_EQ(response.status(),200);const auto terminalRows=logPayloads(logs);ASSERT_EQ(terminalRows.size(),1U);const auto requestId=response.headers().get("x-uos-request-id");ASSERT(requestId);const auto& terminal=terminalRows[0];const auto cohortInput=std::string("uos-prompt-cache-account-cohort-v1")+char(0)+"acct-1";AWAIT(cohort,h::sha256Hex(cohortInput));const auto expected=expectedTerminal(terminal,*requestId,cohort);EXPECT(rt::deepEqual(terminal,expected));
+  rt::GlobalFetchOverride fetch(rt::Fetch([&](rt::RequestInfo,rt::RequestInit){return h::sse(usage);}));const std::string cacheKey="must-not-appear-in-terminal-telemetry";const json::object body{{"input","ping"},{"prompt_cache_key",cacheKey}};AWAIT(response,h::handler(inference(token,body)));EXPECT_EQ(response.status(),200);const auto terminalRows=logPayloads(logs);ASSERT_EQ(terminalRows.size(),1U);const auto requestId=response.headers().get("x-uos-request-id");ASSERT(requestId);const auto& terminal=terminalRows[0];const auto cohortInput=std::string("uos-prompt-cache-account-cohort-v1")+char(0)+"acct-1";AWAIT(cohort,h::sha256Hex(cohortInput));
+  const auto* memory = rt::getObject(terminal, "memory");
+  ASSERT(memory);
+  expectTerminalMemory(*memory);
+  auto expected = expectedTerminal(terminal, *requestId, cohort);
+  expected.emplace("memory", *memory);
+  EXPECT(rt::deepEqual(terminal, expected));
   const auto encoded=rt::jsonStringify(terminal);EXPECT(!rt::includes(encoded,cacheKey));EXPECT(!rt::includes(encoded,"\"key_id\""));EXPECT(!rt::includes(encoded,"\"telemetry\""));h::assertOrderedTerminalTimings(terminal.as_object(),false);const auto accepted=logPayloads(logs,"[ai.ubq.fi] request_accepted");ASSERT(!accepted.empty());EXPECT_EQ(rt::getString(accepted[0],"request_id"),requestId);EXPECT(!rt::hasOwn(accepted[0].as_object(),"key_id"));
   usage=json::object{{"input_tokens",1},{"input_tokens_details",json::object{{"cached_tokens",2},{"cache_write_tokens",0}}},{"output_tokens",0},{"total_tokens",1}};const json::object invalidBody{{"input","invalid cache telemetry"}};AWAIT(invalid,h::handler(inference(token,invalidBody)));EXPECT_EQ(invalid.status(),200);auto rows=logPayloads(logs);ASSERT_EQ(rows.size(),2U);EXPECT_EQ(rt::getNumber(rows[1],"cached_input_tokens"),2);EXPECT_EQ(rt::getNumber(rows[1],"cache_write_input_tokens"),0);EXPECT_EQ(rt::getString(rows[1],"usage_telemetry_status"),"invalid");
   usage=json::object{{"input_tokens",1},{"output_tokens",0},{"total_tokens",1}};const json::object partialBody{{"input","cache details omitted"}};AWAIT(partial,h::handler(inference(token,partialBody)));EXPECT_EQ(partial.status(),200);rows=logPayloads(logs);ASSERT_EQ(rows.size(),3U);ASSERT(rt::get(rows[2],"cached_input_tokens"));EXPECT(rt::get(rows[2],"cached_input_tokens")->is_null());ASSERT(rt::get(rows[2],"cache_write_input_tokens"));EXPECT(rt::get(rows[2],"cache_write_input_tokens")->is_null());EXPECT_EQ(rt::getString(rows[2],"usage_telemetry_status"),"partial");

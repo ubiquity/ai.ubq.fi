@@ -1,4 +1,5 @@
 #include "uos/models/codex_models_availability.hpp"
+#include "uos/rt/memory.hpp"
 
 #include "uos/kv.hpp"
 #include "uos/rt/clock.hpp"
@@ -280,6 +281,14 @@ namespace uos::models::codex_models_availability {
     CodexAccountModelsCache cache{.store = std::nullopt, .loadedAtMs = 0};
     std::unordered_map<std::string, std::unordered_map<std::string, std::string>> learnedDetails;
     std::optional<rt::Promise<void>> refreshInFlight;
+    std::size_t learnedCount = 0;
+    std::size_t learnedBytes = 0;
+
+    void cacheAccountModels(std::optional<CodexAccountModelsStore> store) {
+      const auto bytes = store ? sizeof(CodexAccountModelsStore) + rt::memory::bytes(toJson(*store)) : 0;
+      cache.store = std::move(store);
+      rt::memory::setCache(rt::memory::Cache::codex_account_models, cache.store ? 1 : 0, bytes);
+    }
 
     rt::Task<std::shared_ptr<rt::Kv>> resolveKv(std::optional<std::shared_ptr<rt::Kv>> kvOverride) {
       if (kvOverride) co_return *kvOverride;
@@ -315,7 +324,7 @@ namespace uos::models::codex_models_availability {
     }
     if (failed) co_return cache.store;
     if (store) {
-      cache.store = store;
+      cacheAccountModels(store);
       cache.loadedAtMs = rt::dateNow();
     }
     co_return store;
@@ -354,7 +363,7 @@ namespace uos::models::codex_models_availability {
         if (!kv) {
           // Without a durable store the hint stays isolate-local, as before.
           CodexAccountModelsStore local = merge(cache.store ? *cache.store : emptyCodexAccountModelsStore());
-          cache.store = std::move(local);
+          cacheAccountModels(std::move(local));
           cache.loadedAtMs = rt::dateNow();
           co_return;
         }
@@ -374,7 +383,7 @@ namespace uos::models::codex_models_availability {
           rt::Task<rt::KvCommitResult> committing = operation->commit();
           const rt::KvCommitResult committed = co_await std::move(committing);
           if (!committed.ok) continue;
-          cache.store = std::move(next);
+          cacheAccountModels(std::move(next));
           cache.loadedAtMs = rt::dateNow();
           co_return;
         }
@@ -404,7 +413,17 @@ namespace uos::models::codex_models_availability {
     const double nowMs = options.nowMs ? *options.nowMs : rt::dateNow();
     if (options.detail && !options.detail->empty()) {
       std::unordered_map<std::string, std::string>& details = learnedDetails[accountId];
-      details[target] = *options.detail;
+      auto entry = details.find(target);
+      if (entry == details.end()) {
+        entry = details.emplace(target, *options.detail).first;
+        learnedCount += 1;
+        learnedBytes += sizeof(*entry) + rt::memory::bytes(entry->first) + rt::memory::bytes(entry->second);
+      } else {
+        const auto prior = rt::memory::bytes(entry->second);
+        entry->second = *options.detail;
+        learnedBytes += rt::memory::bytes(entry->second) - prior;
+      }
+      rt::memory::setCache(rt::memory::Cache::codex_learned_model_details, learnedCount, learnedBytes);
     }
     Merge merge = [accountId, target, nowMs](const CodexAccountModelsStore& current) { return withCodexModelUnsupported(current, accountId, target, nowMs, nowMs); };
     rt::Task<void> storing = mergeAndStoreCodexAccountModels(std::move(merge), std::move(options.kv));
@@ -458,7 +477,7 @@ namespace uos::models::codex_models_availability {
 
   void setCodexAccountModelsStoreForTest(std::optional<CodexAccountModelsStore> store, double loadedAtMs) {
     const bool absent = !store;
-    cache.store = std::move(store);
+    cacheAccountModels(std::move(store));
     cache.loadedAtMs = absent ? 0 : loadedAtMs;
   }
 
@@ -467,9 +486,11 @@ namespace uos::models::codex_models_availability {
   }
 
   void resetCodexAccountModelsCacheForTest() {
-    cache.store.reset();
+    cacheAccountModels(std::nullopt);
     cache.loadedAtMs = 0;
     learnedDetails.clear();
+    learnedCount = learnedBytes = 0;
+    rt::memory::setCache(rt::memory::Cache::codex_learned_model_details, 0, 0);
     refreshInFlight.reset();
   }
 

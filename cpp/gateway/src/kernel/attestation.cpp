@@ -1,4 +1,5 @@
 #include "uos/kernel/attestation.hpp"
+#include "uos/rt/memory.hpp"
 
 #include "uos/http.hpp"
 #include "uos/kv.hpp"
@@ -208,17 +209,20 @@ namespace uos::kernel::attestation {
     rt::Task<KernelPublicKeys> loadKernelPublicKeys() {
       const std::vector<rt::KvValue> pems = co_await getKernelPublicKeyPems();
       KernelPublicKeys keys;
+      std::size_t bytes = 0;
       for (const rt::KvValue& pem : pems) {
         rt::Reason error;
         try {
           rt::Task<rt::crypto::CryptoKey> importing = importRsaPublicKey(pem);
           rt::crypto::CryptoKey key = co_await std::move(importing);
           keys.push_back(std::move(key));
+          bytes += pem.isString() ? pem.asString().size() : 0;
         } catch (...) {
           error = std::current_exception();
         }
         if (error) rt::console::error("[ai.ubq.fi] Failed to import kernel public key:", error);
       }
+      rt::memory::setCache(rt::memory::Cache::kernel_public_keys, keys.size(), bytes + keys.capacity() * sizeof(rt::crypto::CryptoKey));
       co_return keys;
     }
 
@@ -444,12 +448,19 @@ namespace uos::kernel::attestation {
       return cache;
     }
 
+    std::size_t jtiCacheBytes = 0;
+
+    std::size_t tokenIdBytes(const std::string& jti) {
+      return sizeof(double) + 2 * (sizeof(jti) + jti.size() + 1);
+    }
+
     void pruneKernelTokenJtiCache() {
       const double now = rt::dateNow();
       rt::OrderedMap<std::string, double>& cache = kernelTokenJtiCache();
       for (const auto& [jti, expiresAtMs] : cache) {
         if (expiresAtMs <= now) {
           const std::string expired = jti;
+          jtiCacheBytes -= tokenIdBytes(jti);
           cache.delete_(expired);
         }
       }
@@ -569,7 +580,10 @@ namespace uos::kernel::attestation {
     // This token is expected to be re-used within its TTL (e.g. Codex tool-calling
     // results in multiple /v1/responses requests). Enforcing single-use "jti"
     // semantics breaks legitimate traffic and is unreliable in serverless anyway.
-    kernelTokenJtiCache().set(payload->jti, payload->exp * 1000);
+    auto& ids = kernelTokenJtiCache();
+    if (!ids.has(payload->jti)) jtiCacheBytes += tokenIdBytes(payload->jti);
+    ids.set(payload->jti, payload->exp * 1000);
+    rt::memory::setCache(rt::memory::Cache::kernel_attestation_ids, ids.size(), jtiCacheBytes);
 
     co_return KernelAttestationResult(KernelAttestationSuccess{.payload = *payload});
   }

@@ -1,4 +1,5 @@
 #include "uos/deepseek/flash_aliases.hpp"
+#include "uos/rt/memory.hpp"
 #include "uos/provider/metered.hpp"
 #include "uos/provider/lithos_models.hpp"
 #include "uos/provider/lithos.hpp"
@@ -97,6 +98,11 @@ DeepSeekFlashAliases currentDeepSeekFlashAliases() {
   if (openlux) input.openlux = catalogModels(openlux->models);
   auto aliases = resolveDeepSeekFlashAliases(input);
   currentAliasesCache = std::make_pair(signature, aliases);
+  const auto& rows = currentAliasesCache->second.models;
+  rt::memory::setCache(rt::memory::Cache::deepseek_flash_aliases, 5,
+                       sizeof(*currentAliasesCache) + rt::memory::bytes(signature) + rt::memory::bytes(rows.lithos) +
+                       rt::memory::bytes(rows.deepseek) + rt::memory::bytes(rows.openrouter) +
+                       rt::memory::bytes(rows.surplus) + rt::memory::bytes(rows.openlux));
   return aliases;
 }
 /** Start catalogue refreshes without waiting. */

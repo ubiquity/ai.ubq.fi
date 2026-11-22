@@ -14,7 +14,7 @@ namespace uos::responses_request {
     std::string modelRaw;
     std::string model;
     request_policy::CodexModelMetadata modelMetadata;
-    std::vector<::uos::types::ResponseInputItem> input;
+    double explicitBreakpointCount;
     defaults::ReasoningEffort reasoningLabel;
     json::object codexBody;
     json::object removedProviderBody;
@@ -61,7 +61,7 @@ namespace uos::responses_request {
     bool providerTerminalValidated;
     std::function<void()> clearProbeRenewal;
   };
-  struct ReadResponsesRequestValue { ::uos::types::ResponsesRequest rawBody; json::object rawRecord; };
+  struct ReadResponsesRequestValue { json::object rawRecord; };
   rt::Task<ResponsesStep<ReadResponsesRequestValue>> readResponsesRequest(rt::Request req, const json::value* parsedBody = nullptr);
   std::optional<rt::Response> validateResponsesRequestFields(const json::object& rawRecord, const ::uos::types::ResponsesRequest& rawBody,
     const rt::OrderedSet<std::string>* providerExtensions = nullptr);
@@ -69,14 +69,14 @@ namespace uos::responses_request {
   ResponsesStep<ResponsesStreamSettings> resolveResponsesStreamSettings(const json::object& rawRecord, const ::uos::types::ResponsesRequest& rawBody);
   struct ResponsesModel { std::string modelRaw; std::string model; request_policy::CodexModelMetadata modelMetadata; };
   struct ResolveResponsesModelOptions { std::optional<std::vector<std::string>> allowedPaidProviders{}; std::optional<std::string> deepSeekWaterfallPaidHop{}; };
-  rt::Task<ResponsesStep<ResponsesModel>> resolveResponsesModel(json::object rawRecord, const openai_telemetry::UsageContext* usageContext = nullptr);
-  rt::Task<ResponsesStep<ResponsesModel>> resolveResponsesModel(json::object rawRecord, const openai_telemetry::UsageContext* usageContext,
+  rt::Task<ResponsesStep<ResponsesModel>> resolveResponsesModel(const json::object& rawRecord, const openai_telemetry::UsageContext* usageContext = nullptr);
+  rt::Task<ResponsesStep<ResponsesModel>> resolveResponsesModel(const json::object& rawRecord, const openai_telemetry::UsageContext* usageContext,
     ResolveResponsesModelOptions options);
   ResponsesStep<std::vector<::uos::types::ResponseInputItem>> normalizeResponsesInput(const json::value* inputRaw);
   ResponsesStep<std::vector<::uos::types::ResponseInputItem>> normalizeResponsesInput(const json::value& inputRaw);
   struct ResponsesReasoning { defaults::ReasoningEffort reasoningLabel; std::optional<std::string> instructions; std::optional<json::object> reasoning; };
-  rt::Task<ResponsesStep<ResponsesReasoning>> resolveResponsesReasoning(json::object rawRecord, ::uos::types::ResponsesRequest rawBody,
-    request_policy::CodexModelMetadata modelMetadata, const openai_telemetry::UsageContext* usageContext = nullptr);
+  rt::Task<ResponsesStep<ResponsesReasoning>> resolveResponsesReasoning(const json::object& rawRecord, const ::uos::types::ResponsesRequest& rawBody,
+    const request_policy::CodexModelMetadata& modelMetadata, const openai_telemetry::UsageContext* usageContext = nullptr);
   struct ResponsesUpstreamBodies { json::object codexBody; json::object removedProviderBody; };
   ResponsesUpstreamBodies buildResponsesUpstreamBodies(const std::string& model, const std::vector<::uos::types::ResponseInputItem>& input,
     const std::optional<std::string>& instructions, const std::optional<json::object>& reasoning, const json::object& rawRecord);

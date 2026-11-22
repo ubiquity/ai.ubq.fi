@@ -1,5 +1,6 @@
 // Port of src/provider/lithos-rate-limits.ts.
 #include "uos/provider/lithos_rate_limits.hpp"
+#include "uos/rt/memory.hpp"
 
 #include "uos/rt/abort.hpp"
 #include "uos/rt/async.hpp"
@@ -84,6 +85,13 @@ namespace uos::provider::lithos_rate_limits {
     std::unordered_map<std::string, double>& lithosFailoverWindows() {
       static std::unordered_map<std::string, double> windows;
       return windows;
+    }
+
+    void reportWindowMemory() {
+      const auto& windows = lithosFailoverWindows();
+      std::size_t bytes = 0;
+      for (const auto& entry : windows) bytes += sizeof(entry) + rt::memory::bytes(entry.first);
+      rt::memory::setCache(rt::memory::Cache::lithos_rate_windows, windows.size(), bytes);
     }
 
     const rt::Regex& DIGITS_ONLY() {
@@ -203,7 +211,7 @@ namespace uos::provider::lithos_rate_limits {
     for (const std::string& rung : rungs) {
       const auto deadline = windows.find(rung);
       if (deadline != windows.end() && nowMs < deadline->second) continue;
-      windows.erase(rung);
+      if (windows.erase(rung)) reportWindowMemory();
       return rung == canonicalModel ? std::nullopt : std::optional<std::string>(rung);
     }
     return std::nullopt;
@@ -225,9 +233,10 @@ namespace uos::provider::lithos_rate_limits {
     const auto current = windows.find(refusedRung);
     const double unexpiredDeadlineMs = current != windows.end() && current->second > nowMs ? current->second : deadlineMs;
     windows.insert_or_assign(refusedRung, rt::Math::max(deadlineMs, unexpiredDeadlineMs));
+    reportWindowMemory();
   }
 
-  void clearLithosFailoverWindows() { lithosFailoverWindows().clear(); }
+  void clearLithosFailoverWindows() { lithosFailoverWindows().clear(); reportWindowMemory(); }
 
   void recordLithosFailoverModel(const openai_telemetry::UsageContext* usageContext, const std::optional<std::string>& model) {
     if (usageContext && usageContext->responseTelemetry) usageContext->responseTelemetry->rateLimitFailoverModel = model;

@@ -22,6 +22,7 @@
  * can never add a path.
  */
 #include "uos/codex/supervisor_inventory.hpp"
+#include "uos/rt/memory.hpp"
 
 #include "uos/codex/supervisor_transport.hpp"
 #include "uos/rt/abort.hpp"
@@ -845,7 +846,11 @@ namespace uos::codex::supervisor_inventory {
     if (!snapshotInFlight) {
       snapshotInFlight = rt::Promise<SupervisorSnapshot>(collectSupervisorSnapshot())
                            .then([](const SupervisorSnapshot& value) {
+                             std::size_t bytes = sizeof(SnapshotCache) + rt::memory::bytes(value.view) +
+                               value.sources.capacity() * sizeof(value.sources.front()) + value.sessions.capacity() * sizeof(value.sessions.front()) +
+                               rt::memory::bytes(value.coverage.notes);
                              snapshotCache = SnapshotCache{nowMs(), value};
+                             rt::memory::setCache(rt::memory::Cache::codex_supervisor_inventory, value.sessions.size(), bytes);
                              return value;
                            })
                            .finally_([] { snapshotInFlight = std::nullopt; });

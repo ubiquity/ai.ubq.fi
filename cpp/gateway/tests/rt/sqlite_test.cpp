@@ -1349,6 +1349,25 @@ TEST("stepping: get, all and run reset first; get and run step through every row
   })
 }
 
+TEST("stepping: row visitor keeps order and resets after a conversion failure") {
+  const Closing db(Database(":memory:"));
+  db->run("CREATE TABLE scan (n)");
+  db->run("INSERT INTO scan VALUES (3), (1), (2)");
+  const Statement statement = db->query("SELECT n FROM scan WHERE n >= ? ORDER BY n");
+  const std::vector<sqlite::Binding> all{sqlite::Binding(1.0)};
+  const std::vector<sqlite::Binding> tail{sqlite::Binding(2.0)};
+  const auto failing = [](Row) { throw rt::TypeError("fixture row conversion failed"); };
+  EXPECT_THROWS_MESSAGE(statement.forEachRow(all, failing), rt::TypeError, "fixture row conversion failed");
+
+  std::vector<double> seen;
+  statement.forEachRow(tail, [&seen](const Row& row) {
+    const auto* value = sqlite::getNumber(row.get("n"));
+    if (!value) throw rt::TypeError("fixture row is missing its number");
+    seen.push_back(*value);
+  });
+  EXPECT_EQ(seen, (std::vector<double>{2.0, 3.0}));
+}
+
 TEST("stepping: iterate continues where the statement is, resets when done, binds lazily") {
   const Closing db(Database(":memory:"));
   db->run("CREATE TABLE it (n)");

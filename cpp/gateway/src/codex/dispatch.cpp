@@ -252,7 +252,7 @@ namespace uos::codex::dispatch {
       rt::RequestInit init;
       init.method = "POST";
       init.headers = headers;
-      init.body = rt::BodyInit(serializedBody);
+      init.body = rt::BodyInit(std::move(serializedBody));
       init.signal = transportSignal;
       init.redirect = "manual";
       rt::Promise<rt::Response> fetching(rt::fetch(rt::RequestInfo(url), std::move(init)));
