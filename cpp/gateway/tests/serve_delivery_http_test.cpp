@@ -37,6 +37,7 @@
 #include "uos/runtime/http_tasks.hpp"
 #include "uos/handler/serve_handler.hpp"
 #include "uos/rt/limits.hpp"
+#include "uos/rt/memory.hpp"
 
 using namespace uos;
 namespace fixture = tests::helpers::terminal_log_harness;
@@ -59,6 +60,29 @@ namespace {
     return options;
   }
   std::string origin(const wire::NetAddr& address) { return "http://127.0.0.1:" + rt::numberToString(address.port); }
+
+  void expectProcessMemory(const json::object& memory) {
+    const auto shape = rt::memory::snapshot(false);
+    EXPECT_EQ(memory.size(), shape.size());
+    for (const auto& field : shape) {
+      if (field.key() == "caches") continue;
+      const auto value = rt::getNumber(memory, field.key());
+      EXPECT(value && *value >= 0 && rt::Number::isSafeInteger(*value));
+    }
+    const auto* caches = rt::getObject(memory, "caches");
+    ASSERT(caches);
+    const auto& expectedCaches = shape.at("caches").as_object();
+    EXPECT_EQ(caches->size(), expectedCaches.size());
+    for (const auto& cache : expectedCaches) {
+      const auto* measured = rt::getObject(*caches, cache.key());
+      ASSERT(measured);
+      EXPECT_EQ(measured->size(), 2U);
+      for (const auto* field : {"entries", "bytes"}) {
+        const auto value = rt::getNumber(*measured, field);
+        EXPECT(value && *value >= 0 && rt::Number::isSafeInteger(*value));
+      }
+    }
+  }
 }
 
 ASYNC_TEST("dropping a delivery handoff releases its request signal") {
@@ -330,10 +354,15 @@ ASYNC_TEST("provider read failure persists client failure evidence once and pres
   EXPECT(fixture::zeroed(capture.body));
   const auto events = fixture::terminalPayloads(logs);
   ASSERT(events.size() == 1);
-  // Fresh Bun branch output; normalize only elapsed latency and this fixture's request id.
+  // Fresh Bun branch output; normalize elapsed latency and replace process memory measurements
+  // with null after proving they are present as non-negative integers.
   auto normalized = events[0];
   normalized.as_object()["latency_ms"] = 0;
-  const auto expectedLog = rt::jsonParse(R"GOLDEN({"request_id":"provider-read-failure","route":"responses","status":200,"provider":"gateway","latency_ms":0,"admission_wait_ms":null,"admission_stage":null,"first_provider_dispatch_ms":null,"first_provider_headers_ms":null,"first_codex_dispatch_ms":null,"first_codex_headers_ms":null,"first_upstream_sse_event_ms":null,"first_semantic_commitment_ms":null,"stream_terminal_ms":null,"downstream_drain_ms":null,"delivery_outcome":"interrupted","model":null,"reasoning":null,"output_token_allowance":null,"rate_limit_wait_ms":null,"rate_limit_failover_model":null,"provider_request_id":null,"input_tokens":null,"cached_input_tokens":null,"cache_write_input_tokens":null,"output_tokens":null,"total_tokens":null,"usage_observed":false,"usage_telemetry_status":"missing","prompt_cache_key_present":false,"prompt_cache_mode":"unspecified","explicit_breakpoint_count":0,"account_slot":null,"account_cohort_id":null,"active_generation":null,"active_transition_reason":null,"fallback_reason":null,"semantic_output_observed":null,"upstream_event_kinds":[],"in_stream_retries":0,"upstream_failure_events":[],"stream":true,"stream_terminal_type":"error","failure_kind":"gateway_stream_read_error","response_created_observed":false,"synthetic_terminal_type":null,"attempted_providers":[],"removed_provider_trigger_class":null,"removed_provider_circuit_transition":null,"removed_provider_selected_model":null,"removed_provider_task_type":null,"removed_provider_latency_ms":null,"removed_provider_terminal_status":null,"removed_provider_semantic_commitment":null,"git_sha":"unknown","deno_revision":"unknown","router_revision":null})GOLDEN");
+  const auto* memory = rt::getObject(normalized, "memory");
+  ASSERT(memory);
+  expectProcessMemory(*memory);
+  normalized.as_object()["memory"] = nullptr;
+  const auto expectedLog = rt::jsonParse(R"GOLDEN({"request_id":"provider-read-failure","route":"responses","status":200,"provider":"gateway","latency_ms":0,"admission_wait_ms":null,"admission_stage":null,"first_provider_dispatch_ms":null,"first_provider_headers_ms":null,"first_codex_dispatch_ms":null,"first_codex_headers_ms":null,"first_upstream_sse_event_ms":null,"first_semantic_commitment_ms":null,"stream_terminal_ms":null,"downstream_drain_ms":null,"delivery_outcome":"interrupted","model":null,"reasoning":null,"output_token_allowance":null,"rate_limit_wait_ms":null,"rate_limit_failover_model":null,"provider_request_id":null,"input_tokens":null,"cached_input_tokens":null,"cache_write_input_tokens":null,"output_tokens":null,"total_tokens":null,"usage_observed":false,"usage_telemetry_status":"missing","prompt_cache_key_present":false,"prompt_cache_mode":"unspecified","explicit_breakpoint_count":0,"account_slot":null,"account_cohort_id":null,"active_generation":null,"active_transition_reason":null,"fallback_reason":null,"semantic_output_observed":null,"upstream_event_kinds":[],"in_stream_retries":0,"upstream_failure_events":[],"stream":true,"stream_terminal_type":"error","failure_kind":"gateway_stream_read_error","response_created_observed":false,"synthetic_terminal_type":null,"attempted_providers":[],"removed_provider_trigger_class":null,"removed_provider_circuit_transition":null,"removed_provider_selected_model":null,"removed_provider_task_type":null,"removed_provider_latency_ms":null,"removed_provider_terminal_status":null,"removed_provider_semantic_commitment":null,"memory":null,"git_sha":"unknown","deno_revision":"unknown","router_revision":null})GOLDEN");
   EXPECT_EQ(rt::jsonStringify(normalized), rt::jsonStringify(expectedLog));
   EXPECT_EQ(rt::getString(events[0], "failure_kind"), std::optional<std::string>("gateway_stream_read_error"));
   EXPECT_EQ(rt::getString(events[0], "delivery_outcome"), std::optional<std::string>("interrupted"));
