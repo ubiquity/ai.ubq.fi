@@ -51,20 +51,20 @@ namespace uos::codex::index {
       return std::min(2'147'483'647.0, std::ceil(std::max(backoff, retryAfterMs)));
     }
 
-    rt::Task<rt::Response> fetchPreparedCodexResponses(dispatch::PreparedCodexSubscriptionRequest prepared, dispatch::FetchCodexResponsesOptions options,
+    rt::Task<rt::Response> fetchPreparedCodexResponses(std::shared_ptr<const dispatch::PreparedCodexSubscriptionRequest> prepared, dispatch::FetchCodexResponsesOptions options,
                                                        dispatch::CodexProviderDispatchCoordinator providerDispatch) {
       double attemptNumber = 0;
       for (unsigned retries = 0;; ++retries) {
         rt::Promise<responses_state::CreateCodexResponseStateResult> creating(responses_state::createCodexResponseState(prepared, options, providerDispatch));
         const auto created = co_await creating.wait();
         if (const auto* terminal = std::get_if<responses_state::CreateCodexResponseStateResultTerminal>(&created)) {
-          co_return auth::withCodexWarnings(terminal->response, prepared.warnings);
+          co_return auth::withCodexWarnings(terminal->response, prepared->warnings);
         }
         const auto ctx = std::get<responses_state::CreateCodexResponseStateResultState>(created).state;
         ctx->attemptNumber = attemptNumber;
         ctx->streamRetryPending = retries > 0;
         auto dispatched = co_await dispatchSelectedCodexResponses(ctx);
-        auto response = auth::withCodexWarnings(dispatched, prepared.warnings);
+        auto response = auth::withCodexWarnings(dispatched, prepared->warnings);
         if (!ctx->streamAttempt) co_return response;
 
         auto& attempt = *ctx->streamAttempt;
@@ -106,13 +106,17 @@ namespace uos::codex::index {
   rt::Task<rt::Response> fetchCodexResponses(json::value body) { return fetchCodexResponses(std::move(body), dispatch::FetchCodexResponsesOptions{}); }
 
   rt::Task<rt::Response> fetchCodexResponses(json::value body, dispatch::FetchCodexResponsesOptions options) {
-    rt::Promise<dispatch::PreparedCodexSubscriptionRequest> preparing(dispatch::prepareCodexSubscriptionRequest(body, options.cacheScope));
-    const dispatch::PreparedCodexSubscriptionRequest prepared = co_await preparing.wait();
+    auto preparing = dispatch::prepareCodexSubscriptionRequest(std::move(body), options.cacheScope);
+    auto prepared = co_await std::move(preparing);
+    co_await rt::microtask();
+    // Every attempt owns the same parsed projection and wire text. The context
+    // may survive a suspended transport callback or a retry delay.
+    auto payload = std::make_shared<const dispatch::PreparedCodexSubscriptionRequest>(std::move(prepared));
     const dispatch::CodexProviderDispatchCoordinator providerDispatch = dispatch::createCodexProviderDispatchCoordinator(options.beforeDispatch);
     std::optional<rt::Response> result;
     rt::Reason failure;
     try {
-      rt::Promise<rt::Response> fetching(fetchPreparedCodexResponses(prepared, options, providerDispatch));
+      rt::Promise<rt::Response> fetching(fetchPreparedCodexResponses(std::move(payload), options, providerDispatch));
       result = co_await fetching.wait();
     } catch (...) {
       failure = std::current_exception();

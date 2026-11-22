@@ -182,7 +182,7 @@ ASYNC_TEST("responses operations differential: context state, fences, reselectio
   co_await std::move(setting);
   rt::Promise<dispatch::PreparedCodexSubscriptionRequest> preparing(
     dispatch::prepareCodexSubscriptionRequest(json::object{{"model", "gpt-5"}, {"input", "hi"}}, std::nullopt));
-  const dispatch::PreparedCodexSubscriptionRequest prepared = co_await preparing.wait();
+  auto prepared = std::make_shared<const dispatch::PreparedCodexSubscriptionRequest>(co_await preparing.wait());
   const dispatch::CodexProviderDispatchCoordinator coordinator = dispatch::createCodexProviderDispatchCoordinator({});
   dispatch::FetchCodexResponsesOptions options;
   options.requestId = "req-ops";
@@ -201,7 +201,7 @@ ASYNC_TEST("responses operations differential: context state, fences, reselectio
       return json::object{{"enabled", config.enabled}, {"mode", config.mode}, {"maxPerAccountPerDay", config.maxPerAccountPerDay}, {"maxPerAccountPerWindow", config.maxPerAccountPerWindow}};
     };
     const json::object state{{"url", ctx->url},
-                             {"serializedBody", ctx->serializedBody},
+                             {"serializedBody", ctx->prepared->serializedBody},
                              {"baseHeaders", std::move(headers)},
                              {"selectedKind", selectionKind(ctx->selected)},
                              {"accountEntries", static_cast<double>(ctx->accountEntries.size())},
