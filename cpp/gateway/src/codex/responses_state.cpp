@@ -30,8 +30,7 @@ namespace uos::codex::responses_state {
     rt::Promise<routing_state::RouteSelection> selecting(
       account_routing::selectCodexRoutingAccountsStrong(poolEntry.pool, poolEntry.pool.accounts, rt::dateNow(), requestedModel));
     routing_state::RouteSelection selected = co_await selecting.wait();
-    if (!checkLeader && auth::hasLeaderAuthReader() && std::holds_alternative<routing_state::RouteSelectionCredentialsInvalid>(selected) &&
-        co_await auth::checkLeaderAuth()) {
+    if (!checkLeader && auth::leaderAuthHasFencedCredential() && co_await auth::checkLeaderAuth()) {
       // A previous follower process may already have fenced the old bearer.
       auto rereading = auth::getAuthPoolEntry(true, true);
       poolEntry = co_await std::move(rereading);

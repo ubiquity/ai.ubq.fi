@@ -2,6 +2,7 @@
 #include "uos/auth/local_admin.hpp"
 #include "uos/auth/local_development_key.hpp"
 #include "uos/cache/prompt_analytics.hpp"
+#include "uos/codex/auth.hpp"
 #include "uos/codex/reset_settings.hpp"
 #include "uos/config.hpp"
 #include "uos/handler/serve_handler.hpp"
@@ -181,6 +182,7 @@ namespace uos::serve {
       }
       try {
         if (migration) co_await migration->wait();
+        if (codex::auth::hasLeaderAuthReader()) co_await codex::auth::drainLeaderAuth();
         rt::Promise<void> drained(shutdownOptionalTelemetry());
         co_await drained.wait();
       } catch (...) {

@@ -32,10 +32,12 @@ namespace uos::codex::auth_import {
       std::int64_t version;
     };
 
-    StoredPool decodePool(const std::optional<sqlite::Row>& row) {
-      const auto* codec = row ? row->get("codec") : nullptr;
+    void requireCodec(const sqlite::Value* codec) {
       if (!codec || !std::holds_alternative<std::string>(*codec) || std::get<std::string>(*codec) != storage::kv::BUN_KV_CODEC)
         throw rt::JsError("Codex auth import requires a marked bun-jsc-v1 database.");
+    }
+
+    StoredPool decodePool(const std::optional<sqlite::Row>& row) {
       const auto* bytesValue = row ? row->get("v") : nullptr;
       const auto* versionValue = row ? row->get("version") : nullptr;
       const auto* bytes = bytesValue ? std::get_if<sqlite::Bytes>(bytesValue) : nullptr;
@@ -49,20 +51,18 @@ namespace uos::codex::auth_import {
       return StoredPool{std::move(*pool), *version};
     }
 
-    std::optional<sqlite::Row> readPoolRow(const sqlite::Database& database) {
-      // Read the codec and the one durable auth row in the same snapshot.
-      return database.query(
-        "SELECT (SELECT value FROM uos_kv_metadata WHERE key = 'codec') AS codec, pool.v, pool.version "
-        "FROM (SELECT 1) LEFT JOIN kv AS pool "
-        "ON pool.k = ? AND pool.v_encoding = 1 AND pool.expiration_ms = -1 AND length(pool.v) <= 65536 LIMIT 1")
-        .safeIntegers(true).get(rt::packKey(auth::CODEX_AUTH_POOL_KV_KEY));
+    StoredPool readPool(const sqlite::Database& database) {
+      const auto marker = database.query("SELECT value FROM uos_kv_metadata WHERE key = 'codec'").get();
+      requireCodec(marker ? marker->get("value") : nullptr);
+      return decodePool(database.query("SELECT v, version FROM kv WHERE k = ? AND v_encoding = 1 AND expiration_ms = -1 AND length(v) <= 65536")
+        .safeIntegers(true).get(rt::packKey(auth::CODEX_AUTH_POOL_KV_KEY)));
     }
 
     StoredPool readStoppedPool(const std::string& path) {
       rt::URL uri = rt::pathToFileURL(path);
       uri.searchParams().set("immutable", "1");
       const sqlite::Database database(uri.href(), sqlite::constants::SQLITE_OPEN_READONLY | sqlite::constants::SQLITE_OPEN_URI);
-      return decodePool(readPoolRow(database));
+      return readPool(database);
     }
 
     struct ValidatedPool {
@@ -86,7 +86,7 @@ namespace uos::codex::auth_import {
       // The serving KV opener also sweeps expiry and recovers queues. This
       // transaction only updates the pool and advances the normal KV revision.
       database.transaction([&] {
-        if (decodePool(readPoolRow(database)).version != expectedVersion) throw rt::JsError("Follower auth pool changed during validation.");
+        if (readPool(database).version != expectedVersion) throw rt::JsError("Follower auth pool changed during validation.");
         validated.requireFresh();
         const auto revision = database.query("UPDATE data_version SET version = version + 1 WHERE k = 0 AND version >= ? AND version < ? RETURNING version")
           .get(expectedVersion, std::numeric_limits<std::int64_t>::max());
@@ -180,7 +180,12 @@ namespace uos::codex::auth_import {
         }
       }
       const auto database = sqlite::Database::openLiveReadOnly(path);
-      return readPoolRow(database);
+      // Read the codec and the one durable auth row in the same snapshot.
+      return database.query(
+        "SELECT (SELECT value FROM uos_kv_metadata WHERE key = 'codec' AND length(value) <= 32) AS codec, pool.v, pool.version "
+        "FROM (SELECT 1) LEFT JOIN kv AS pool "
+        "ON pool.k = ? AND pool.v_encoding = 1 AND pool.expiration_ms = -1 AND length(pool.v) <= 65536 LIMIT 1")
+        .safeIntegers(true).get(rt::packKey(auth::CODEX_AUTH_POOL_KV_KEY));
     }
 
     rt::Task<auth::LeaderReadOutcome> adoptLivePool(std::string path, std::shared_ptr<rt::Kv> destination) {
@@ -195,6 +200,7 @@ namespace uos::codex::auth_import {
 
       std::optional<StoredPool> source;
       try {
+        requireCodec(row ? row->get("codec") : nullptr);
         source = decodePool(row);
       } catch (...) {
         co_return auth::LeaderReadOutcome::invalid;

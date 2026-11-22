@@ -32,6 +32,7 @@
 
 #if defined(__linux__) && defined(UOS_GATEWAY_NATIVE_LIBRARIES)
 #include "uos/rt/url.hpp"
+#include <chrono>
 #include <unistd.h>
 #include <new>
 #endif
@@ -674,12 +675,13 @@ namespace uos::rt::sqlite {
 #if defined(__linux__) && defined(UOS_GATEWAY_NATIVE_LIBRARIES)
     struct LiveReadMethods {
       sqlite3_io_methods methods;
-      decltype(sqlite3_io_methods::xShmMap) map;
+      const sqlite3_io_methods* original;
+      std::chrono::steady_clock::time_point lockDeadline;
     };
 
     const char* liveReadVfs() {
       static sqlite3_vfs* registered = []() -> sqlite3_vfs* {
-        auto* parent = ::sqlite3_vfs_find("unix");
+        static auto* const parent = ::sqlite3_vfs_find("unix");
         if (!parent) return nullptr;
         static sqlite3_vfs vfs = *parent;
         vfs.pNext = nullptr;
@@ -691,15 +693,31 @@ namespace uos::rt::sqlite {
           if ((flags & (SQLITE_OPEN_MAIN_DB | SQLITE_OPEN_WAL)) == 0) return SQLITE_CANTOPEN;
           flags &= ~(constants::SQLITE_OPEN_READWRITE | constants::SQLITE_OPEN_CREATE | SQLITE_OPEN_EXCLUSIVE | SQLITE_OPEN_DELETEONCLOSE);
           flags |= constants::SQLITE_OPEN_READONLY;
-          const auto rc = ::sqlite3_vfs_find("unix")->xOpen(vfsIn, name, file, flags, outputFlags);
-          if (rc == SQLITE_OK && (flags & SQLITE_OPEN_MAIN_DB) != 0) {
+          const auto rc = parent->xOpen(vfsIn, name, file, flags, outputFlags);
+          if (rc == SQLITE_OK && (flags & SQLITE_OPEN_MAIN_DB) != 0 && file->pMethods->xShmMap) {
             auto* storage = reinterpret_cast<char*>(file) + vfsIn->szOsFile - sizeof(LiveReadMethods);
-            auto* methods = new (storage) LiveReadMethods{*file->pMethods, file->pMethods->xShmMap};
+            auto* methods = new (storage) LiveReadMethods{*file->pMethods, file->pMethods,
+              std::chrono::steady_clock::now() + std::chrono::milliseconds(10)};
             methods->methods.xShmMap = [](sqlite3_file* main, int page, int size, int, void volatile** region) {
               const auto* current = reinterpret_cast<const LiveReadMethods*>(main->pMethods);
-              const int result = current->map(main, page, size, 0, region);
+              if (std::chrono::steady_clock::now() >= current->lockDeadline) return SQLITE_BUSY_TIMEOUT;
+              const int result = current->original->xShmMap(main, page, size, 0, region);
               // An orphaned WAL index can otherwise trigger a full private WAL recovery.
-              return result == SQLITE_READONLY_CANTINIT ? SQLITE_READONLY_RECOVERY : result;
+              if (result == SQLITE_READONLY_CANTINIT) return SQLITE_READONLY_RECOVERY;
+              return result == SQLITE_OK ? SQLITE_READONLY : result;
+            };
+            methods->methods.xShmLock = [](sqlite3_file* main, int offset, int count, int mode) {
+              const auto* current = reinterpret_cast<const LiveReadMethods*>(main->pMethods);
+              if ((mode & SQLITE_SHM_LOCK) != 0) {
+                if ((mode & SQLITE_SHM_EXCLUSIVE) != 0) return SQLITE_READONLY;
+                // Internal WAL retry sleeps can outlive the normal busy handler.
+                if (std::chrono::steady_clock::now() >= current->lockDeadline) return SQLITE_BUSY_TIMEOUT;
+              }
+              return current->original->xShmLock(main, offset, count, mode);
+            };
+            methods->methods.xShmUnmap = [](sqlite3_file* main, int) {
+              const auto* current = reinterpret_cast<const LiveReadMethods*>(main->pMethods);
+              return current->original->xShmUnmap(main, 0);
             };
             file->pMethods = &methods->methods;
           }

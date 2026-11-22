@@ -94,14 +94,28 @@ namespace uos::live::calls {
     using LiveCallAccountSelection = std::variant<codex::routing_state::RoutingAccount, rt::Response>;
     rt::Task<LiveCallAccountSelection> selectLiveCallAccount(rt::OrderedSet<std::string> attemptedAccountIds, std::optional<std::string> model) {
       std::optional<::uos::types::CodexAuthPoolState> pool; rt::Reason failure;
-      try { rt::Promise<codex::auth::CodexAuthPoolEntry> pending(codex::auth::getAuthPoolEntry(true, true)); auto entry = co_await pending.wait(); pool = entry.pool; }
+      try {
+        rt::Promise<codex::auth::CodexAuthPoolEntry> pending(codex::auth::getAuthPoolEntry(true, true));
+        auto entry = co_await pending.wait();
+        if (codex::auth::shouldCheckLeaderAuth(entry.pool) && co_await codex::auth::checkLeaderAuth()) {
+          auto rereading = codex::auth::getAuthPoolEntry(true, true);
+          entry = co_await std::move(rereading);
+        }
+        pool = entry.pool;
+      }
       catch (...) { failure = std::current_exception(); }
       if (failure) {
         if (const auto* error = codex::auth::codexErrorOf(failure)) co_return codex::dispatch::routingErrorResponse(503, error->message, error->code);
         co_return codex::dispatch::routingErrorResponse(503, "Codex routing state is temporarily unavailable; retry the request.", "codex_auth_missing");
       }
       auto task = codex::account_routing::selectCodexRoutingAccountsStrong(*pool, pool->accounts, rt::dateNow(), model);
-      rt::Promise<codex::routing_state::RouteSelection> pending(std::move(task)); const auto selection = co_await pending.wait();
+      rt::Promise<codex::routing_state::RouteSelection> pending(std::move(task)); auto selection = co_await pending.wait();
+      if (codex::auth::leaderAuthHasFencedCredential() && co_await codex::auth::checkLeaderAuth()) {
+        auto reading = codex::auth::getAuthPoolEntry(true, true);
+        const auto current = co_await std::move(reading);
+        auto reselecting = codex::account_routing::selectCodexRoutingAccountsStrong(current.pool, current.pool.accounts, rt::dateNow(), model);
+        selection = co_await std::move(reselecting);
+      }
       if (const auto* eligible = std::get_if<codex::routing_state::RouteSelectionEligible>(&selection)) {
         for (const auto& candidate : eligible->accounts) if (!attemptedAccountIds.has(candidate.auth.account_id)) co_return candidate;
         co_return codex::dispatch::routingErrorResponse(503, "Codex routing state exposed no account for this realtime call; retry the request.", "codex_auth_missing");
@@ -171,6 +185,13 @@ namespace uos::live::calls {
       const auto response = *upstreamResponse; const bool credentialFailure = response.status() == 401 || response.status() == 403;
       if (credentialFailure) {
         auto mark = codex::routing_mutations::markCodexCredentialInvalid(account.routing); rt::Promise<void> marked(std::move(mark)); co_await marked.wait();
+        if (codex::auth::hasLeaderAuthReader()) {
+          try {
+            auto reading = codex::auth::useLeaderCredential(account.auth, true);
+            co_await std::move(reading);
+            attemptedAccountIds.delete_(account.accountId);
+          } catch (...) {}
+        }
       }
       auto record = codex::dispatch::recordCodexResponseHealth(account.accountId, response, account.auth, std::string("success")); rt::Promise<void> recorded(std::move(record)); co_await recorded.wait();
       if (!credentialFailure || attempt == LIVE_CALL_MAX_UPSTREAM_ATTEMPTS) {

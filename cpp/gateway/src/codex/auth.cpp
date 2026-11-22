@@ -60,6 +60,7 @@ namespace uos::codex::auth {
       std::optional<LeaderReadOutcome> lastOutcome;
       std::optional<rt::Promise<bool>> inFlight;
       std::unordered_map<std::string, std::string> rejectedAccess;
+      bool stopping = false;
     };
     std::shared_ptr<LeaderAuthState> leaderAuth;
     constexpr double LEADER_AUTH_READ_INTERVAL_MS = 5'000;
@@ -730,7 +731,7 @@ namespace uos::codex::auth {
 
   rt::Task<bool> checkLeaderAuth() {
     const auto state = leaderAuth;
-    if (!state) co_return false;
+    if (!state || state->stopping) co_return false;
     if (!state->inFlight) {
       const double now = rt::performanceNow();
       if (now < state->nextReadAt) co_return false;
@@ -743,6 +744,16 @@ namespace uos::codex::auth {
     co_return adopted;
   }
 
+  rt::Task<void> drainLeaderAuth() {
+    const auto state = leaderAuth;
+    if (!state) co_return;
+    state->stopping = true;
+    if (state->inFlight) {
+      const auto reading = *state->inFlight;
+      co_await reading.wait();
+    }
+  }
+
   bool shouldCheckLeaderAuth(const CodexAuthPoolState& pool) {
     if (!leaderAuth) return false;
     auto& rejected = leaderAuth->rejectedAccess;
@@ -752,6 +763,14 @@ namespace uos::codex::auth {
       });
     });
     return !rejected.empty() || std::any_of(pool.accounts.begin(), pool.accounts.end(), needsRefresh);
+  }
+
+  bool leaderAuthHasFencedCredential() {
+    if (!leaderAuth) return false;
+    const auto state = routing_state::getCachedRoutingState();
+    return state && std::any_of(state->slots.begin(), state->slots.end(), [](const auto& slot) {
+      return slot.invalid_credential_version == slot.credential_version;
+    });
   }
 
   rt::Task<CodexAuthState> useLeaderCredential(CodexAuthState current, bool rejected) {

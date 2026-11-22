@@ -260,7 +260,9 @@ namespace uos::codex::auth {
   bool hasLeaderAuthReader();
   json::object leaderAuthHealth();
   rt::Task<bool> checkLeaderAuth();
+  rt::Task<void> drainLeaderAuth();
   bool shouldCheckLeaderAuth(const ::uos::types::CodexAuthPoolState& pool);
+  bool leaderAuthHasFencedCredential();
   rt::Task<::uos::types::CodexAuthState> useLeaderCredential(::uos::types::CodexAuthState current, bool rejected);
 
   void resetCodexAuthCacheForTest();
