@@ -19,9 +19,12 @@ namespace uos::codex::responses_state {
     rt::Promise<auth::CodexAuthPoolEntry> loading(auth::getAuthPoolEntry(true, true));
     auth::CodexAuthPoolEntry poolEntry = co_await loading.wait();
     const bool checkLeader = auth::shouldCheckLeaderAuth(poolEntry.pool);
-    if (checkLeader && co_await auth::checkLeaderAuth()) {
-      auto rereading = auth::getAuthPoolEntry(true, true);
-      poolEntry = co_await std::move(rereading);
+    if (checkLeader) {
+      const bool adopted = co_await auth::checkLeaderAuth();
+      if (adopted) {
+        auto rereading = auth::getAuthPoolEntry(true, true);
+        poolEntry = co_await std::move(rereading);
+      }
     }
     // Refresh the per-account overage switch once per request so the synchronous
     // routing evaluation reads a bounded, current value.
@@ -30,12 +33,15 @@ namespace uos::codex::responses_state {
     rt::Promise<routing_state::RouteSelection> selecting(
       account_routing::selectCodexRoutingAccountsStrong(poolEntry.pool, poolEntry.pool.accounts, rt::dateNow(), requestedModel));
     routing_state::RouteSelection selected = co_await selecting.wait();
-    if (!checkLeader && auth::leaderAuthHasFencedCredential() && co_await auth::checkLeaderAuth()) {
+    if (!checkLeader && auth::leaderAuthHasFencedCredential()) {
       // A previous follower process may already have fenced the old bearer.
-      auto rereading = auth::getAuthPoolEntry(true, true);
-      poolEntry = co_await std::move(rereading);
-      auto reselecting = account_routing::selectCodexRoutingAccountsStrong(poolEntry.pool, poolEntry.pool.accounts, rt::dateNow(), requestedModel);
-      selected = co_await std::move(reselecting);
+      const bool adopted = co_await auth::checkLeaderAuth();
+      if (adopted) {
+        auto rereading = auth::getAuthPoolEntry(true, true);
+        poolEntry = co_await std::move(rereading);
+        auto reselecting = account_routing::selectCodexRoutingAccountsStrong(poolEntry.pool, poolEntry.pool.accounts, rt::dateNow(), requestedModel);
+        selected = co_await std::move(reselecting);
+      }
     }
     // Current-invalid pools use the same fresh complete proof as mixed pools
     // before they may authorize paid fallback.

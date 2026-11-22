@@ -460,7 +460,8 @@ namespace uos::codex::auth_refresh {
    */
   rt::Task<CodexAuthState> refreshAuthCoordinated(auth::CodexAuthAccountEntry input) {
     if (auth::hasLeaderAuthReader()) {
-      const auto adopted = co_await auth::useLeaderCredential(std::move(input.auth), true);
+      auto reading = auth::useLeaderCredential(std::move(input.auth), true);
+      const auto adopted = co_await std::move(reading);
       co_return adopted;
     }
     auth::requireCodexAuthRefreshAllowed();
@@ -608,7 +609,8 @@ namespace uos::codex::auth_refresh {
   rt::Task<CodexAuthState> getValidAuth(auth::CodexAuthAccountEntry current) {
     if (!auth::needsRefresh(current.auth)) co_return current.auth;
     if (auth::hasLeaderAuthReader()) {
-      const auto adopted = co_await auth::useLeaderCredential(std::move(current.auth), false);
+      auto reading = auth::useLeaderCredential(std::move(current.auth), false);
+      const auto adopted = co_await std::move(reading);
       co_return adopted;
     }
     auth::requireCodexAuthRefreshAllowed();

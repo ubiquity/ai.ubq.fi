@@ -97,9 +97,12 @@ namespace uos::live::calls {
       try {
         rt::Promise<codex::auth::CodexAuthPoolEntry> pending(codex::auth::getAuthPoolEntry(true, true));
         auto entry = co_await pending.wait();
-        if (codex::auth::shouldCheckLeaderAuth(entry.pool) && co_await codex::auth::checkLeaderAuth()) {
-          auto rereading = codex::auth::getAuthPoolEntry(true, true);
-          entry = co_await std::move(rereading);
+        if (codex::auth::shouldCheckLeaderAuth(entry.pool)) {
+          const bool adopted = co_await codex::auth::checkLeaderAuth();
+          if (adopted) {
+            auto rereading = codex::auth::getAuthPoolEntry(true, true);
+            entry = co_await std::move(rereading);
+          }
         }
         pool = entry.pool;
       }
@@ -110,11 +113,14 @@ namespace uos::live::calls {
       }
       auto task = codex::account_routing::selectCodexRoutingAccountsStrong(*pool, pool->accounts, rt::dateNow(), model);
       rt::Promise<codex::routing_state::RouteSelection> pending(std::move(task)); auto selection = co_await pending.wait();
-      if (codex::auth::leaderAuthHasFencedCredential() && co_await codex::auth::checkLeaderAuth()) {
-        auto reading = codex::auth::getAuthPoolEntry(true, true);
-        const auto current = co_await std::move(reading);
-        auto reselecting = codex::account_routing::selectCodexRoutingAccountsStrong(current.pool, current.pool.accounts, rt::dateNow(), model);
-        selection = co_await std::move(reselecting);
+      if (codex::auth::leaderAuthHasFencedCredential()) {
+        const bool adopted = co_await codex::auth::checkLeaderAuth();
+        if (adopted) {
+          auto reading = codex::auth::getAuthPoolEntry(true, true);
+          const auto current = co_await std::move(reading);
+          auto reselecting = codex::account_routing::selectCodexRoutingAccountsStrong(current.pool, current.pool.accounts, rt::dateNow(), model);
+          selection = co_await std::move(reselecting);
+        }
       }
       if (const auto* eligible = std::get_if<codex::routing_state::RouteSelectionEligible>(&selection)) {
         for (const auto& candidate : eligible->accounts) if (!attemptedAccountIds.has(candidate.auth.account_id)) co_return candidate;

@@ -500,7 +500,7 @@ namespace {
     }
   };
 
-  rt::Task<void> expectReadOutcome(Fixture& fixture, std::string expected) {
+  rt::Task<void> expectReadOutcome(Fixture& fixture, std::string_view expected) {
     auto requesting = fixture.request("/health");
     const auto response = co_await std::move(requesting);
     const auto payload = co_await response.json();
@@ -535,7 +535,8 @@ namespace {
       try {
         co_await fixture.start();
         auth::setLeaderAuthReader(uos::codex::auth_import::liveReader(files.source, store));
-        EXPECT(co_await auth::checkLeaderAuth());
+        const bool adoptedAtStartup = co_await auth::checkLeaderAuth();
+        EXPECT(adoptedAtStartup);
         co_await expectReadOutcome(fixture, "ok");
         co_await fixture.inference(200);
         EXPECT_EQ(checks, 1);
