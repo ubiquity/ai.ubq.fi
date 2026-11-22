@@ -263,6 +263,9 @@ namespace uos::rt::sqlite {
       return all(std::vector<Binding>{Binding(std::forward<A>(params))...});
     }
 
+    // Visit owned rows in order, with the same reset and binding behavior as all().
+    void forEachRow(const std::vector<Binding>& params, const std::function<void(Row)>& visit) const;
+
     // `statement.iterate(...)`: a lazy generator; the parameters are bound by the first next()
     // without resetting the statement (Error "bad parameter or other API misuse" when the
     // statement is in the middle of another iteration, as in Bun).
