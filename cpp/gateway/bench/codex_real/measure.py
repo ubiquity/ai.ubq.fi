@@ -123,8 +123,8 @@ def terminals(log, reader, count, pending, failure=False):
             continue
         record = json.loads(line[len(TERMINAL_PREFIX):])
         identifier = record["request_id"]
-        require(identifier not in pending and record["delivery_outcome"] == "delivered",
-                "Terminal must have a unique ID and physical delivery evidence")
+        require(identifier not in pending and record["delivery_outcome"] == "delivered" and record["provider"] == "chatgpt_codex",
+                "Terminal must have a unique ID, subscription provider and physical delivery evidence")
         if failure:
             require(record["stream_terminal_type"] == "response.failed", "Replay control did not produce a semantic failure")
         else:
@@ -269,8 +269,9 @@ def main():
                 and all(version == args.version for version in extra_fetches), "Unexpected mock dispatch outside measured reply script")
         if not args.heaptrack:
             db = state / ".data/kv-bun.sqlite3"
-            usage = int(subprocess.check_output([args.seed_state, db, "--usage"], env=env | {"PATH": os.defpath},
-                                                cwd=state, timeout=10))
+            verify = state / "verify"
+            verify.mkdir()
+            usage = int(subprocess.check_output([args.seed_state, db, "--usage"], env=sparse(verify), cwd=state, timeout=10))
             require(usage == HISTORY + result["requests_served"], f"Expected exactly one quota settlement per dispatch, observed {usage}")
             if args.traffic == "replay":
                 with closing(sqlite3.connect(db)) as connection_db:

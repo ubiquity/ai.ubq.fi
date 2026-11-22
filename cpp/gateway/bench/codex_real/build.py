@@ -57,13 +57,13 @@ def main():
     env = {name: os.environ[name] for name in ("PATH", "LC_ALL") if name in os.environ}
     commands = []
 
-    def run(argv):
+    def run(argv, *, cwd=ROOT):
         commands.append(shlex.join(map(str, argv)))
-        subprocess.run(argv, cwd=ROOT, env=env, check=True, timeout=90)
+        subprocess.run(argv, cwd=cwd, env=env, check=True, timeout=90)
 
     def compile(path, *flags):
         obj = bins / (path.stem + ".o")
-        run([*receipt["compiler"], *receipt["flags"], *flags, "-c", path, "-o", obj])
+        run([*receipt["compiler"], *receipt["flags"], *flags, "-c", path, "-o", obj], cwd=source)
         return obj
 
     libraries = receipt["libraries"]

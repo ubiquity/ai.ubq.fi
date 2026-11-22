@@ -80,3 +80,20 @@ Heaptrack recorded the gateway only. Each control restarted the sealed package a
 On the separate one-session native trim run, RssAnon moved from 19,868 to 12,428 KiB. Three arenas held 5,366,528 in-use bytes outside direct mappings, 15,666,432 bytes in free blocks and 1,720,320 directly mapped bytes. `malloc_trim(0)` released 7,440 KiB of resident pages without reducing those allocator counters. That identifies reusable free pages inside arenas alongside live parser scratch. No full API-key or usage-table load occurred in the measured request path.
 
 The production build command was `bash cpp/gateway/tools/ci-build.sh --config release oss_gateway_http_test` with Clang, four jobs and `UOS_CI_CXXFLAGS='-g1 -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer'`. The test passed 5/5 cases at the integration SHA. The benchmark used `sqlite.sh` with the existing package writer and `isolated.sh --codex-real`. Real trials used `--sessions 1`, `10`, `100` and `500`. The profiler measured `--codex ... --sessions 5 --heaptrack` and the scripted lanes `--traffic idle|auth|catalog|replay --heaptrack`. Traces were read with `heaptrack_print -p1 -a0 -T0 -l1` and filtered by allocation backtrace for attribution.
+
+## Health and request telemetry
+
+The memory object carries resident and anonymous bytes, glibc in-use, free and direct-mapping bytes, and named cache entries and byte estimates. Health prefers the kernel's mapping rollup. Terminals read the fast statm counters. Cache owners update their counters when held values change, so the snapshot can read them without touching KV or enumerating cache contents. The allocator in-use counter includes direct mappings. SQLite page entries are estimated from the reported cache bytes and the database's page size. [Runtime guide](../RUNTIME.md)
+
+The telemetry commit is `a66cde42abdf25b9cba1d8e0a0ba76c49d1c582a`, tree `9d40e8bbef5f61e2520d47c30c22f672dfee3c82`. The package manifest was `6dc8317eb6d60d3732350363a5deed1ffd233af6971cdeac5983365b5a7a9511`. At session 20, health reported 7,529,824 bytes in use and 13,900,448 bytes in free blocks. The largest gauges were parser scratch at 3,216,540 bytes, the one-entry Codex catalog at 798,169 bytes, SQLite pages at 531,688 bytes and static assets at 352,800 bytes. The one-entry policy memo used an estimated 380 bytes. The terminal rows carried the same field names. Release `oss_gateway_http_test` passed 5/5 cases.
+
+## Move the Responses input and release it after projection
+
+The request path now moves one parsed record into validation. It borrows that record for model and reasoning lookup, moves the two upstream projections into the routing state, and discards the raw and normalized input when the projections own what they need. Delivery and terminal accounting retain their existing owners.
+
+The change is `703734114fd99b2457ac3a1f56dbb74ee5cc3d95`, tree `0a7394b785955dbb5758d4913ed223079169b2af`. The executable hash was `0723f36a769da410f08f1ebcc6c629ade47f6d0861e1fe79c4214af5ea836d74`, with package manifest `8e2e8893c0241f041afb0638c877e918feba64d1babf36396280bdfc776e49c0`. Release `input_normalization_logprobs_test` passed 5/5 cases. The same real five-session Heaptrack cycle fell from 21.95 MB peak live heap to 16.71 MB. The Boost.JSON string site decreased from 11.30 to 6.33 MB and allocation calls decreased from 855,466 to 580,909. Retained heap was 6.63 MB with telemetry and the large parser scratch still present.
+
+| Build, 20 real sessions | First RssAnon KiB | Ending RssAnon KiB | Peak VmHWM KiB |
+| --- | ---: | ---: | ---: |
+| Telemetry | 20,224 | 22,264 | 58,488 |
+| Move the Responses input | 14,464 | 20,184 | 52,732 |
