@@ -43,6 +43,8 @@ namespace uos::runtime::permissions_linux {
     std::optional<LinuxPermissionsTcpPorts> allowReducedConfinement = std::nullopt;
     /** Operator opt-in with verified mount paths, considered only when Landlock is absent. */
     std::optional<ServiceManagerPaths> allowNoLandlock = std::nullopt;
+    /** Read files below these directories, including files created after startup. */
+    std::vector<std::string> readFilesBelow = {};
   };
 
   struct LinuxPermissionsReceipt : LinuxPermissionsSupport {

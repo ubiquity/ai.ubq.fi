@@ -391,6 +391,9 @@ namespace uos::rt::sqlite {
     // SQLITE_OPEN_READONLY | SQLITE_OPEN_URI to open "file:...?immutable=1").
     Database(std::string_view filename, int flags);
 
+    // Linux Unix VFS with read-only handles for the database and both WAL sidecars.
+    static Database openLiveReadOnly(std::string_view absolutePath);
+
     // `db.filename`: the trimmed name as given ("" stays ""), ":memory:" for new Database().
     const std::string& filename() const;
 
@@ -445,6 +448,7 @@ namespace uos::rt::sqlite {
     friend bool operator==(const Database& a, const Database& b) noexcept { return a.impl == b.impl; }
 
   private:
+    explicit Database(std::shared_ptr<Impl> database) : impl(std::move(database)) {}
     std::shared_ptr<const detail::TransactionController> controller() const;
     std::shared_ptr<Impl> impl;
   };
