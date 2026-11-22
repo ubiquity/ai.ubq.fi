@@ -3,6 +3,7 @@
 
 import argparse
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, closing
 import json
 import os
@@ -20,12 +21,13 @@ sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(HERE.parent / "request_path"), str(HERE.parents[1] / "tests/production_smoke"), str(HERE)]
 from cases import synthetic_auth
+from burst import CONNECTIONS, TURN_BATCHES, percentile_ms, run_round, source_text
 from sessions import Codex, Scripted, check_auth, codex_version, native_codex
 from driver import connection, control, require
 from fixtures import ADMIN_TOKEN, API_TOKEN, encode
 from programmed import MODEL, TOOL_ROUNDS, upstream
-from run import LISTEN, TERMINAL_PREFIX, command_for, digest, identities_for, process, sparse, stop, verify_namespace, wait_port
-from sampler import gateway_pid, sample, trim, trim_probe
+from run import LISTEN, TERMINAL_PREFIX, command_for, cpu, digest, identities_for, process, sparse, stop, verify_namespace, wait_port
+from sampler import allocator_info, gateway_pid, sample, trim, trim_probe
 
 VERSION = "0.171.0"
 MIX = ("tools", "short", "long", "reasoning", "resume")
@@ -172,16 +174,23 @@ def measure(args, state, command, environment, mock):
         release = health["release"]
         profile = json.loads((args.package / "build-profile.json").read_text())
         require(release["git_sha"] == profile["git_commit"], "Health release differs from the sealed build profile")
+        if args.burst:
+            require(health["confinement"] == "landlock", "Burst requires the default Landlock and seccomp policy")
         codex = Codex(args.codex, mock.version, state, port, mock.tool_text) if args.codex else None
         client = codex or Scripted(port, mock.version, mock.tool_text)
         samples = []
         pending = set()
+        latencies = []
+        traffic_seconds = 0.0
+        if args.burst:
+            pool = stack.enter_context(ThreadPoolExecutor(max_workers=CONNECTIONS))
+            source = source_text()
 
         with (args.out / "samples.jsonl").open("w", buffering=1) as samples_log, log.open() as reader:
             def record(index, kind, memory=None):
                 if memory is None and "memory" in health:
                     memory = control(port, "/health")["memory"]
-                if args.check:
+                if args.check or args.burst:
                     check_telemetry(memory)
                 values = sample(pid)
                 row = {"session": index, "kind": kind, "requests_served": len(pending), "elapsed_s": round(time.monotonic() - started, 3),
@@ -190,15 +199,26 @@ def measure(args, state, command, environment, mock):
                     row["gateway_memory"] = memory
                 samples.append(row)
                 print(json.dumps(row), file=samples_log)
-                if index in (0, 1, 10, 20, 100, 500) or kind == "trim":
+                if index in (0, 1, 10, 20, 100, 500) or kind in ("idle", "trim"):
                     print(f"{kind} {index}: {values['RssAnon']} KiB anonymous, {values['VmHWM']} KiB peak, "
                           f"{len(pending)} inference requests", flush=True)
             record(0, "start", health.get("memory"))
+            if args.burst:
+                cpu_before = cpu(pid)
             for index in range(1, args.sessions + 1):
                 kind = MIX[(index - 1) % len(MIX)] if args.traffic == "mix" else args.traffic
                 start = len(mock.calls)
                 mock.script = kind, start
-                if kind == "auth":
+                if args.burst:
+                    kind = "long" if index % 4 == 0 else "short"
+                    mock.script = kind, start
+                    tick = time.perf_counter()
+                    latencies.extend(run_round(pool, port, mock.version, index, kind, source))
+                    traffic_seconds += time.perf_counter() - tick
+                    count = start + CONNECTIONS * TURN_BATCHES
+                    require(len(mock.calls) == count and not mock.failures, "Burst had unexpected mock calls or validation failures")
+                    terminals(log, reader, count, pending, check_memory=True)
+                elif kind == "auth":
                     check_auth(port, mock.version)
                 elif kind == "catalog":
                     Scripted(port, mock.version, mock.tool_text).catalog()
@@ -210,6 +230,12 @@ def measure(args, state, command, environment, mock):
                     terminals(log, reader, start + count, pending, failure=kind == "replay", check_memory=args.check)
                 mock.script = None
                 record(index, kind)
+            if args.burst:
+                time.sleep(3)
+                record(args.sessions, "idle")
+                user_s, system_s = (right - left for left, right in zip(cpu_before, cpu(pid), strict=True))
+            if probe:
+                (args.out / "malloc-info.xml").write_text(allocator_info(probe))
             malloc_bytes = trim(probe) if probe else None
             if malloc_bytes is not None:
                 record(args.sessions, "trim")
@@ -220,9 +246,15 @@ def measure(args, state, command, environment, mock):
             else:
                 stop(child)
             require(not any(line.startswith(TERMINAL_PREFIX) for line in reader), "Unexpected extra request terminal")
+        performance = None
+        if args.burst:
+            latencies.sort()
+            performance = {"requests_per_second": len(latencies) / traffic_seconds,
+                           "p50_ms": percentile_ms(latencies, 0.50), "p95_ms": percentile_ms(latencies, 0.95),
+                           "gateway_user_s": user_s, "gateway_sys_s": system_s}
         return {"samples_kib": samples, "malloc_bytes": malloc_bytes, "sqlite_mapping": sqlite_mapping,
                 "release": release, "client": "codex " + codex.version if codex else "scripted", "requests_served": len(pending),
-                "elapsed_s": round(time.monotonic() - started, 3)}
+                "elapsed_s": round(time.monotonic() - started, 3), "burst_performance": performance}
 
 
 def main():
@@ -243,6 +275,7 @@ def main():
     client.add_argument("--scripted", action="store_true")
     parser.add_argument("--version", help="Exact catalog version, normally taken from the installed CLI")
     parser.add_argument("--sessions", type=int)
+    parser.add_argument("--burst", action="store_true", help="Run each round on eight mixed-size scripted connections")
     parser.add_argument("--check", action="store_true", help="Enforce anonymous and peak resident budgets for 20 sessions")
     parser.add_argument("--traffic", choices=("mix", "auth", "catalog", "idle", "replay"), default="mix")
     parser.add_argument("--disable-replay", action="store_true")
@@ -258,6 +291,8 @@ def main():
     require(1 <= args.sessions <= 500, "Unsupported session count")
     require(not (args.traffic == "replay" and args.disable_replay), "Replay control needs a synthetic capture key")
     require(args.traffic == "mix" or args.scripted, "Select the scripted client for isolated attribution")
+    require(not args.burst or (args.scripted and args.traffic == "mix" and not (args.check or args.heaptrack)),
+            "Burst uses the scripted mix in a separate allocator measurement")
     namespace = verify_namespace(args.parent_netns)
     if args.codex:
         args.codex = native_codex(args.codex)
@@ -321,7 +356,7 @@ def main():
         receipt = {"host": platform.platform(), "network_namespace": namespace, "package": identities, "database": database,
                    "seed_state_sha256": digest(args.seed_state), "codex_sha256": digest(args.codex) if args.codex else None,
                    "catalog": catalog, "public_models": public, "version": args.version, "traffic": args.traffic,
-                   "sessions": args.sessions, "upstream_calls": dict(Counter(call["kind"] for call in mock.calls)),
+                   "sessions": args.sessions, "burst": args.burst, "upstream_calls": dict(Counter(call["kind"] for call in mock.calls)),
                    "upstream_request_bytes": [min(sizes), max(sizes)] if sizes else None,
                    "heaptrack": args.heaptrack, "replay_enabled": not args.disable_replay, **result}
         if args.check:

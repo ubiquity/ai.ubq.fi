@@ -3,6 +3,7 @@
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+from itertools import count
 import random
 import string
 import sys
@@ -154,7 +155,7 @@ class Handler(BaseHTTPRequestHandler):
             if (turn == 1 and "fixture-patch.txt" not in text) or (turn > 1 and self.server.tool_text not in text):
                 self.reject(f"Expected executed tool output in turn {turn}")
                 return
-        response_id = f"resp_bench_{len(self.server.calls) + 1}"
+        response_id = f"resp_bench_{next(self.server.response_ids)}"
         self.server.calls.append({"kind": kind, "input_bytes": size, "input_items": len(items), "tool_outputs": len(outputs)})
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -184,6 +185,7 @@ def upstream(auth, version):
         server.authorization = "Bearer " + auth["tokens"]["access_token"]
         server.tool_text = payload(TOOL_BYTES, 42)
         server.script = None
+        server.response_ids = count(1)
         server.calls, server.catalog_calls, server.failures = [], [], []
         worker = Thread(target=server.serve_forever, daemon=True)
         worker.start()

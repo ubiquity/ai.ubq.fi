@@ -24,6 +24,7 @@ def sample(pid):
     headers = list(MAPPING.finditer(maps))
     labels = [match[0].split(maxsplit=5) for match in headers]
     result = {field: kib(status, field) for field in ("VmRSS", "RssAnon", "VmHWM")}
+    result["threads"] = int(re.search(r"^Threads:\s*(\d+)$", status, re.M)[1])
     result.update(heap_rss=0, heap_size=0, heap_anon_huge_kib=0, anonymous_mappings=[], anonymous_kib=0)
     for index, label in enumerate(labels):
         end = headers[index + 1].start() if index + 1 < len(headers) else len(maps)
@@ -64,3 +65,8 @@ def trim(reader):
     values = dict(zip(FIELDS, map(int, reader.recv(256).split()), strict=True))
     require(values["trim_return"] in (0, 1) and values["arenas"] > 0, "Invalid glibc trim receipt")
     return values
+
+
+def allocator_info(reader):
+    reader.sendall(b"i")
+    return reader.recv(65536).decode("ascii")
