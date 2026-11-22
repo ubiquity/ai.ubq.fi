@@ -2,7 +2,7 @@
 
 - [x] Reproduce retained free heap with mixed concurrent Codex traffic.
 - [x] Attribute retained pages by thread, arena and mapping before changing the gateway.
-- [ ] Compare allocator options and record memory, throughput, latency and CPU.
+- [x] Compare allocator options and record memory, throughput, latency and CPU.
 - [x] Guard retained free heap in Release CI and document the runtime policy.
 - [x] Verify the affected Release and ASan suites, registration and committed diff.
 
@@ -55,6 +55,28 @@ The sealed timer-only trial at `dc60af66cdb09cca7d1a90e40386d302e7e3b7a8` briefl
 
 The timer with the per-process huge-page opt-out reached 11.20 MiB idle anonymous RSS and 7.78 MiB live, with zero huge pages. Its free-arena count stayed between 12.35 and 16.27 MiB. This experimental run delivered 95.16 requests/s, p50 70.02 ms and p95 125.38 ms, with 15.68 CPU seconds. The final policy defers ordinary trims until consecutive samples stabilize, while higher resident pressure can still trigger a trim during traffic.
 
+## Sealed build measurements
+
+The final gateway checks memory once a second after confinement. It trims with at least 8 MiB free and anonymous RSS more than 5 MiB above live allocator bytes once consecutive samples agree. The timer also trims if that gap exceeds 24 MiB during active traffic. The Linux process opts out of transparent huge pages before serving to keep discarded pages out of RSS. The existing seccomp filter already allows `prctl`, `madvise`, `munmap` and `brk`.
+
+The following medians come from three 60-round runs per build after compilation ended, alternated in both orders with fresh state. Each run delivered and settled 1,920 streamed inference requests and fetched 480 exact-version catalogs. Idle samples followed three seconds without traffic.
+
+| Metric | Baseline median | Final median |
+| --- | ---: | ---: |
+| Idle anonymous RSS, MiB | 24.39 | 13.07 |
+| Idle live allocator, MiB | 8.28 | 7.97 |
+| Idle anonymous RSS above live, MiB | 16.12 | 4.74 |
+| Idle free arena capacity, MiB | 16.67 | 16.79 |
+| Peak resident RSS, MiB | 58.35 | 57.66 |
+| Inference requests/s | 155.91 | 155.99 |
+| p50 latency, ms | 38.75 | 38.32 |
+| p95 latency, ms | 81.56 | 83.14 |
+| Gateway CPU, seconds | 14.01 | 13.95 |
+
+The three final idle gaps were 3.49, 4.74 and 5.10 MiB. Final free-arena medians for rounds 1–20, 21–40 and 41–60 were 15.26, 14.53 and 14.06 MiB, with a maximum of 17.56 MiB. The kernel reclaimed resident pages inside that bounded arena capacity. The median p95 increase was 1.9%. Baseline throughput varied from 150 to 176 requests/s across the three runs.
+
+Three additional paired runs started both packages simultaneously, with each isolated workload pinned to two CPUs and the CPU assignments swapped for the middle pair. Median throughput was 134.01 to 129.82 requests/s (−3.1%). The p50 was 47.18 to 48.50 ms (+2.8%), p95 was 89.25 to 90.80 ms (+1.7%), and gateway CPU was 14.80 to 15.55 seconds (+5.1%). The idle gap was 14.44 to 4.00 MiB.
+
 ## Release regression
 
 The Release shard 1 job keeps the existing serial Codex memory check and adds `--scripted --check-burst`. This runs 20 rounds, verifies all 640 delivered terminals and checks the durable quota count. It caps sampled free arena capacity at 24 MiB and idle anonymous RSS above live allocator bytes at 9 MiB. Free arena capacity includes space glibc can reuse after the kernel has discarded its pages, so the second gate checks the resident effect. The gate has no throughput or latency assertion.
@@ -63,6 +85,8 @@ The Release shard 1 job keeps the existing serial Codex memory check and adds `-
 | --- | ---: | ---: | --- |
 | Integration baseline | 16,923,792 | 16,353,920 | Failed at the 9 MiB idle limit |
 | Final sealed build | 16,341,200 | 4,602,064 | Passed |
+
+The baseline gate receipt SHA-256 is `dd26b42c591f9238f81475775e269f0742b381d695abdc65618856ec465c0610`. The passing receipt SHA-256 is `b7795c1d7b11eb694a1d314a89ac5b8468ac19a5bd7b2cd0ff1f9a16bbc719eb`.
 
 The existing 20-session native Codex 0.171.0 check passed with 11,676 KiB anonymous and 44,228 KiB peak resident after 60 inference requests. Its scripted fallback passed at 9,640 KiB anonymous and 43,544 KiB peak resident. Both met the existing 17 MiB anonymous and 58 MiB peak resident limits.
 
