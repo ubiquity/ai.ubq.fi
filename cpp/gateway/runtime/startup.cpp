@@ -271,6 +271,8 @@ namespace uos::runtime::startup {
           if (destination == origin_ + "/backend-api/wham/usage") return original_->send(std::move(guarded));
           refuse("fixture auth import allows only the Codex usage probe");
         }
+        if (codex::auth::hasLeaderAuthReader() && destination == origin_ + "/backend-api/wham/usage")
+          return original_->send(std::move(guarded));
         if (destination == deepseek::index::DEEPSEEK_CHAT_COMPLETIONS_URL) {
           rt::Request mapped(origin_ + "/chat/completions", guarded);
           return original_->send(std::move(mapped));
@@ -342,12 +344,15 @@ namespace uos::runtime::startup {
     }
 
     void enforce(const fs::path& package, const fs::path& state, int port,
-                 const std::optional<std::string>& origin, const std::optional<fs::path>& authSource) {
+                 const std::optional<std::string>& origin, const std::optional<fs::path>& authSource,
+                 const std::optional<fs::path>& leaderData) {
       if (upstream_auth::followerMode())
         std::fprintf(stderr, "%s=1: Antigravity disabled because its CLI manages OAuth refresh.\n", upstream_auth::FOLLOWER_ENV.data());
       auto profiles = permissions_linux::gatewayLinuxPermissions(package.string(), state.string());
       auto& permissions = profiles.gateway;
       if (authSource) permissions.read.push_back(authSource->string());
+      std::error_code error;
+      if (leaderData && fs::is_directory(*leaderData, error)) permissions.readFilesBelow.push_back(leaderData->string());
       if (const char* optIn = std::getenv("UOS_GATEWAY_ALLOW_REDUCED_CONFINEMENT"); optIn && std::string_view(optIn) == "1") {
         permissions_linux::LinuxPermissionsTcpPorts ports{static_cast<std::uint16_t>(port)};
         if (origin) ports.connectPorts.push_back(static_cast<std::uint16_t>(std::stoi(rt::URL(*origin).port())));
@@ -379,7 +384,8 @@ namespace uos::runtime::startup {
       std::fprintf(stderr, "Linux confinement Landlock ABI=%g active=%s missing=%s\n", receipt.landlockAbi, active.c_str(), missing.empty() ? "none" : missing.c_str());
     }
 
-    rt::Task<void> serveGateway(serve::ServeStartupOptions options, std::optional<std::string> origin, std::string databasePath) {
+    rt::Task<void> serveGateway(serve::ServeStartupOptions options, std::optional<std::string> origin, std::string databasePath,
+                                std::optional<fs::path> leaderData) {
       std::unique_ptr<FixtureRouting> routing;
       if (origin) routing = std::make_unique<FixtureRouting>(*origin);
       rt::Task<std::shared_ptr<rt::Kv>> opening = storage::kv::openKv(databasePath);
@@ -390,6 +396,11 @@ namespace uos::runtime::startup {
         } catch (...) {}
       });
       kv::initializeKv(store);
+      if (leaderData) {
+        const auto source = *leaderData / fs::path(storage::kv::BUN_KV_DATABASE_PATH).filename();
+        codex::auth::setLeaderAuthReader(codex::auth_import::liveReader(source.string(), store));
+        co_await codex::auth::checkLeaderAuth();
+      }
       rt::Task<void> serving = serve::importMetaMain(options);
       closeStore.release();
       co_await std::move(serving);
@@ -417,6 +428,9 @@ namespace uos::runtime::startup {
   }
 
   rt::Task<void> run(LaunchArguments arguments) {
+    const auto leaderRoot = rt::env::get(upstream_auth::LEADER_STATE_ENV);
+    if (leaderRoot && !upstream_auth::followerMode())
+      refuse("UOS_GATEWAY_UPSTREAM_AUTH_LEADER_STATE requires UOS_GATEWAY_UPSTREAM_AUTH_FOLLOWER=1");
     const fs::path launchPath = canonical(arguments.manifestPath);
     const json::object launch = object(launchPath, true);
     keys(launch, {"schema", "packageRoot", "stateRoot", "packageManifestSha256", "hostname", "port", "fixture"});
@@ -428,6 +442,20 @@ namespace uos::runtime::startup {
     privateDirectory(state);
     privateDirectory(data);
     if (!disjoint(state, package)) refuse("immutable package and mutable state must be disjoint");
+    std::optional<fs::path> leaderData;
+    if (leaderRoot) {
+      const fs::path root(*leaderRoot);
+      const fs::path candidate = root / ".data";
+      std::error_code error;
+      const auto resolved = fs::weakly_canonical(candidate, error);
+      if (!root.is_absolute() || root.lexically_normal() != root || (!error && resolved != candidate))
+        refuse("UOS_GATEWAY_UPSTREAM_AUTH_LEADER_STATE must name a canonical absolute state root");
+      if (!disjoint(root, state) || !disjoint(root, package))
+        refuse("leader state must be separate from the follower state and package");
+      if (fs::equivalent(data, candidate, error))
+        refuse("leader and follower data directories must be distinct");
+      if (!arguments.codexAuthSource) leaderData = candidate;
+    }
     std::optional<fs::path> authSource;
     if (arguments.codexAuthSource) {
       if (!upstream_auth::followerMode()) refuse("Codex auth import requires UOS_GATEWAY_UPSTREAM_AUTH_FOLLOWER=1");
@@ -467,12 +495,12 @@ namespace uos::runtime::startup {
     }
     // Load the existing operator-selected CA bundles while startup can read them.
     rt::detail::tls::defaultContext();
-    enforce(package, state, port, origin, authSource);
+    enforce(package, state, port, origin, authSource, leaderData);
     if (newFixture) createFixtureBinding(data, binding);
     paths::setResourceRoot(package.string());
     if (::chdir(state.c_str()) != 0) refuse("private state working directory is unavailable");
     if (::setenv("SQLITE_TMPDIR", data.c_str(), 1) != 0) refuse("private SQLite temporary directory is unavailable");
     if (authSource) return importAuth(authSource->string(), database.string(), std::move(origin));
-    return serveGateway(serve::ServeStartupOptions{hostname, port}, std::move(origin), database.string());
+    return serveGateway(serve::ServeStartupOptions{hostname, port}, std::move(origin), database.string(), std::move(leaderData));
   }
 }

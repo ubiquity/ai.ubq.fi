@@ -17,6 +17,7 @@
 
 #include <cstddef>
 #include <exception>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -252,6 +253,15 @@ namespace uos::codex::auth {
   [[nodiscard]] rt::Task<void> markCodexResponseUpstreamError(rt::Response response);
 
   void cacheCodexAuthPool(const ::uos::types::CodexAuthPoolState& pool);
+  enum class LeaderReadOutcome { ok, busy, unreadable, invalid, unchanged };
+  // Installed by the native launcher after it confines the selected source.
+  using LeaderAuthReader = std::function<rt::Task<LeaderReadOutcome>()>;
+  void setLeaderAuthReader(LeaderAuthReader reader);
+  bool hasLeaderAuthReader();
+  json::object leaderAuthHealth();
+  rt::Task<bool> checkLeaderAuth();
+  bool shouldCheckLeaderAuth(const ::uos::types::CodexAuthPoolState& pool);
+  rt::Task<::uos::types::CodexAuthState> useLeaderCredential(::uos::types::CodexAuthState current, bool rejected);
 
   void resetCodexAuthCacheForTest();
 

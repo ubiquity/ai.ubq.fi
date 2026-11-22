@@ -5,7 +5,9 @@
 #include "uos/codex/native_auth.hpp"
 #include "uos/provider/capacity_parse.hpp"
 #include "uos/rt/clock.hpp"
+#include "uos/rt/console.hpp"
 #include "uos/rt/fetch.hpp"
+#include "uos/rt/fs.hpp"
 #include "uos/rt/kv_js.hpp"
 #include "uos/rt/number.hpp"
 #include "uos/rt/sqlite.hpp"
@@ -152,6 +154,76 @@ namespace uos::codex::auth_import {
       if (!matched) throw rt::JsError("The leader and follower Codex pools have no matching accounts.");
       co_return result;
     }
+
+    auth::LeaderReadOutcome sqliteReadOutcome(const sqlite::SQLiteError& error) {
+      switch (error.errno_ & 0xff) {
+        case 5: // SQLITE_BUSY
+        case 6: // SQLITE_LOCKED
+          return auth::LeaderReadOutcome::busy;
+        case 1:  // SQLITE_ERROR (incompatible schema)
+        case 11: // SQLITE_CORRUPT
+        case 26: // SQLITE_NOTADB
+          return auth::LeaderReadOutcome::invalid;
+        default:
+          return auth::LeaderReadOutcome::unreadable;
+      }
+    }
+
+    std::optional<sqlite::Row> readLivePoolRow(const std::string& path) {
+      for (const auto* suffix : {"", "-wal", "-shm"}) {
+        try {
+          const auto info = rt::fs::lstatSync(path + suffix);
+          if (!info.isFile() || info.nlink != 1)
+            throw rt::JsError("Leader SQLite files must be regular files without aliases.");
+        } catch (const rt::fs::ErrnoError& error) {
+          if (*suffix == '\0' || error.code != "ENOENT") throw;
+        }
+      }
+      const auto database = sqlite::Database::openLiveReadOnly(path);
+      return readPoolRow(database);
+    }
+
+    rt::Task<auth::LeaderReadOutcome> adoptLivePool(std::string path, std::shared_ptr<rt::Kv> destination) {
+      std::optional<sqlite::Row> row;
+      try {
+        row = readLivePoolRow(path);
+      } catch (const sqlite::SQLiteError& error) {
+        co_return sqliteReadOutcome(error);
+      } catch (...) {
+        co_return auth::LeaderReadOutcome::unreadable;
+      }
+
+      std::optional<StoredPool> source;
+      try {
+        source = decodePool(row);
+      } catch (...) {
+        co_return auth::LeaderReadOutcome::invalid;
+      }
+      // No leader connection or transaction survives the local read or probes.
+      const rt::KvGetOptions strong{.consistency = rt::KvConsistencyLevel::strong};
+      auto reading = destination->get(auth::CODEX_AUTH_POOL_KV_KEY, strong);
+      const auto entry = co_await std::move(reading);
+      const auto pool = auth::parseCodexAuthPool(entry.value.toJson());
+      if (!pool) co_return auth::LeaderReadOutcome::invalid;
+      ValidatedPool validated;
+      try {
+        validated = co_await validatePoolUpdate(source->pool, *pool);
+        validated.requireFresh();
+      } catch (...) {
+        co_return auth::LeaderReadOutcome::invalid;
+      }
+      if (validated.adoptedSlots.empty()) co_return auth::LeaderReadOutcome::unchanged;
+
+      const rt::KvValue value(json::value_from(validated.pool));
+      auto operation = destination->atomic();
+      operation->check(entry).set(auth::CODEX_AUTH_POOL_KV_KEY, value);
+      auto committing = operation->commit();
+      const auto commit = co_await std::move(committing);
+      if (!commit.ok) co_return auth::LeaderReadOutcome::busy;
+      auth::cacheCodexAuthPool(validated.pool);
+      rt::console::info("[ai.ubq.fi] Adopted leader Codex credentials for " + std::to_string(validated.adoptedSlots.size()) + " account(s).");
+      co_return auth::LeaderReadOutcome::ok;
+    }
   }
 
   rt::Task<std::size_t> importCodexAuthPool(std::string sourcePath, std::string destinationPath) {
@@ -160,5 +232,9 @@ namespace uos::codex::auth_import {
     const auto validated = co_await validatePoolUpdate(source.pool, destination.pool);
     if (!validated.adoptedSlots.empty()) writePool(destinationPath, destination.version, validated);
     co_return validated.adoptedSlots.size();
+  }
+
+  auth::LeaderAuthReader liveReader(std::string sourcePath, std::shared_ptr<rt::Kv> destination) {
+    return [path = std::move(sourcePath), destination = std::move(destination)] { return adoptLivePool(path, destination); };
   }
 }
