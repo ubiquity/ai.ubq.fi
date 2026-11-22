@@ -59,3 +59,8 @@ Release shard 1 runs the check with the installed native CLI when available.
 The scripted path uses the same state, reply types, tool history and limits
 on images without the CLI. Select it locally by replacing `--codex <path>`
 with `--scripted`. [CI workflow](../../../../.github/workflows/cpp-gateway-ci.yml)
+
+For phase totals, pass the recorded `heaptrack.zst` to
+`python3 -B cpp/gateway/bench/codex_real/profile.py <trace>`. It uses
+`zstdcat` and groups live allocation bytes by the first matching frame on
+each stack. Each phase's peak is taken independently across the trace.

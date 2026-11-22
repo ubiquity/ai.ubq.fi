@@ -77,6 +77,21 @@ Heaptrack recorded the gateway only. Each control restarted the sealed package a
 | Terminal logging and telemetry | The `logTerminal` stack showed multiple allocations at 176 bytes or less at the global peak. Terminal serialization writes to the log and optional writes settle before shutdown. | Per-request and shared telemetry bookkeeping. |
 | Replay | A committed text delta followed by `response.failed` produced one encrypted capture. The failure lane uses the same 389 kB catalog and a 69 kB body, plus bounded observation, compression and encryption. The end snapshot includes small OpenSSL and SQLite warm-up allocations. | Per-request capture, durable data and reusable library state. Existing replay retention was active with a completed budget ledger. |
 
+Replaying the allocation and free events provides separate phase peaks. Each stack is charged to its first matching frame, with SQLite reported separately where the background worker stack identifies only the storage layer. Peak values occur at different times. The two replay rows distinguish the passive observation in successful sessions from the encryption and persistence on a failure. [Trace analysis](../../bench/codex_real/profile.py)
+
+| Phase | Baseline peak bytes | Baseline retained bytes | Final peak bytes | Final retained bytes |
+| --- | ---: | ---: | ---: | ---: |
+| API-key authentication | 5,723 | 556 | 6,132 | 556 |
+| Quota and usage | 33,735 | 296 | 33,735 | 296 |
+| Catalog and its parser | 5,200,594 | 1,579,947 | 3,788,634 | 802,320 |
+| Request handling | 12,651,278 | 2,442,252 | 4,619,360 | 3,560 |
+| Streaming and dispatch | 6,897,507 | 151,648 | 2,766,009 | 383,369 |
+| Terminal logging and telemetry | 85,803 | 64,624 | 89,131 | 27,072 |
+| Passive replay recording | 1,008,631 | 7,450 | 1,008,240 | 7,450 |
+| Shared SQLite | 720,065 | 540,920 | 770,036 | 592,939 |
+
+The baseline failure control peaked at 374,484 bytes on replay recording stacks and retained 30,775 bytes there. Its largest transient was the accepted-body clone, followed by encryption and persistence. In the successful mix the largest replay site was the upstream attempt buffer. Inside streaming and dispatch, the baseline's largest stack copied the prepared subscription request. The final stack is the initial preparation. The final retained site includes the reusable parser scratch first allocated while parsing a streamed event. The terminal's largest peak stack was the stream pull callback. Its retained allocations center on response telemetry state.
+
 On the separate one-session native trim run, RssAnon moved from 19,868 to 12,428 KiB. Three arenas held 5,366,528 in-use bytes outside direct mappings, 15,666,432 bytes in free blocks and 1,720,320 directly mapped bytes. `malloc_trim(0)` released 7,440 KiB of resident pages without reducing those allocator counters. That identifies reusable free pages inside arenas alongside live parser scratch. No full API-key or usage-table load occurred in the measured request path.
 
 The production build command was `bash cpp/gateway/tools/ci-build.sh --config release oss_gateway_http_test` with Clang, four jobs and `UOS_CI_CXXFLAGS='-g1 -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer'`. The test passed 5/5 cases at the integration SHA. The benchmark used `sqlite.sh` with the existing package writer and `isolated.sh --codex-real`. Real trials used `--sessions 1`, `10`, `100` and `500`. The profiler measured `--codex ... --sessions 5 --heaptrack` and the scripted lanes `--traffic idle|auth|catalog|replay --heaptrack`. Traces were read with `heaptrack_print -p1 -a0 -T0 -l1` and filtered by allocation backtrace for attribution.
