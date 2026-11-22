@@ -29,18 +29,20 @@ def native_codex(name):
     return None
 
 
+def codex_version(binary, root):
+    result = subprocess.check_output([binary, "--version"], text=True, env=sparse(root), cwd=root, timeout=10).split()
+    require(len(result) == 2 and result[0] == "codex-cli", "Expected an installed native Codex CLI")
+    return result[1]
+
+
 class Codex:
-    def __init__(self, binary, root, port, tool_text):
+    def __init__(self, binary, version, root, port, tool_text):
         self.binary = binary
+        self.version = version
         self.root = root
         self.tool_text = tool_text
         self.port = port
         self.resume = None
-        env_root = root / "version"
-        env_root.mkdir()
-        result = subprocess.check_output([binary, "--version"], text=True, env=sparse(env_root), timeout=10).split()
-        require(len(result) == 2 and result[0] == "codex-cli", "Expected an installed native Codex CLI")
-        self.version = result[1]
 
     def run(self, index, kind):
         if kind == "resume":

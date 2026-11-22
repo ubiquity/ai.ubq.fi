@@ -48,3 +48,14 @@ records dispatched body sizes and tool counts. Add `--trim` for an end-of-run
 cycle. Select `--scripted --traffic idle`, `auth`, `catalog` or `replay`
 for isolated attribution, using a fresh output directory each time. Omit
 `--traffic` to run the complete scripted mix. [Measurements](../../docs/findings/cppgw-memory-2-20261121.md)
+
+## CI memory budget
+
+Run the same launch with `--check` in place of `--sessions 500`. The fixed
+profile runs 20 sessions, checks health and terminal memory fields, and compares
+ending anonymous RSS and peak RSS to the Release budgets in `measure.py`.
+It preserves the readings in `results.json` when either budget is exceeded.
+Release shard 1 runs the check with the installed native CLI when available.
+The scripted path uses the same state, reply types, tool history and limits
+on images without the CLI. Select it locally by replacing `--codex <path>`
+with `--scripted`. [CI workflow](../../../../.github/workflows/cpp-gateway-ci.yml)

@@ -20,7 +20,7 @@ sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(HERE.parent / "request_path"), str(HERE.parents[1] / "tests/production_smoke"), str(HERE)]
 from cases import synthetic_auth
-from sessions import Codex, Scripted, check_auth, native_codex
+from sessions import Codex, Scripted, check_auth, codex_version, native_codex
 from driver import connection, control, require
 from fixtures import ADMIN_TOKEN, API_TOKEN, encode
 from programmed import MODEL, TOOL_ROUNDS, upstream
@@ -30,6 +30,9 @@ from sampler import gateway_pid, sample, trim, trim_probe
 VERSION = "0.171.0"
 MIX = ("tools", "short", "long", "reasoning", "resume")
 HISTORY = 5000
+CHECK_SESSIONS = 20
+ANONYMOUS_BUDGET_KIB = 26 * 1024
+PEAK_RESIDENT_BUDGET_KIB = 67 * 1024
 REPLAY_KEY = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"  # Fixed synthetic key.
 COUNTS = {
     ("uos_ai", "api_key_usage"): 413_480,
@@ -111,7 +114,7 @@ def seed(args, state, command, environment, mock, auth):
     return inventory(database), exact, {"models": len(public["data"]), "bytes": len(response_body)}
 
 
-def terminals(log, reader, count, pending, failure=False):
+def terminals(log, reader, count, pending, *, failure=False, check_memory=False):
     deadline = time.monotonic() + 10
     while len(pending) < count:
         line = reader.readline()
@@ -130,7 +133,20 @@ def terminals(log, reader, count, pending, failure=False):
         else:
             require(record["status"] == 200 and record["stream_terminal_type"] == "response.completed" and record["total_tokens"] > 0,
                     "Terminal lost HTTP, provider completion or token usage evidence")
+        if check_memory:
+            check_telemetry(record.get("memory"))
         pending.add(identifier)
+
+
+def check_telemetry(memory):
+    require(isinstance(memory, dict), "Memory telemetry is missing")
+    for key in ("resident_bytes", "anonymous_bytes", "allocator_in_use_bytes", "allocator_free_bytes", "allocator_mmap_bytes"):
+        require(type(memory.get(key)) is int and memory[key] >= 0, f"Invalid memory telemetry for {key}")
+    caches = memory.get("caches", {})
+    require(set(("api_key_policy", "codex_catalog", "json_parser", "sqlite_pages", "sqlite_statements")) <= caches.keys(),
+            "The required cache gauges are missing")
+    require(all(type(cache.get(key)) is int and cache[key] >= 0 for cache in caches.values() for key in ("entries", "bytes")),
+            "A cache gauge has an invalid entry count or byte size")
 
 
 def measure(args, state, command, environment, mock):
@@ -154,18 +170,20 @@ def measure(args, state, command, environment, mock):
         started = time.monotonic()
         health = control(port, "/health")
         release = health["release"]
-        codex = Codex(args.codex, state, port, mock.tool_text) if args.codex and args.traffic == "mix" else None
-        if codex:
-            require(codex.version == mock.version, "Codex client and catalog fixture target different versions")
+        profile = json.loads((args.package / "build-profile.json").read_text())
+        require(release["git_sha"] == profile["git_commit"], "Health release differs from the sealed build profile")
+        codex = Codex(args.codex, mock.version, state, port, mock.tool_text) if args.codex else None
         client = codex or Scripted(port, mock.version, mock.tool_text)
         samples = []
         pending = set()
 
         with (args.out / "samples.jsonl").open("w", buffering=1) as samples_log, log.open() as reader:
             def record(index, kind, memory=None):
-                values = sample(pid)
                 if memory is None and "memory" in health:
                     memory = control(port, "/health")["memory"]
+                if args.check:
+                    check_telemetry(memory)
+                values = sample(pid)
                 row = {"session": index, "kind": kind, "requests_served": len(pending), "elapsed_s": round(time.monotonic() - started, 3),
                        **values}
                 if memory is not None:
@@ -189,7 +207,7 @@ def measure(args, state, command, environment, mock):
                     count = TOOL_ROUNDS + 1 if kind == "tools" else 1
                     require(len(mock.calls) == start + count and not mock.failures,
                             f"{kind} session had unexpected mock calls or validation failures")
-                    terminals(log, reader, start + count, pending, kind == "replay")
+                    terminals(log, reader, start + count, pending, failure=kind == "replay", check_memory=args.check)
                 mock.script = None
                 record(index, kind)
             malloc_bytes = trim(probe) if probe else None
@@ -208,6 +226,13 @@ def measure(args, state, command, environment, mock):
 
 
 def main():
+    # CI can test for an installed native executable without running a launcher.
+    if len(sys.argv) == 3 and sys.argv[1] == "--find-codex":
+        binary = native_codex(sys.argv[2])
+        if binary:
+            print(binary)
+        return 0 if binary else 1
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--package", type=Path, required=True)
     parser.add_argument("--seed-state", type=Path, required=True)
@@ -216,16 +241,21 @@ def main():
     client = parser.add_mutually_exclusive_group(required=True)
     client.add_argument("--codex", help="Path to the installed Codex CLI or its native binary")
     client.add_argument("--scripted", action="store_true")
-    parser.add_argument("--version", default=VERSION, help="Exact catalog version for the selected CLI")
-    parser.add_argument("--sessions", type=int, default=1)
+    parser.add_argument("--version", help="Exact catalog version, normally taken from the installed CLI")
+    parser.add_argument("--sessions", type=int)
+    parser.add_argument("--check", action="store_true", help="Enforce anonymous and peak resident budgets for 20 sessions")
     parser.add_argument("--traffic", choices=("mix", "auth", "catalog", "idle", "replay"), default="mix")
     parser.add_argument("--disable-replay", action="store_true")
     profiling = parser.add_mutually_exclusive_group()
     profiling.add_argument("--trim", action="store_true")
     profiling.add_argument("--heaptrack", action="store_true")
     args = parser.parse_args()
-    require(1 <= args.sessions <= 500 and re.fullmatch(r"\d+\.\d+\.\d+", args.version),
-            "Unsupported session count or catalog version")
+    if args.check:
+        require(args.sessions in (None, CHECK_SESSIONS) and args.traffic == "mix" and not (args.trim or args.heaptrack or args.disable_replay),
+                "The budget uses the fixed 20-session mix without allocator probes")
+    if args.sessions is None:
+        args.sessions = CHECK_SESSIONS if args.check else 1
+    require(1 <= args.sessions <= 500, "Unsupported session count")
     require(not (args.traffic == "replay" and args.disable_replay), "Replay control needs a synthetic capture key")
     require(args.traffic == "mix" or args.scripted, "Select the scripted client for isolated attribution")
     namespace = verify_namespace(args.parent_netns)
@@ -239,6 +269,14 @@ def main():
     os.umask(0o077)
     args.out.mkdir(mode=0o700)
     identities = identities_for(args)
+    if args.codex:
+        with tempfile.TemporaryDirectory(prefix="codex-version-", dir=args.out) as version_root:
+            version = codex_version(args.codex, Path(version_root))
+        require(args.version in (None, version), "Codex client and requested catalog version differ")
+        args.version = version
+    else:
+        args.version = args.version or VERSION
+    require(re.fullmatch(r"[0-9]+[.][0-9]+[.][0-9]+", args.version), "Expected an exact Codex version")
     auth = synthetic_auth()
     with tempfile.TemporaryDirectory(prefix="state-", dir=args.out) as temporary, upstream(auth, args.version) as mock:
         state = Path(temporary)
@@ -285,10 +323,23 @@ def main():
                    "sessions": args.sessions, "upstream_calls": dict(Counter(call["kind"] for call in mock.calls)),
                    "upstream_request_bytes": [min(sizes), max(sizes)] if sizes else None,
                    "heaptrack": args.heaptrack, "replay_enabled": not args.disable_replay, **result}
+        if args.check:
+            samples = result["samples_kib"]
+            last = samples[-1]
+            receipt["budget"] = {"after_run_anonymous_kib": max(last["RssAnon"], last["anonymous_kib"]),
+                                 "anonymous_budget_kib": ANONYMOUS_BUDGET_KIB,
+                                 "peak_resident_kib": max(row["VmHWM"] for row in samples),
+                                 "peak_resident_budget_kib": PEAK_RESIDENT_BUDGET_KIB}
         path = args.out / "results.json"
         path.write_text(json.dumps(receipt, indent=2) + "\n")
         print(path, flush=True)
+        if args.check:
+            budget = receipt["budget"]
+            print(f"Anonymous {budget['after_run_anonymous_kib']} / {ANONYMOUS_BUDGET_KIB} KiB, "
+                  f"peak resident {budget['peak_resident_kib']} / {PEAK_RESIDENT_BUDGET_KIB} KiB", flush=True)
+            require(budget["after_run_anonymous_kib"] <= ANONYMOUS_BUDGET_KIB and
+                    budget["peak_resident_kib"] <= PEAK_RESIDENT_BUDGET_KIB, "The gateway exceeded its session memory budget")
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
