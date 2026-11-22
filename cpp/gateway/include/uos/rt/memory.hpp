@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+namespace uos::rt { class Timeout; }
+
 namespace uos::rt::memory {
   enum class Cache {
     api_key_policy,
@@ -71,4 +73,7 @@ namespace uos::rt::memory {
   // The health route uses rollup for precise anonymous RSS. Terminals use
   // the kernel's fast statm counters and never walk the process mappings.
   boost::json::object snapshot(bool useSmaps, boost::json::storage_ptr storage = {});
+
+  // Unreferenced maintenance timer owned by the native serving lifetime.
+  Timeout startHeapReclamation();
 }

@@ -1,4 +1,5 @@
 #include "uos/rt/memory.hpp"
+#include "uos/rt/clock.hpp"
 
 #include <boost/json/array.hpp>
 
@@ -18,6 +19,12 @@
 
 #if defined(__GLIBC__)
 #include <malloc.h>
+#endif
+
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define UOS_MEMORY_ADDRESS_SANITIZED 1
+#endif
 #endif
 
 namespace uos::rt::memory {
@@ -100,6 +107,20 @@ namespace uos::rt::memory {
     boost::json::value valueOrNull(std::optional<std::uint64_t> value) {
       return value ? boost::json::value(*value) : boost::json::value(nullptr);
     }
+
+#if defined(__GLIBC__) && !defined(__SANITIZE_ADDRESS__) && !defined(UOS_MEMORY_ADDRESS_SANITIZED)
+    struct HeapSample {
+      std::optional<std::uint64_t> anonymous;
+      std::size_t inUse;
+      std::size_t free;
+      bool operator==(const HeapSample&) const = default;
+    };
+
+    HeapSample sampleHeap() noexcept {
+      const auto allocator = ::mallinfo2();
+      return {readMemory(false).anonymous, allocator.uordblks + allocator.hblkhd, allocator.fordblks};
+    }
+#endif
   }
 
   void setCache(Cache cache, std::size_t entries, std::size_t bytes) noexcept {
@@ -175,5 +196,25 @@ namespace uos::rt::memory {
     }
     result.emplace("caches", std::move(caches));
     return result;
+  }
+
+  Timeout startHeapReclamation() {
+#if defined(__GLIBC__) && !defined(__SANITIZE_ADDRESS__) && !defined(UOS_MEMORY_ADDRESS_SANITIZED)
+    constexpr std::size_t minimumFree = 8 * 1024 * 1024;
+    constexpr std::size_t residentHeadroom = 5 * 1024 * 1024;
+    // Glibc can discard pages inside free blocks while keeping the blocks in
+    // the arena. Check RSS as well so those blocks do not trigger repeated trims.
+    auto timer = setInterval([last = std::optional<HeapSample>{}]() mutable {
+      const auto current = sampleHeap();
+      if (current.free < minimumFree || current == last ||
+          (current.anonymous && *current.anonymous <= current.inUse + residentHeadroom)) return;
+      (void)::malloc_trim(0);
+      last = sampleHeap();
+    }, 2000);
+    timer.unref();
+    return timer;
+#else
+    return {};
+#endif
   }
 }
