@@ -386,6 +386,11 @@ namespace uos::runtime::permissions_linux {
         const double directoryAccess = rt::fs::statSync(path).isDirectory() ? ((policy.ruleset.handledAccessFs & resolveUnixSocket) != 0 ? 0x10008 : 8) : 0;
         add(path, rt::bitOr(4, directoryAccess));
       }
+      for (const auto& input : permissions.readFilesBelow) {
+        const auto path = canonicalize(input);
+        if (!rt::fs::statSync(path).isDirectory()) throw rt::TypeError("Confinement read-files grant requires a directory");
+        add(path, 4); // LANDLOCK_ACCESS_FS_READ_FILE, without enumeration or socket grants.
+      }
       for (const auto& input : permissions.execute) {
         const auto path = canonicalize(input);
         if (!rt::fs::statSync(path).isFile()) throw rt::TypeError("Executable confinement grant must name a regular file");

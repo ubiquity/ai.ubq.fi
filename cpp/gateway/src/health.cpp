@@ -405,7 +405,9 @@ namespace uos::health {
       const auto expiry = rt::getNumber(auth.meta, "access_token_exp_ms");
       if (expiry && rt::Number::isFinite(*expiry)) remaining = std::max(0.0, *expiry - rt::dateNow());
     } catch (...) {}
-    co_return healthResponse(json::object{{"follower", true}, {"earliest_access_token_expires_in_ms", numberOrNull(remaining)}});
+    json::object upstreamAuth{{"follower", true}, {"earliest_access_token_expires_in_ms", numberOrNull(remaining)}};
+    for (auto& field : codex::auth::leaderAuthHealth()) upstreamAuth.emplace(field.key(), std::move(field.value()));
+    co_return healthResponse(std::move(upstreamAuth));
   }
   rt::Task<rt::Response> handleHealthUpstream() {
     const auto probe = co_await probeUpstreamCoalesced();

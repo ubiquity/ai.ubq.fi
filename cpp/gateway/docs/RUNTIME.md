@@ -130,7 +130,8 @@ the process flags and the environment read by the native build and test tooling.
 | --- | --- | --- |
 | `UOS_GATEWAY_ALLOW_REDUCED_CONFINEMENT` | Unset | Exact value `1` opts in to the available Landlock policy starting at ABI 3. Startup still requires seccomp TSYNC. |
 | `UOS_GATEWAY_ALLOW_NO_LANDLOCK` | Unset | Exact value `1` permits startup with verified service-manager confinement and seccomp TSYNC only when the Landlock ABI query returns `ENOSYS` or `EOPNOTSUPP`. |
-| `UOS_GATEWAY_UPSTREAM_AUTH_FOLLOWER` | Unset | Exact value `1` serves Codex with the copied KV auth pool, refuses online credential refresh and pool writes, and disables the Codex app-server connection and Antigravity. `GET /health` reports follower status and time to the earliest known Codex access-token expiry. |
+| `UOS_GATEWAY_UPSTREAM_AUTH_FOLLOWER` | Unset | Exact value `1` serves Codex with the local KV auth pool, disables credential refresh, admin writes to the auth pool, the Codex app-server connection and Antigravity. |
+| `UOS_GATEWAY_UPSTREAM_AUTH_LEADER_STATE` | Unset | Canonical absolute path to a separate same-host leader state root. Requires `UOS_GATEWAY_UPSTREAM_AUTH_FOLLOWER=1`. The follower can adopt validated Codex logins from the live leader database. [Read access and health fields](#live-codex-login-for-followers) |
 | `UOS_GATEWAY_ENABLE_ANTIGRAVITY` | Unset | Exact value `1` opts in to the owner-installed Antigravity CLI integration and its child-process profile when the CLI passes validation. |
 | `UOS_GATEWAY_ACTIVE_BUILD` | Set by `build.py` (compiler wrapper falls back to its working directory) | Locates the active profile owner and generated test registry. |
 | `UOS_GATEWAY_BUILD_DIR` | Set by the native build owner | Selects the CMake presets' build directory. |
@@ -155,6 +156,18 @@ the process flags and the environment read by the native build and test tooling.
 OpenSSL also reads its standard trust-store environment. The native TLS adapter retains its existing environment
 names for client compatibility. Provider test environments use fresh home and temporary directories, synthetic
 credentials and loopback mocks. [Test isolation](CI.md)
+
+### Live Codex login for followers
+
+The leader can run either gateway implementation on the same host with a marked `bun-jsc-v1` database on a local filesystem. The follower keeps its own initial copy of state. A startup check and later inference requests can adopt newer credentials for matching accounts after the same account-bound Codex usage check as the stopped import. Requests trigger another check when a bearer enters the two-minute JWT renewal margin or when Codex rejects it. Concurrent checks share one attempt and starts are at least five seconds apart. New logins are saved in the follower's auth pool. Account membership, slot order, quotas, API keys and other KV records stay with the follower. The leader handles OAuth renewal.
+
+The follower's service user needs directory traversal and read access to the leader's `.data/kv-bun.sqlite3`, `kv-bun.sqlite3-wal` and `kv-bun.sqlite3-shm`. In Landlock mode the grant is read-file access below the leader's `.data` directory. File grants bind to inodes, and SQLite can recreate either sidecar when the leader restarts. The directory grant follows new files there without permitting enumeration or writes. Keep the directory inode in place across leader restarts. If the directory itself was absent when the follower started or was replaced, restart the follower after it is available. [Confinement limits](SECURITY-LIMITS.md#live-leader-state)
+
+Pinned SQLite 3.54.0 uses `mode=ro` for the main file. Its Unix VFS normally tries opening or creating the WAL read-write and can try the same for shared memory. The live reader forces read-only opens for the main file and WAL and uses `readonly_shm=1` for a read-only shared-memory mapping. Directory write permission is unnecessary. The reader issues a single indexed SELECT and closes the connection before validation. Its busy timeout is five milliseconds and the WAL lock path also stops retrying after a ten-millisecond budget. It prohibits file creation, delete operations and checkpoint-on-close, and rejects a WAL index that would require recovery. The `immutable=1` option would ignore live WAL changes and is reserved for the stopped import.
+
+A clean checkpointed database can be read after the leader closes and removes both sidecars. While a WAL exists, the follower needs a readable WAL and an initialized, readable shared-memory index. A missing or unreadable sidecar, a stale index left by an interrupted writer, or a leader requiring exclusive WAL access can prevent a safe read. The follower keeps its last saved login, and a later inference request can try again. A login still within its JWT lifetime can serve during the renewal margin unless Codex rejects it.
+
+On a configured follower, `GET /health` adds `upstream_auth.leader_state`, `leader_last_success_age_ms` and `leader_last_read_outcome`. The age measures time since the last completed `ok` or `unchanged` check and is `null` before the first success. `ok` means the follower saved a validated replacement. `unchanged` means the checked pool offered no newer matching credential. Other outcomes are `busy`, `unreadable` and `invalid`. The existing `earliest_access_token_expires_in_ms` is the time to the earliest known local expiry, `0` for an expired token or `null` when expiry is unavailable. [Same-host setup and cutover](CUTOVER.md#running-side-by-side-on-one-host)
 
 ### Enable the Gemini subscription
 

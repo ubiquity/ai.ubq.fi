@@ -30,6 +30,13 @@
 #include <stdexcept>
 #include <unordered_map>
 
+#if defined(__linux__) && defined(UOS_GATEWAY_NATIVE_LIBRARIES)
+#include "uos/rt/url.hpp"
+#include <chrono>
+#include <unistd.h>
+#include <new>
+#endif
+
 namespace uos::rt::sqlite {
   namespace {
     // Primary builds use the installed C declarations; the SDK comparison has no headers.
@@ -665,7 +672,67 @@ namespace uos::rt::sqlite {
 
     // ---- databases ---------------------------------------------------------------------------
 
-    std::shared_ptr<Database::Impl> openDatabase(std::string filename, int flags, bool strict, bool safeIntegers, std::string property) {
+#if defined(__linux__) && defined(UOS_GATEWAY_NATIVE_LIBRARIES)
+    struct LiveReadMethods {
+      sqlite3_io_methods methods;
+      const sqlite3_io_methods* original;
+      std::chrono::steady_clock::time_point lockDeadline;
+    };
+
+    const char* liveReadVfs() {
+      static sqlite3_vfs* registered = []() -> sqlite3_vfs* {
+        static auto* const parent = ::sqlite3_vfs_find("unix");
+        if (!parent) return nullptr;
+        static sqlite3_vfs vfs = *parent;
+        vfs.pNext = nullptr;
+        vfs.zName = "uos-live-readonly";
+        // Reserve aligned per-file storage for a copy of the unix I/O methods.
+        constexpr auto alignment = static_cast<int>(alignof(LiveReadMethods));
+        vfs.szOsFile = (parent->szOsFile + alignment - 1) / alignment * alignment + static_cast<int>(sizeof(LiveReadMethods));
+        vfs.xOpen = [](sqlite3_vfs* vfsIn, const char* name, sqlite3_file* file, int flags, int* outputFlags) {
+          if ((flags & (SQLITE_OPEN_MAIN_DB | SQLITE_OPEN_WAL)) == 0) return SQLITE_CANTOPEN;
+          flags &= ~(constants::SQLITE_OPEN_READWRITE | constants::SQLITE_OPEN_CREATE | SQLITE_OPEN_EXCLUSIVE | SQLITE_OPEN_DELETEONCLOSE);
+          flags |= constants::SQLITE_OPEN_READONLY;
+          const auto rc = parent->xOpen(vfsIn, name, file, flags, outputFlags);
+          if (rc == SQLITE_OK && (flags & SQLITE_OPEN_MAIN_DB) != 0 && file->pMethods->xShmMap) {
+            auto* storage = reinterpret_cast<char*>(file) + vfsIn->szOsFile - sizeof(LiveReadMethods);
+            auto* methods = new (storage) LiveReadMethods{*file->pMethods, file->pMethods,
+              std::chrono::steady_clock::now() + std::chrono::milliseconds(10)};
+            methods->methods.xShmMap = [](sqlite3_file* main, int page, int size, int, void volatile** region) {
+              const auto* current = reinterpret_cast<const LiveReadMethods*>(main->pMethods);
+              if (std::chrono::steady_clock::now() >= current->lockDeadline) return SQLITE_BUSY_TIMEOUT;
+              const int result = current->original->xShmMap(main, page, size, 0, region);
+              // An orphaned WAL index can otherwise trigger a full private WAL recovery.
+              if (result == SQLITE_READONLY_CANTINIT) return SQLITE_READONLY_RECOVERY;
+              return result == SQLITE_OK ? SQLITE_READONLY : result;
+            };
+            methods->methods.xShmLock = [](sqlite3_file* main, int offset, int count, int mode) {
+              const auto* current = reinterpret_cast<const LiveReadMethods*>(main->pMethods);
+              if ((mode & SQLITE_SHM_LOCK) != 0) {
+                if ((mode & SQLITE_SHM_EXCLUSIVE) != 0) return SQLITE_READONLY;
+                // Internal WAL retry sleeps can outlive the normal busy handler.
+                if (std::chrono::steady_clock::now() >= current->lockDeadline) return SQLITE_BUSY_TIMEOUT;
+              }
+              return current->original->xShmLock(main, offset, count, mode);
+            };
+            methods->methods.xShmUnmap = [](sqlite3_file* main, int) {
+              const auto* current = reinterpret_cast<const LiveReadMethods*>(main->pMethods);
+              return current->original->xShmUnmap(main, 0);
+            };
+            file->pMethods = &methods->methods;
+          }
+          return rc;
+        };
+        vfs.xDelete = [](sqlite3_vfs*, const char*, int) { return SQLITE_READONLY; };
+        return ::sqlite3_vfs_register(&vfs, 0) == SQLITE_OK ? &vfs : nullptr;
+      }();
+      if (!registered) throw SQLiteError("Live read-only SQLite VFS is unavailable", "SQLITE_CANTOPEN", 14, -1);
+      return registered->zName;
+    }
+#endif
+
+    std::shared_ptr<Database::Impl> openDatabase(std::string filename, int flags, bool strict, bool safeIntegers, std::string property,
+                                                 const char* vfs = nullptr) {
       const bool anonymous = filename.empty() || filename == ":memory:";
       if (anonymous && (flags & constants::SQLITE_OPEN_READONLY) != 0) throw JsError("Cannot open an anonymous database in read-only mode.");
       const Api& sqlite = api();
@@ -677,9 +744,9 @@ namespace uos::rt::sqlite {
 #endif
       Connection3* handle = nullptr;
 #if defined(__APPLE__)
-      const int status = sqlite.open_v2(path.c_str(), &handle, flags, readonly ? detail::darwinReadonlyVfs(sqlite) : nullptr);
+      const int status = sqlite.open_v2(path.c_str(), &handle, flags, readonly ? detail::darwinReadonlyVfs(sqlite) : vfs);
 #else
-      const int status = sqlite.open_v2(path.c_str(), &handle, flags, nullptr);
+      const int status = sqlite.open_v2(path.c_str(), &handle, flags, vfs);
 #endif
       if (status != SQLITE_OK) {
         if (!handle) throw SQLiteError(fromSqlite(sqlite.errstr(status)), resultCodeName(status), status, -1);
@@ -933,6 +1000,28 @@ namespace uos::rt::sqlite {
   Database::Database(std::string_view filename, int flags) : impl(nullptr) {
     std::string trimmed = trim(filename);
     impl = openDatabase(trimmed, flags, false, false, trimmed);
+  }
+
+  Database Database::openLiveReadOnly(std::string_view absolutePath) {
+#if defined(__linux__) && defined(UOS_GATEWAY_NATIVE_LIBRARIES)
+    // The Unix VFS may fchown a shared-memory descriptor when run as root.
+    if (::geteuid() == 0 || !absolutePath.starts_with('/'))
+      throw JsError("Live read-only SQLite requires an absolute path and an unprivileged caller.");
+    auto uri = pathToFileURL(absolutePath);
+    uri.searchParams().set("mode", "ro");
+    uri.searchParams().set("readonly_shm", "1");
+    auto database = openDatabase(uri.href(), constants::SQLITE_OPEN_READONLY | SQLITE_OPEN_URI | SQLITE_OPEN_NOFOLLOW,
+                                 false, true, std::string(absolutePath), liveReadVfs());
+    auto* handle = database->connection->handle;
+    if (::sqlite3_db_config(handle, SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, 1, nullptr) != SQLITE_OK ||
+        ::sqlite3_db_config(handle, SQLITE_DBCONFIG_TRUSTED_SCHEMA, 0, nullptr) != SQLITE_OK ||
+        ::sqlite3_busy_timeout(handle, 5) != SQLITE_OK)
+      throw JsError("Live read-only SQLite connection could not be configured.");
+    return Database(std::move(database));
+#else
+    (void)absolutePath;
+    throw JsError("Live read-only SQLite requires the native Linux SQLite build.");
+#endif
   }
 
   const std::string& Database::filename() const { return impl->filename; }

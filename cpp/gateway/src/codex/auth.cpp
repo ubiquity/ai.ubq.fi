@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <array>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 
@@ -51,6 +52,30 @@ namespace uos::codex::auth {
     rt::WeakMap<rt::Response, std::string> codexAccountIdByResponse;
     rt::WeakMap<rt::Response, CodexResponseActiveTelemetry> codexActiveTelemetryByResponse;
     rt::WeakSet<rt::Response> codexTerminalOutcomeByResponse;
+
+    struct LeaderAuthState {
+      auth::LeaderAuthReader reader;
+      double nextReadAt = 0;
+      std::optional<double> lastSuccessAt;
+      std::optional<LeaderReadOutcome> lastOutcome;
+      std::optional<rt::Promise<bool>> inFlight;
+      std::unordered_map<std::string, std::string> rejectedAccess;
+      bool stopping = false;
+    };
+    std::shared_ptr<LeaderAuthState> leaderAuth;
+    constexpr double LEADER_AUTH_READ_INTERVAL_MS = 5'000;
+
+    rt::Task<bool> readLeaderAuth(std::shared_ptr<LeaderAuthState> state) {
+      auto result = LeaderReadOutcome::unreadable;
+      try {
+        auto reading = state->reader();
+        result = co_await std::move(reading);
+      } catch (...) {}
+      state->lastOutcome = result;
+      if (result == LeaderReadOutcome::ok || result == LeaderReadOutcome::unchanged)
+        state->lastSuccessAt = rt::performanceNow();
+      co_return result == LeaderReadOutcome::ok;
+    }
 
     struct SemverTriplet {
       double major;
@@ -683,6 +708,84 @@ namespace uos::codex::auth {
     }
     rt::memory::setCache(rt::memory::Cache::codex_auth_pool, pool.accounts.size(), size);
     cachedAuthPoolExpiresAtMs = rt::dateNow() + CODEX_AUTH_CACHE_TTL_MS;
+  }
+
+  void setLeaderAuthReader(LeaderAuthReader reader) {
+    leaderAuth.reset();
+    if (reader) {
+      leaderAuth = std::make_shared<LeaderAuthState>();
+      leaderAuth->reader = std::move(reader);
+    }
+  }
+
+  bool hasLeaderAuthReader() { return static_cast<bool>(leaderAuth); }
+
+  json::object leaderAuthHealth() {
+    if (!leaderAuth) return {};
+    constexpr std::array outcomes{"ok", "busy", "unreadable", "invalid", "unchanged"};
+    const auto& state = *leaderAuth;
+    return {{"leader_state", true},
+            {"leader_last_success_age_ms", state.lastSuccessAt ? json::value(rt::performanceNow() - *state.lastSuccessAt) : json::value(nullptr)},
+            {"leader_last_read_outcome", state.lastOutcome ? json::value(outcomes.at(static_cast<std::size_t>(*state.lastOutcome))) : json::value(nullptr)}};
+  }
+
+  rt::Task<bool> checkLeaderAuth() {
+    const auto state = leaderAuth;
+    if (!state || state->stopping) co_return false;
+    if (!state->inFlight) {
+      const double now = rt::performanceNow();
+      if (now < state->nextReadAt) co_return false;
+      state->nextReadAt = now + LEADER_AUTH_READ_INTERVAL_MS;
+      const rt::Promise<bool> reading(readLeaderAuth(state));
+      state->inFlight = reading.finally_([state] { state->inFlight.reset(); });
+    }
+    const auto reading = *state->inFlight;
+    const bool adopted = co_await reading.wait();
+    co_return adopted;
+  }
+
+  rt::Task<void> drainLeaderAuth() {
+    const auto state = leaderAuth;
+    if (!state) co_return;
+    state->stopping = true;
+    if (state->inFlight) {
+      const auto reading = *state->inFlight;
+      co_await reading.wait();
+    }
+  }
+
+  bool shouldCheckLeaderAuth(const CodexAuthPoolState& pool) {
+    if (!leaderAuth) return false;
+    auto& rejected = leaderAuth->rejectedAccess;
+    std::erase_if(rejected, [&pool](const auto& entry) {
+      return std::none_of(pool.accounts.begin(), pool.accounts.end(), [&entry](const auto& account) {
+        return account.account_id == entry.first && account.access_token == entry.second;
+      });
+    });
+    return !rejected.empty() || std::any_of(pool.accounts.begin(), pool.accounts.end(), needsRefresh);
+  }
+
+  bool leaderAuthHasFencedCredential() {
+    if (!leaderAuth) return false;
+    const auto state = routing_state::getCachedRoutingState();
+    return state && std::any_of(state->slots.begin(), state->slots.end(), [](const auto& slot) {
+      return slot.invalid_credential_version == slot.credential_version;
+    });
+  }
+
+  rt::Task<CodexAuthState> useLeaderCredential(CodexAuthState current, bool rejected) {
+    const auto state = leaderAuth;
+    if (!state) throw CodexAuthFollowerStaleError();
+    if (rejected) state->rejectedAccess.insert_or_assign(current.account_id, current.access_token);
+    co_await checkLeaderAuth();
+    if (cachedAuthPool) {
+      const auto account = std::find_if(cachedAuthPool->accounts.begin(), cachedAuthPool->accounts.end(),
+        [&current](const auto& entry) { return entry.account_id == current.account_id; });
+      if (account != cachedAuthPool->accounts.end() && account->access_token != current.access_token && !accessTokenExpired(*account))
+        co_return *account;
+    }
+    if (rejected || accessTokenExpired(current)) throw CodexAuthFollowerStaleError();
+    co_return current;
   }
 
   void resetCodexAuthCacheForTest() {

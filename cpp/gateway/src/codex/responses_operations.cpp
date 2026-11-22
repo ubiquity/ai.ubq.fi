@@ -873,14 +873,19 @@ namespace uos::codex::responses_operations {
 
     // `trigger: "401" | "proactive"`
     rt::Task<CodexCredentialAttempt> refreshAfter401(Context ctx, RoutingAccount routing, CodexAuthState auth, std::string trigger) {
-      ctx->refreshedSlots.add(routing.slot);
+      const bool liveFollower = auth::hasLeaderAuthReader();
+      if (!liveFollower || trigger == "401") ctx->refreshedSlots.add(routing.slot);
       rt::Reason failure;
       try {
         const auth::CodexAuthAccountEntry current = accountEntryOf(ctx->poolEntry, auth, routing);
         const rt::Promise<CodexAuthState> refreshing = trigger == "proactive" ? rt::Promise<CodexAuthState>(auth_refresh::getValidAuth(current))
                                                                                : rt::Promise<CodexAuthState>(auth_refresh::refreshAuthCoordinated(current));
-        rt::Promise<CodexAuthState> awaiting(auth_refresh::awaitWithoutCancellingSharedWork(refreshing, ctx->options.signal));
+        rt::Promise<CodexAuthState> awaiting = liveFollower ? refreshing
+          : rt::Promise<CodexAuthState>(auth_refresh::awaitWithoutCancellingSharedWork(refreshing, ctx->options.signal));
         const CodexAuthState refreshed = co_await awaiting.wait();
+        if (liveFollower && auth_refresh::sameCodexCredentials(auth, refreshed))
+          co_return CodexCredentialAttempt{.auth = refreshed, .routing = routing};
+        if (liveFollower) ctx->refreshedSlots.add(routing.slot);
         rt::Promise<RoutingAccount> reconciling(routing_mutations::reconcileCodexRoutingAccount(routing, refreshed));
         const RoutingAccount reconciled = co_await reconciling.wait();
         dispatch::logCodexRouting("codex_token_refresh", tokenRefreshFields(*ctx, routing, trigger, "succeeded", "2xx"));

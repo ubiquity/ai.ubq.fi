@@ -17,14 +17,32 @@ namespace uos::codex::responses_state {
     co_await settling.wait();
     const auto requestedModel = dispatch::requestedCodexModel(prepared->body);
     rt::Promise<auth::CodexAuthPoolEntry> loading(auth::getAuthPoolEntry(true, true));
-    const auth::CodexAuthPoolEntry poolEntry = co_await loading.wait();
+    auth::CodexAuthPoolEntry poolEntry = co_await loading.wait();
+    const bool checkLeader = auth::shouldCheckLeaderAuth(poolEntry.pool);
+    if (checkLeader) {
+      const bool adopted = co_await auth::checkLeaderAuth();
+      if (adopted) {
+        auto rereading = auth::getAuthPoolEntry(true, true);
+        poolEntry = co_await std::move(rereading);
+      }
+    }
     // Refresh the per-account overage switch once per request so the synchronous
     // routing evaluation reads a bounded, current value.
     rt::Promise<void> overage(overage_settings::loadOverageUsageSettings(poolEntry.pool));
     co_await overage.wait();
     rt::Promise<routing_state::RouteSelection> selecting(
       account_routing::selectCodexRoutingAccountsStrong(poolEntry.pool, poolEntry.pool.accounts, rt::dateNow(), requestedModel));
-    const routing_state::RouteSelection selected = co_await selecting.wait();
+    routing_state::RouteSelection selected = co_await selecting.wait();
+    if (!checkLeader && auth::leaderAuthHasFencedCredential()) {
+      // A previous follower process may already have fenced the old bearer.
+      const bool adopted = co_await auth::checkLeaderAuth();
+      if (adopted) {
+        auto rereading = auth::getAuthPoolEntry(true, true);
+        poolEntry = co_await std::move(rereading);
+        auto reselecting = account_routing::selectCodexRoutingAccountsStrong(poolEntry.pool, poolEntry.pool.accounts, rt::dateNow(), requestedModel);
+        selected = co_await std::move(reselecting);
+      }
+    }
     // Current-invalid pools use the same fresh complete proof as mixed pools
     // before they may authorize paid fallback.
     const std::optional<rt::Response> terminalSelection =

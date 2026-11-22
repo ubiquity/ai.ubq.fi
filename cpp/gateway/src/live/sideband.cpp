@@ -134,6 +134,11 @@ namespace uos::live::sideband {
       state->upstream->on("close", [state](const ws::EventArgs& event) { finish(state, event.code, rt::decodeUtf8(event.reason)); });
       state->upstream->on("error", [state] { finish(state, SIDEBAND_FAILURE_CLOSE_CODE, "realtime upstream error"); });
       state->upstream->on("unexpected-response", [state](const ws::EventArgs& event) {
+        if (!state->settled && event.response && event.response->statusCode == 401 && codex::auth::hasLeaderAuthReader()) {
+          const rt::Promise<bool> reading(codex::auth::checkLeaderAuth());
+          finish(state, SIDEBAND_FAILURE_CLOSE_CODE, "realtime upstream rejected the sideband", reading.then([](bool) {}));
+          return;
+        }
         if (event.response && (event.response->statusCode == 404 || event.response->statusCode == 410)) {
           rt::Promise<void> retirement(upstream::retireLiveCallMapping(state->callId));
           finish(state, SIDEBAND_FAILURE_CLOSE_CODE, "realtime upstream rejected the sideband", retirement); return;

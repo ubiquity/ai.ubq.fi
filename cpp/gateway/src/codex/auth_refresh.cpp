@@ -459,6 +459,11 @@ namespace uos::codex::auth_refresh {
    * contains only a hash-derived slot key and an opaque owner token.
    */
   rt::Task<CodexAuthState> refreshAuthCoordinated(auth::CodexAuthAccountEntry input) {
+    if (auth::hasLeaderAuthReader()) {
+      auto reading = auth::useLeaderCredential(std::move(input.auth), true);
+      const auto adopted = co_await std::move(reading);
+      co_return adopted;
+    }
     auth::requireCodexAuthRefreshAllowed();
     rt::Promise<std::optional<CodexAuthState>> nativeRefresh(native_auth::refreshNativeCodexAuthIfOwned(input.auth));
     const std::optional<CodexAuthState> native = co_await nativeRefresh.wait();
@@ -603,6 +608,11 @@ namespace uos::codex::auth_refresh {
 
   rt::Task<CodexAuthState> getValidAuth(auth::CodexAuthAccountEntry current) {
     if (!auth::needsRefresh(current.auth)) co_return current.auth;
+    if (auth::hasLeaderAuthReader()) {
+      auto reading = auth::useLeaderCredential(std::move(current.auth), false);
+      const auto adopted = co_await std::move(reading);
+      co_return adopted;
+    }
     auth::requireCodexAuthRefreshAllowed();
 
     if (const rt::Promise<CodexAuthState>* existing = auth::refreshesInFlight.get(current.auth.account_id)) {
