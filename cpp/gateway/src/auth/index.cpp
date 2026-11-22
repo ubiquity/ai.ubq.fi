@@ -1,5 +1,6 @@
 // Port of src/auth/index.ts.
 #include "uos/auth/index.hpp"
+#include "uos/rt/memory.hpp"
 
 #include "uos/api_key_policy.hpp"
 #include "uos/api_keys.hpp"
@@ -185,7 +186,10 @@ namespace uos::auth::index {
       const std::string repo = verified.repo;
       const std::string stateId = verified.stateId;
       if (!verified.cacheHit) {
-        githubTokenCache()[verified.cacheKey] = rt::dateNow() + GITHUB_TOKEN_CACHE_TTL_MS;
+        auto& cache = githubTokenCache();
+        cache[verified.cacheKey] = rt::dateNow() + GITHUB_TOKEN_CACHE_TTL_MS;
+        rt::memory::setCache(rt::memory::Cache::github_auth, cache.size(),
+                             cache.size() * (sizeof(std::pair<const std::string, double>) + verified.cacheKey.size() + 1));
       }
       const kernel::quota_v2::KernelQuotaPolicyStateDecision policyState = co_await kernel::usage::resolveKernelQuotaPolicyState(owner, repo);
       if (const auto* notOk = std::get_if<kernel::quota_v2::KernelQuotaPolicyStateDecisionNotOk>(&policyState)) {
@@ -631,7 +635,12 @@ namespace uos::auth::index {
         co_return DeployTokenVerification{.ok = false, .response = http::openaiError(502, "Failed to verify admin token", "bad_gateway")};
       }
       if (!ok) co_return DeployTokenVerification{.ok = false, .response = std::nullopt};
-      if (keyHash && !keyHash->empty()) deployTokenAdminCache()[*keyHash] = rt::dateNow() + DEPLOY_TOKEN_ADMIN_CACHE_TTL_MS;
+      if (keyHash && !keyHash->empty()) {
+        auto& cache = deployTokenAdminCache();
+        cache[*keyHash] = rt::dateNow() + DEPLOY_TOKEN_ADMIN_CACHE_TTL_MS;
+        rt::memory::setCache(rt::memory::Cache::deploy_admin_auth, cache.size(),
+                             cache.size() * (sizeof(std::pair<const std::string, double>) + keyHash->size() + 1));
+      }
       co_return DeployTokenVerification{.ok = true};
     }
 

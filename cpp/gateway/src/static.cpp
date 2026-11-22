@@ -1,4 +1,5 @@
 #include "uos/static.hpp"
+#include "uos/rt/memory.hpp"
 
 #include "uos/config.hpp"
 #include "uos/http.hpp"
@@ -59,6 +60,7 @@ namespace uos::static_ {
       rt::OrderedMap<std::string, std::shared_ptr<const StaticAsset>> staticAssets;
       std::shared_ptr<const StaticAsset> indexHtmlAsset;
       std::shared_ptr<const StaticAsset> indexMarkdownAsset;
+      std::size_t assetBytes = 0;
 
       StaticModule()
         : aboutHtmlText(readResourceText("static/about.html")),
@@ -120,10 +122,22 @@ namespace uos::static_ {
 
         bytesAsset({"/favicon.ico", "/favicon.png"}, "favicon.png", "image/png");
         bytesAsset({"/favicon-32.png"}, "favicon-32.png", "image/png");
+        for (const auto* text : {&aboutHtmlText, &contactHtmlText, &developersHtmlText, &homeMarkdownText, &indexHtmlText,
+                                &llmsFullText, &llmsText, &modelsHtmlText, &openApiText, &privacyHtmlText, &robotsText, &sitemapText})
+          assetBytes += rt::memory::bytes(*text);
+        rt::memory::setCache(rt::memory::Cache::static_assets, staticAssets.size(), assetBytes);
       }
 
       std::shared_ptr<const StaticAsset> registerAsset(const std::vector<std::string>& routes, std::shared_ptr<const StaticAsset> asset) {
-        for (const std::string& route : routes) staticAssets.set(route, asset);
+        assetBytes += sizeof(StaticAsset) + rt::memory::bytes(asset->path) + rt::memory::bytes(asset->label) +
+                      rt::memory::bytes(asset->contentType) + rt::memory::bytes(asset->readAs) + rt::memory::bytes(asset->security);
+        if (asset->body) {
+          if (const auto* text = std::get_if<std::string>(&*asset->body)) assetBytes += rt::memory::bytes(*text);
+        }
+        for (const std::string& route : routes) {
+          staticAssets.set(route, asset);
+          assetBytes += 2 * (sizeof(route) + rt::memory::bytes(route));
+        }
         return asset;
       }
 

@@ -4,6 +4,7 @@
 // banked-reset redemption. The default is false: resets first and no overage
 // spend, even when no redemption is currently available.
 #include "uos/codex/overage_settings.hpp"
+#include "uos/rt/memory.hpp"
 
 #include "uos/codex/capacity_routing.hpp"
 #include "uos/kv.hpp"
@@ -88,7 +89,10 @@ namespace uos::codex::overage_settings {
       std::unordered_set<std::string> allowed;
       for (const OverageRow& row : rows)
         if (row.allow) allowed.insert(row.routingHash);
+      std::size_t bytes = 0;
+      for (const auto& hash : allowed) bytes += sizeof(hash) + rt::memory::bytes(hash);
       allowedRoutingHashes = std::move(allowed);
+      rt::memory::setCache(rt::memory::Cache::codex_overage, allowedRoutingHashes.size(), bytes);
       cacheLoadedAtMs = now;
     } catch (...) {
       // Keep the previous cache so an unreadable KV cannot silently disable a

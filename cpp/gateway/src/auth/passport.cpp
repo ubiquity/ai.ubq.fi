@@ -1,4 +1,5 @@
 #include "uos/auth/passport.hpp"
+#include "uos/rt/memory.hpp"
 
 #include "uos/auth/passport_sessions.hpp"
 #include "uos/http.hpp"
@@ -188,6 +189,7 @@ namespace uos::auth::passport {
         const json::array* keyList = rt::getArray(rt::get(body, "keys"));
         if (!utils::isRecord(body) || !keyList || keyList->empty()) throw PassportError(502);
         rt::OrderedMap<std::string, rt::crypto::CryptoKey> keys;
+        std::size_t keyBytes = 0;
         for (const json::value& value : *keyList) {
           if (!isRsaSigningKey(value)) continue;
           const std::optional<std::string_view> keyId = rt::getString(rt::get(value, "kid"));
@@ -207,9 +209,11 @@ namespace uos::auth::passport {
             rt::crypto::subtle::importKey("jwk", jwk, rt::crypto::Algorithm{.name = "RSASSA-PKCS1-v1_5", .hash = "SHA-256"}, false, {"verify"});
           co_await rt::microtask();
           keys.set(std::string(*keyId), key);
+          keyBytes += sizeof(rt::crypto::CryptoKey) + modulusBytes + 8 + 2 * (keyId->size() + 1);
         }
         if (keys.size() == 0) throw PassportError(502);
         jwksCache = JwksCache{.expiresAt = rt::dateNow() + JWKS_TTL_MS, .keys = keys};
+        rt::memory::setCache(rt::memory::Cache::passport_jwks, keys.size(), keyBytes);
         loaded = std::move(keys);
       } catch (...) {
         loaded = std::nullopt;
@@ -430,7 +434,10 @@ namespace uos::auth::passport {
     return {.principal = in.required<std::string>("principal"), .user = in.required<PassportAuthMethod::User>("user")};
   }
 
-  void resetPassportCacheForTest() { jwksCache = std::nullopt; }
+  void resetPassportCacheForTest() {
+    jwksCache = std::nullopt;
+    rt::memory::setCache(rt::memory::Cache::passport_jwks, 0, 0);
+  }
 
   rt::Response renewPassportSessionCookie(const rt::Request& req, rt::Response response) {
     const std::optional<std::string> token = cookie(req, SESSION_COOKIE);

@@ -1,4 +1,5 @@
 #include "uos/provider/selection.hpp"
+#include "uos/rt/memory.hpp"
 
 #include "uos/kv.hpp"
 #include "uos/provider/presentation.hpp"
@@ -43,6 +44,13 @@ namespace uos::provider::selection {
       double expires_at_ms;
     };
     std::optional<CachedSelection> cachedSelection;
+    std::size_t subscriptionHashBytes = 0;
+
+    void cacheSelection(std::optional<ProviderSelection> value, double expires) {
+      const auto bytes = value ? sizeof(CachedSelection) + rt::memory::bytes(json::value_from(*value)) : 0;
+      rt::memory::setCache(rt::memory::Cache::provider_selection, value ? 1 : 0, bytes);
+      cachedSelection = CachedSelection{std::move(value), expires};
+    }
     std::optional<rt::Promise<std::optional<ProviderSelection>>> selectionLoadInFlight;
     /** Invalidates a read that began before a successful write primed the cache. */
     double selectionCacheGeneration = 0;
@@ -91,7 +99,7 @@ namespace uos::provider::selection {
         rt::Promise<std::optional<ProviderSelection>> loading(loadProviderSelection(kv));
         std::optional<ProviderSelection> value = co_await loading.wait();
         if (selectionCacheGeneration == cacheGenerationAtLoad) {
-          cachedSelection = CachedSelection{.value = value, .expires_at_ms = nowMs + PROVIDER_SELECTION_CACHE_TTL_MS};
+          cacheSelection(value, nowMs + PROVIDER_SELECTION_CACHE_TTL_MS);
         }
         result = std::move(value);
       } catch (...) {
@@ -105,7 +113,10 @@ namespace uos::provider::selection {
     if (const auto cached = subscriptionHashCache().find(accountId); cached != subscriptionHashCache().end()) co_return cached->second;
     rt::Promise<std::string> hashing(utils::sha256Hex(accountId));
     std::string hash = co_await hashing.wait();
-    subscriptionHashCache().insert_or_assign(accountId, hash);
+    auto& cache = subscriptionHashCache();
+    if (cache.try_emplace(accountId, hash).second)
+      subscriptionHashBytes += sizeof(std::pair<const std::string, std::string>) + rt::memory::bytes(accountId) + rt::memory::bytes(hash);
+    rt::memory::setCache(rt::memory::Cache::subscription_hashes, cache.size(), subscriptionHashBytes);
     co_return hash;
   }
 
@@ -202,7 +213,7 @@ namespace uos::provider::selection {
     selectionCacheGeneration += 1;
     selectionLoadToken += 1;
     selectionLoadInFlight.reset();
-    cachedSelection = CachedSelection{.value = selection, .expires_at_ms = selection.updated_at_ms + PROVIDER_SELECTION_CACHE_TTL_MS};
+    cacheSelection(selection, selection.updated_at_ms + PROVIDER_SELECTION_CACHE_TTL_MS);
     co_return selection;
   }
 
@@ -283,6 +294,7 @@ namespace uos::provider::selection {
     selectionCacheGeneration += 1;
     selectionLoadToken += 1;
     cachedSelection.reset();
+    rt::memory::setCache(rt::memory::Cache::provider_selection, 0, 0);
     selectionLoadInFlight.reset();
   }
 

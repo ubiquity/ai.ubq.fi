@@ -1,4 +1,5 @@
 #include "uos/catalog/store.hpp"
+#include "uos/rt/memory.hpp"
 
 #include "uos/models/codex_models.hpp"
 #include "uos/models/openrouter_models.hpp"
@@ -36,37 +37,64 @@ namespace uos::catalog::store {
 
     constexpr double NaN = std::numeric_limits<double>::quiet_NaN();
 
-    rt::OrderedMap<std::string, Catalog>& catalogMemo() {
-      static rt::OrderedMap<std::string, Catalog> memo;
+    struct CatalogMemoEntry {
+      Catalog catalog;
+      std::size_t bytes;
+    };
+
+    rt::OrderedMap<std::string, CatalogMemoEntry>& catalogMemo() {
+      static rt::OrderedMap<std::string, CatalogMemoEntry> memo;
       return memo;
     }
+
+    std::size_t memoBodyBytes = 0;
+    std::size_t memoBytes = 0;
 
     std::string catalogMemoKey(const CodexCatalogMetadata& metadata) {
       return metadata.client_version + ":" + metadata.auth_generation + ":" + metadata.body_generation;
     }
 
+    void eraseCatalogMemoEntry(const std::string& key, const CatalogMemoEntry& entry) {
+      memoBodyBytes -= entry.catalog->body.size();
+      memoBytes -= entry.bytes;
+      catalogMemo().delete_(key);
+    }
+
+    void publishMemoMemory() {
+      rt::memory::setCache(rt::memory::Cache::codex_catalog, catalogMemo().size(), memoBytes);
+    }
+
     void deleteCatalogMemoVersion(const std::string& version) {
-      auto& memo = catalogMemo();
-      for (const auto& [key, catalog] : memo) {
-        if (catalog->metadata.client_version == version) memo.delete_(key);
+      for (const auto& [key, entry] : catalogMemo()) {
+        if (entry.catalog->metadata.client_version == version) eraseCatalogMemoEntry(key, entry);
       }
+      publishMemoMemory();
     }
 
     void memoizeCatalog(Catalog catalog) {
       auto& memo = catalogMemo();
       const std::string key = catalogMemoKey(catalog->metadata);
-      // Map insertion order is the LRU order. Reinsert hits and replacements so
-      // the first entry is always the least recently used catalog.
-      memo.delete_(key);
-      if (catalog->body.size() > types::CODEX_CATALOG_MEMO_BODY_BYTES) return;
-      memo.set(key, std::move(catalog));
-      std::size_t bodyBytes = 0;
-      for (const auto& entry : memo.values()) bodyBytes += entry->body.size();
-      while (static_cast<double>(memo.size()) > types::CODEX_CATALOG_MAX_VERSIONS || bodyBytes > types::CODEX_CATALOG_MEMO_BODY_BYTES) {
-        const auto oldest = memo.begin();
-        bodyBytes -= oldest->second->body.size();
-        memo.delete_(oldest->first);
+      // Reinsert hits and replacements so the first entry is always the least recently used.
+      if (const auto* existing = memo.get(key); existing && existing->catalog == catalog) {
+        const auto entry = *existing;
+        memo.delete_(key);
+        memo.set(key, entry);
+        return;
       }
+      if (const auto* existing = memo.get(key)) eraseCatalogMemoEntry(key, *existing);
+      const std::size_t bodyBytes = catalog->body.size();
+      if (bodyBytes <= types::CODEX_CATALOG_MEMO_BODY_BYTES) {
+        const auto bytes = sizeof(LoadedCodexCatalog) + sizeof(CatalogMemoEntry) + 2 * rt::memory::bytes(key) +
+                           rt::memory::bytes(catalog->body) + rt::memory::bytes(catalog->parsed);
+        memo.set(key, CatalogMemoEntry{std::move(catalog), bytes});
+        memoBodyBytes += bodyBytes;
+        memoBytes += bytes;
+        while (static_cast<double>(memo.size()) > types::CODEX_CATALOG_MAX_VERSIONS || memoBodyBytes > types::CODEX_CATALOG_MEMO_BODY_BYTES) {
+          const auto oldest = memo.begin();
+          eraseCatalogMemoEntry(oldest->first, oldest->second);
+        }
+      }
+      publishMemoMemory();
     }
 
     rt::KvKey metadataKey(const std::string& version) { return rt::KvKey{types::CODEX_CATALOG_PREFIX, version}; }
@@ -274,8 +302,8 @@ namespace uos::catalog::store {
       const CodexCatalogMetadata metadata = *stored;
       if (nowMs - metadata.fetched_at_ms >= types::CODEX_CATALOG_RETENTION_MS) co_return nullptr;
       const std::string memoKey = catalogMemoKey(metadata);
-      if (const Catalog* cached = catalogMemo().get(memoKey)) {
-        Catalog hit = *cached;
+      if (const auto* cached = catalogMemo().get(memoKey)) {
+        Catalog hit = cached->catalog;
         memoizeCatalog(hit);
         co_return hit;
       }
@@ -581,11 +609,15 @@ namespace uos::catalog::store {
     }
   }
 
-  void resetCodexCatalogMemoForTest() { catalogMemo().clear(); }
+  void resetCodexCatalogMemoForTest() {
+    catalogMemo().clear();
+    memoBodyBytes = memoBytes = 0;
+    publishMemoMemory();
+  }
 
   std::vector<std::string> getCodexCatalogMemoVersionsForTest() {
     std::vector<std::string> versions;
-    for (const Catalog& catalog : catalogMemo().values()) versions.push_back(catalog->metadata.client_version);
+    for (const auto& entry : catalogMemo().values()) versions.push_back(entry.catalog->metadata.client_version);
     return versions;
   }
 

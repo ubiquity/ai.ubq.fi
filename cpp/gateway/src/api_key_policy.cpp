@@ -1,4 +1,5 @@
 #include "uos/api_key_policy.hpp"
+#include "uos/rt/memory.hpp"
 #include "uos/rt/kv_js.hpp"
 
 #include "uos/api_keys.hpp"
@@ -79,6 +80,29 @@ namespace uos::api_key_policy {
     rt::OrderedMap<std::string, CachedPolicy>& policyCache() {
       static rt::OrderedMap<std::string, CachedPolicy> cache;
       return cache;
+    }
+
+    std::size_t policyCacheBytes = 0;
+
+    std::size_t policyBytes(const std::string& hash, const CachedPolicy& entry) {
+      return sizeof(CachedPolicy) + 2 * rt::memory::bytes(hash) + rt::memory::bytes(entry.policy.token_hash) +
+             rt::memory::bytes(entry.policy.key_id) + rt::memory::bytes(entry.policy.policy_version) +
+             (entry.policy.paid_fallback_reservation_request_id ? rt::memory::bytes(*entry.policy.paid_fallback_reservation_request_id) : 0);
+    }
+    void erasePolicy(const std::string& hash) {
+      auto& cache = policyCache();
+      if (const auto* entry = cache.get(hash)) {
+        policyCacheBytes -= policyBytes(hash, *entry);
+        cache.delete_(hash);
+        rt::memory::setCache(rt::memory::Cache::api_key_policy, cache.size(), policyCacheBytes);
+      }
+    }
+    void cachePolicy(const std::string& hash, CachedPolicy entry) {
+      auto& cache = policyCache();
+      if (const auto* prior = cache.get(hash)) policyCacheBytes -= policyBytes(hash, *prior);
+      cache.set(hash, std::move(entry));
+      policyCacheBytes += policyBytes(hash, *cache.get(hash));
+      rt::memory::setCache(rt::memory::Cache::api_key_policy, cache.size(), policyCacheBytes);
     }
 
     rt::Response quotaUnavailable(std::string message) {
@@ -875,7 +899,7 @@ namespace uos::api_key_policy {
     const CachedPolicy* cachedPolicy = policyCache().get(tokenHash);
     std::optional<ApiKeyPolicy> policy = cachedPolicy != nullptr && cachedPolicy->expires_at_ms > nowMs ? std::optional<ApiKeyPolicy>(cachedPolicy->policy) : std::nullopt;
     if (!policy) {
-      policyCache().delete_(tokenHash);
+      erasePolicy(tokenHash);
       const rt::KvGetOptions strong = strongRead();
       const rt::KvKey hashKey = api_keys::apiKeyHashKey(tokenHash);
       const rt::KvEntryMaybe<> entry = co_await kv->get(hashKey, strong);
@@ -889,16 +913,16 @@ namespace uos::api_key_policy {
           .response = http::openaiError(503, "API key quota migration is incomplete", std::string("server_error"), std::move(errorOptions)),
         };
       }
-      policyCache().set(tokenHash, CachedPolicy{.policy = *policy, .expires_at_ms = nowMs + API_KEY_POLICY_CACHE_TTL_MS});
+      cachePolicy(tokenHash, CachedPolicy{.policy = *policy, .expires_at_ms = nowMs + API_KEY_POLICY_CACHE_TTL_MS});
     } else if (nowMs >= policy->usage_reset_at_ms) {
       const native_api_key::ApiKeyUsageWindowBounds window = native_api_key::currentApiKeyUsageWindow(policy->usage_reset_at_ms, policy->window_ms, nowMs);
       policy->window_start_ms = window.start;
       policy->usage_reset_at_ms = window.reset;
-      policyCache().set(tokenHash, CachedPolicy{.policy = *policy, .expires_at_ms = nowMs + API_KEY_POLICY_CACHE_TTL_MS});
+      cachePolicy(tokenHash, CachedPolicy{.policy = *policy, .expires_at_ms = nowMs + API_KEY_POLICY_CACHE_TTL_MS});
     }
 
     if (policy->expires_at_ms != API_KEY_NO_EXPIRATION_MS && policy->expires_at_ms <= nowMs) {
-      policyCache().delete_(tokenHash);
+      erasePolicy(tokenHash);
       co_return invalidApiKey();
     }
     // Authentication remains quota-free so non-inference endpoints (including
@@ -907,19 +931,23 @@ namespace uos::api_key_policy {
     co_return ApiKeyPolicyDecisionOk{.policy = std::move(*policy)};
   }
 
-  void invalidateApiKeyPolicy() { policyCache().clear(); }
+  void invalidateApiKeyPolicy() {
+    policyCache().clear();
+    policyCacheBytes = 0;
+    rt::memory::setCache(rt::memory::Cache::api_key_policy, 0, 0);
+  }
 
   void invalidateApiKeyPolicy(const std::string& keyId) {
     if (keyId.empty()) {
-      policyCache().clear();
+      invalidateApiKeyPolicy();
       return;
     }
     for (auto& [hash, cached] : policyCache()) {
-      if (cached.policy.key_id == keyId) policyCache().delete_(hash);
+      if (cached.policy.key_id == keyId) erasePolicy(hash);
     }
   }
 
-  void resetApiKeyPolicyCacheForTest() { policyCache().clear(); }
+  void resetApiKeyPolicyCacheForTest() { invalidateApiKeyPolicy(); }
 
   std::optional<double> apiKeyQuotaUsedPercent(const ApiKeyPolicy* policy) {
     if (policy == nullptr || !policy->paid_fallback_enabled || policy->paid_fallback_limit_microcredits <= 0) return std::nullopt;

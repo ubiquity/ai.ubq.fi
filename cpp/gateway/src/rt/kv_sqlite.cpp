@@ -238,6 +238,8 @@ namespace uos::rt {
         } catch (const sqlite::SQLiteError&) {
         }
         db_.run("PRAGMA synchronous = FULL");
+        if (const auto page = db_.query("PRAGMA page_size").get())
+          pageBytes_ = static_cast<std::size_t>(integerColumn(*page, "page_size", 0));
         try {
           migrate();
         } catch (const sqlite::SQLiteError& error) {
@@ -344,6 +346,7 @@ namespace uos::rt {
             db_.run("BEGIN DEFERRED");
             auto result = body();
             db_.run("COMMIT");
+            db_.reportPageCacheMemory(pageBytes_);
             return result;
           } catch (const sqlite::SQLiteError& error) {
             rollback();
@@ -492,6 +495,7 @@ namespace uos::rt {
         db_.query(STATEMENT_QUEUE_REMOVE_RUNNING).run(id);
       }
 
+      std::size_t pageBytes_ = 0;
       sqlite::Database db_;
       std::function<std::uint64_t()> versionIncrement_;
       std::mt19937_64 random_{std::random_device{}()};

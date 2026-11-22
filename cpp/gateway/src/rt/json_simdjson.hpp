@@ -3,6 +3,7 @@
 #include "uos/rt/error.hpp"
 #include "uos/rt/json.hpp"
 #include "uos/rt/limits.hpp"
+#include "uos/rt/memory.hpp"
 
 #include <simdjson.h>
 
@@ -11,12 +12,19 @@ namespace uos::rt::detail {
 
   class JsonInput {
   public:
+    explicit JsonInput(bool cached = false) {
+      if (cached) cache_.emplace(memory::Cache::json_parser);
+    }
+
     json::value parse(std::string_view text) {
+      const auto bufferCapacity = buffer_.capacity();
+      const auto parserCapacity = parser_.capacity();
       buffer_.assign(text);
       buffer_.append(simdjson::SIMDJSON_PADDING, '\0');
       if (parser_.capacity() < text.size()) {
         if (const auto error = parser_.allocate(text.size(), limits::kJsonDepth + 2)) throw simdjson::simdjson_error(error);
       }
+      if (bufferCapacity != buffer_.capacity() || parserCapacity != parser_.capacity()) reportCache();
       simd::document document = parser_.iterate(buffer_.data(), text.size(), buffer_.size()).value();
       json::value result = read(document, 0);
       if (!document.at_end()) throw SyntaxError("Invalid JSON");
@@ -24,6 +32,15 @@ namespace uos::rt::detail {
     }
 
   private:
+    void reportCache() noexcept {
+      if (!cache_) return;
+      // On-Demand retains 32-bit structural offsets and up to five bytes
+      // of decoded string scratch for every three input bytes.
+      const auto capacity = parser_.capacity();
+      cache_->set(1, sizeof(*this) + capacity * sizeof(std::uint32_t) + 5 * (capacity / 3) +
+                        memory::bytes(buffer_) + memory::bytes(keyBuffer_));
+    }
+
     template <class Node>
     json::value read(Node& node, std::size_t depth) {
       const auto type = node.type().value();
@@ -45,7 +62,9 @@ namespace uos::rt::detail {
           for (auto entry : object) {
             std::string_view key = entry.escaped_key().value();
             if (key.find('\\') != std::string_view::npos) {
+              const auto priorCapacity = keyBuffer_.capacity();
               keyBuffer_.resize(key.size() + simdjson::SIMDJSON_PADDING);
+              if (priorCapacity != keyBuffer_.capacity()) reportCache();
               auto* destination = reinterpret_cast<std::uint8_t*>(keyBuffer_.data());
               key = parser_.unescape_wobbly(entry.key().value(), destination).value();
             }
@@ -76,6 +95,7 @@ namespace uos::rt::detail {
     simd::parser parser_;
     std::string buffer_;
     std::string keyBuffer_;
+    std::optional<memory::ScopedCache> cache_;
   };
 
   inline json::value parseSimdJson(std::string_view text, std::size_t maxInput) {
@@ -83,7 +103,7 @@ namespace uos::rt::detail {
     if (text.empty() || text.size() > maxInput || text.starts_with("\xef\xbb\xbf")) throw SyntaxError("Invalid JSON");
     try {
       if (text.size() <= maxReusableInput) {
-        thread_local JsonInput input;
+        thread_local JsonInput input(true);
         return input.parse(text);
       }
       return JsonInput().parse(text);

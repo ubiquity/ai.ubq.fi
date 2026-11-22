@@ -1,4 +1,5 @@
 #include "uos/provider/health.hpp"
+#include "uos/rt/memory.hpp"
 
 #include "uos/kv.hpp"
 #include "uos/rt/clock.hpp"
@@ -39,6 +40,14 @@ namespace uos::provider::health {
     std::unordered_map<std::string, ProviderTransition>& providerTransitionQueues() {
       static std::unordered_map<std::string, ProviderTransition> map;
       return map;
+    }
+
+    std::size_t observationCacheBytes = 0;
+
+    std::size_t observationBytes(const std::string& key, const ProviderHealthObservation& observation) {
+      return sizeof(ProviderHealthObservation) + sizeof(double) + 2 * (sizeof(key) + rt::memory::bytes(key)) +
+             rt::memory::bytes(observation.event) +
+             (observation.provider_request_id.hasValue() ? rt::memory::bytes(*observation.provider_request_id) : 0);
     }
 
     constexpr std::int64_t MAX_PROVIDER_REQUEST_ID_CHARS = 256;
@@ -144,8 +153,13 @@ namespace uos::provider::health {
         const rt::KvCommitResult commit = co_await std::move(committing);
         if (!commit.ok) co_return;
         const std::string throttleKey = provider + ":" + identity;
-        lastObservation().insert_or_assign(throttleKey, std::move(observation));
+        auto& observations = lastObservation();
+        if (auto previous = observations.find(throttleKey); previous != observations.end())
+          observationCacheBytes -= observationBytes(throttleKey, previous->second);
+        auto entry = observations.insert_or_assign(throttleKey, std::move(observation)).first;
         lastHeartbeatWriteAtMs().insert_or_assign(throttleKey, observedAtMs);
+        observationCacheBytes += observationBytes(entry->first, entry->second);
+        rt::memory::setCache(rt::memory::Cache::provider_health, observations.size(), observationCacheBytes);
       } catch (...) {
         // Health observations are optional telemetry and must never affect routing.
       }
@@ -385,6 +399,8 @@ namespace uos::provider::health {
   void resetProviderHealthThrottleForTest() {
     lastHeartbeatWriteAtMs().clear();
     lastObservation().clear();
+    observationCacheBytes = 0;
+    rt::memory::setCache(rt::memory::Cache::provider_health, 0, 0);
     providerTransitionQueues().clear();
   }
 

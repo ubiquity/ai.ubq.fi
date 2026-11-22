@@ -1,4 +1,5 @@
 #include "uos/provider/metered.hpp"
+#include "uos/rt/memory.hpp"
 
 #include "uos/inference_deadline.hpp"
 #include "uos/provider/anthropic_responses.hpp"
@@ -174,6 +175,14 @@ namespace uos::provider::metered {
       if (requestGeneration > meteredModelsCacheGeneration) {
         meteredModelsCacheGeneration = requestGeneration;
         meteredModelsCache = std::move(snapshot);
+        const auto& cachedModels = meteredModelsCache->models;
+        std::size_t bytes = cachedModels.capacity() * sizeof(cachedModels.front());
+        for (const auto& model : cachedModels) {
+          bytes += rt::memory::bytes(model.id) + rt::memory::bytes(model.object) + rt::memory::bytes(model.owned_by) +
+                   rt::memory::bytes(model.supported_endpoint_types);
+          for (const auto* field : {&model.description, &model.model_type, &model.tags}) if (*field) bytes += rt::memory::bytes(**field);
+        }
+        rt::memory::setCache(rt::memory::Cache::openlux_models, cachedModels.size(), bytes);
         meteredModelsRetryAfterMs = 0;
       }
       return meteredModelsCache;
@@ -717,6 +726,7 @@ namespace uos::provider::metered {
     meteredModelsCacheGeneration = meteredModelsFetchGeneration;
     meteredModelsRetryAfterMs = 0;
     meteredModelsCache.reset();
+    rt::memory::setCache(rt::memory::Cache::openlux_models, 0, 0);
   }
 
   void setMeteredModelsFetchForTest(MeteredFetch fetcher) { meteredModelsFetchForTest = std::move(fetcher); }

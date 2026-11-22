@@ -69,6 +69,7 @@
 #include "uos/rt/env.hpp"
 #include "uos/rt/fetch.hpp"
 #include "uos/rt/json.hpp"
+#include "uos/rt/memory.hpp"
 #include "uos/rt/kv_js.hpp"
 #include "uos/rt/number.hpp"
 #include "uos/rt/string.hpp"
@@ -389,6 +390,7 @@ namespace uos::health {
     rt::Response healthResponse(std::optional<json::object> upstreamAuth = std::nullopt) {
       const auto gitSha = config::runtimeGitSha(); const auto deploymentId = config::runtimeDeploymentId();
       json::object body{{"status", "available"}, {"release", json::object{{"git_sha", gitSha}, {"deployment_id", deploymentId}}}};
+      body.emplace("memory", rt::memory::snapshot(true));
       if (upstreamAuth) body.emplace("upstream_auth", std::move(*upstreamAuth));
       if (!confinementMode.empty()) body.emplace("confinement", confinementMode);
       return http::json(200, body, {{"Cache-Control", "no-store"}, {"x-uos-git-sha", gitSha}, {"x-uos-deployment-id", deploymentId}});

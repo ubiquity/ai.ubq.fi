@@ -1,4 +1,5 @@
 // Terminal request logging and delivery decoration, split out of src/handler.ts.
+#include "uos/rt/memory.hpp"
 #include "uos/handler/terminal_log.hpp"
 
 #include "uos/cache/prompt_analytics_queue.hpp"
@@ -161,6 +162,7 @@ namespace uos::handler::terminal_log {
         putTelemetry("removed_provider_latency_ms", &ResponseTelemetry::removedProviderLatencyMs);
         putTelemetry("removed_provider_terminal_status", &ResponseTelemetry::removedProviderTerminalStatus);
         putTelemetry("removed_provider_semantic_commitment", &ResponseTelemetry::removedProviderSemanticCommitment);
+        terminal.emplace("memory", rt::memory::snapshot(false, &storage));
         terminal.emplace("git_sha", config::runtimeGitSha());
         terminal.emplace("deno_revision", config::runtimeDeploymentId());
         putOptional("router_revision", data.response.headers().get("x-uos-router-revision"));

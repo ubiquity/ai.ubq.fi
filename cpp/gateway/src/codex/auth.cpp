@@ -1,5 +1,6 @@
 // Codex auth pool parsing, caching and loading, split out of src/codex.ts.
 #include "uos/codex/auth.hpp"
+#include "uos/rt/memory.hpp"
 
 #include "uos/codex/capacity_routing.hpp"
 #include "uos/codex/external_auth.hpp"
@@ -671,12 +672,23 @@ namespace uos::codex::auth {
   void cacheCodexAuthPool(const CodexAuthPoolState& pool) {
     authCacheGeneration += 1;
     cachedAuthPool = pool;
+    std::size_t size = sizeof(pool) + pool.accounts.capacity() * sizeof(pool.accounts.front());
+    for (const auto& account : cachedAuthPool->accounts) {
+      size += rt::memory::bytes(account.account_id) + rt::memory::bytes(account.access_token) + rt::memory::bytes(account.refresh_token);
+      if (const auto& owner = account.native_owner) {
+        size += rt::memory::bytes(owner->codex_home) + rt::memory::bytes(owner->generation_hash);
+        for (const auto* field : {&owner->native_refreshed_at, &owner->auth_mode, &owner->chatgpt_user_id})
+          if (*field) size += rt::memory::bytes(**field);
+      }
+    }
+    rt::memory::setCache(rt::memory::Cache::codex_auth_pool, pool.accounts.size(), size);
     cachedAuthPoolExpiresAtMs = rt::dateNow() + CODEX_AUTH_CACHE_TTL_MS;
   }
 
   void resetCodexAuthCacheForTest() {
     authCacheGeneration += 1;
     cachedAuthPool = std::nullopt;
+    rt::memory::setCache(rt::memory::Cache::codex_auth_pool, 0, 0);
     cachedAuthPoolExpiresAtMs = 0;
     authPoolEntryInFlight = std::nullopt;
     refreshesInFlight.clear();

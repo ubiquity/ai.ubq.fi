@@ -1,4 +1,5 @@
 #include "uos/provider/surplus.hpp"
+#include "uos/rt/memory.hpp"
 
 #include "uos/inference_deadline.hpp"
 #include "uos/provider/anthropic_chat_responses.hpp"
@@ -270,6 +271,14 @@ namespace uos::provider::surplus {
         if (requestGeneration > surplusModelsCacheGeneration) {
           surplusModelsCacheGeneration = requestGeneration;
           surplusModelsCache = std::move(snapshot);
+          const auto& cachedModels = surplusModelsCache->models;
+          std::size_t bytes = cachedModels.capacity() * sizeof(cachedModels.front());
+          for (const auto& model : cachedModels) {
+            bytes += rt::memory::bytes(model.id) + rt::memory::bytes(model.object) + rt::memory::bytes(model.owned_by) +
+                     rt::memory::bytes(model.supported_endpoint_types);
+            if (model.description) bytes += rt::memory::bytes(*model.description);
+          }
+          rt::memory::setCache(rt::memory::Cache::surplus_models, cachedModels.size(), bytes);
           surplusModelsRetryAfterMs = 0;
         }
         co_return surplusModelsCache;
@@ -708,6 +717,7 @@ namespace uos::provider::surplus {
     surplusModelsCacheGeneration = surplusModelsFetchGeneration;
     surplusModelsRetryAfterMs = 0;
     surplusModelsCache.reset();
+    rt::memory::setCache(rt::memory::Cache::surplus_models, 0, 0);
   }
 
   rt::Task<SurplusResponsesResult> fetchSurplusResponses(json::value body) { return fetchSurplusResponses(std::move(body), SurplusAuthenticatedFetchOptions{}); }
