@@ -319,6 +319,7 @@ def main():
             result["committed_usage"] = usage
         sizes = [call["input_bytes"] for call in mock.calls]
         receipt = {"host": platform.platform(), "network_namespace": namespace, "package": identities, "database": database,
+                   "seed_state_sha256": digest(args.seed_state), "codex_sha256": digest(args.codex) if args.codex else None,
                    "catalog": catalog, "public_models": public, "version": args.version, "traffic": args.traffic,
                    "sessions": args.sessions, "upstream_calls": dict(Counter(call["kind"] for call in mock.calls)),
                    "upstream_request_bytes": [min(sizes), max(sizes)] if sizes else None,
