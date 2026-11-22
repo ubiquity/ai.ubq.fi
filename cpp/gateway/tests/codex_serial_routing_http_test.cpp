@@ -29,6 +29,7 @@
 //   src/provider/cerebras_responses.cpp src/kernel/quota_reserve.cpp src/lib/jev_compaction/types.cpp src/responses_buffered.cpp src/chat/completions.cpp src/optional_telemetry_queue.cpp src/provider/cerebras_handlers.cpp src/live/routes.cpp src/storage/native_kv.cpp
 // src/deepseek/responses_stream.cpp src/deepseek/responses_payload.cpp src/lib/jev_compaction/codex_items.cpp src/inference_admission.cpp src/codex/responses_operations.cpp src/lib/jev_compaction/compact.cpp src/deepseek/stream.cpp src/lib/jev_compaction/request.cpp
 //   tests/helpers/loopback_http.cpp src/runtime/http.cpp src/runtime/http_body.cpp src/runtime/http_upgrade.cpp
+//   src/codex/auth_import.cpp src/codex/auth_repair.cpp src/runtime/permissions_linux.cpp
 // Port of the one original registration in tests/codex-serial-routing-http.test.ts.
 #include "tests/helpers/responses_conformance_client.hpp"
 #include "tests/helpers/loopback_http.hpp"
