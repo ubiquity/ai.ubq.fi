@@ -147,10 +147,11 @@ class Scripted:
                 require(terminal is None, "Scripted client received an extra terminal")
                 seen = event["type"]
                 terminal = event["response"]
-            status = "response.failed" if failure else "response.completed"
-            require(seen == status and terminal is not None, "Scripted client lost its terminal")
-            if not failure:
-                require(terminal["usage"]["total_tokens"] > 0, "Scripted client lost token usage")
+        status = "response.failed" if failure else "response.completed"
+        require(seen == status and terminal is not None,
+                f"Scripted client expected {status}, received {seen} after {len(text)} deltas and {len(output)} items")
+        if not failure:
+            require(terminal["usage"]["total_tokens"] > 0, "Scripted client lost token usage")
         return "".join(text), output
 
     def run(self, index, kind):
