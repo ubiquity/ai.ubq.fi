@@ -3,8 +3,8 @@
 - [x] Reproduce retained free heap with mixed concurrent Codex traffic.
 - [x] Attribute retained pages by thread, arena and mapping before changing the gateway.
 - [ ] Compare allocator options and record memory, throughput, latency and CPU.
-- [ ] Guard retained free heap in Release CI and document the runtime policy.
-- [ ] Verify the affected Release and ASan suites, registration and committed diff.
+- [x] Guard retained free heap in Release CI and document the runtime policy.
+- [x] Verify the affected Release and ASan suites, registration and committed diff.
 
 ## Starting point
 
@@ -54,3 +54,40 @@ A single arena reduced virtual heap capacity by 2.7 MiB while retaining most of 
 The sealed timer-only trial at `dc60af66cdb09cca7d1a90e40386d302e7e3b7a8` briefly reduced anonymous RSS to 15.58 MiB at round 40. At the last traffic sample `[heap]` had zero anonymous huge-page bytes. Three seconds later it held 16 MiB of anonymous huge pages and the process still had 19.86 MiB anonymous RSS for 7.74 MiB live. The kernel had collapsed the heap into huge pages again after the trim. The next control combines trimming with a per-process transparent huge-page opt-out.
 
 The timer with the per-process huge-page opt-out reached 11.20 MiB idle anonymous RSS and 7.78 MiB live, with zero huge pages. Its free-arena count stayed between 12.35 and 16.27 MiB. This experimental run delivered 95.16 requests/s, p50 70.02 ms and p95 125.38 ms, with 15.68 CPU seconds. The final policy defers ordinary trims until consecutive samples stabilize, while higher resident pressure can still trigger a trim during traffic.
+
+## Release regression
+
+The Release shard 1 job keeps the existing serial Codex memory check and adds `--scripted --check-burst`. This runs 20 rounds, verifies all 640 delivered terminals and checks the durable quota count. It caps sampled free arena capacity at 24 MiB and idle anonymous RSS above live allocator bytes at 9 MiB. Free arena capacity includes space glibc can reuse after the kernel has discarded its pages, so the second gate checks the resident effect. The gate has no throughput or latency assertion.
+
+| Package | Highest sampled free arena bytes | Idle anonymous bytes above live | Outcome |
+| --- | ---: | ---: | --- |
+| Integration baseline | 16,923,792 | 16,353,920 | Failed at the 9 MiB idle limit |
+| Final sealed build | 16,341,200 | 4,602,064 | Passed |
+
+The existing 20-session native Codex 0.171.0 check passed with 11,676 KiB anonymous and 44,228 KiB peak resident after 60 inference requests. Its scripted fallback passed at 9,640 KiB anonymous and 43,544 KiB peak resident. Both met the existing 17 MiB anonymous and 58 MiB peak resident limits.
+
+## Verification
+
+The runtime and CI gate are in commit `7e4516d0dcf4321b8a96148a3393acc0e442bdf5`, tree `48fa7d76be07b88f40cca48a9111eac7f1ca34b1`. The sealed executable SHA-256 is `cf4ebf56a5ef83e9c0bcf75acf6112d72f40c00aaccaf0f0f766163ae9fcc002` and manifest SHA-256 is `4f597c18ae5a7a8e8b0cc2712b6063190769332eabfa8c270a7535ef360164e2`.
+
+| CI driver invocation | Passed | Receipt SHA-256 |
+| --- | --- | --- |
+| `python3 -B "$scratch/affected.py" --config release` | 9 binaries, 90 cases | `59c362f71d0096e9d9908238867a2ce5dc123686adde43f9f9686ba32acc3ddd` |
+| `python3 -B "$scratch/affected.py" --config asan` | 9 binaries, 90 cases | `45e3bfbbc64aa79731d254940f9eba0ddeae0a89a034ad27a084de3fa3f6ee9c` |
+
+The scratch selector passed the following registered tests to `cpp/gateway/cmake/ci/driver.py`.
+
+- `oss_gateway_http_test`, `serve_test`, `serve_delivery_http_test`, `runtime_native_startup_test`
+- `permissions_linux_test`, `permissions_linux_reduced_test`, `permissions_linux_service_manager_test`
+- `rt/fetch_transport_test`, `rt/kv_sqlite_test`
+
+Both receipts record stable input SHA-256 `7336e8d56ad9e96a761d65c9b54bc9c9fbb6bdf225cfacac4e6aafb31039d58c`, Clang 21.1.8, four jobs and the workflow's pinned SQLite 3.54.0. The driver used fresh Linux network, mount and PID namespaces. The ASan prewarm overlapped edits and the driver rejected that earlier receipt. The final ASan receipt is from a separate invocation on the committed source. Compiling `runtime/startup.cpp` with the ASan receipt's flags succeeded, and `nm -u` on the ASan memory object confirmed the absence of `prctl` and `malloc_trim` references.
+
+`python3 -B cpp/gateway/tools/links.py --check` passed all 453 registrations, and `git diff --check claude/cpp-gateway-port...HEAD` passed. A committed review with both refs fetched used the following command in a credential-free loopback namespace with native Codex 0.171.0. The base was `834c97e54ac410c43476f98dfda5120a27dd972e` and the head was `7e4516d0dcf4321b8a96148a3393acc0e442bdf5`. It exited 124 after logging `failed to connect to Responses WebSocket stage=Unknown`. No complete review result was available.
+
+```sh
+timeout -k 2s 25s codex review --base refs/review/base \
+  -c 'model="gpt-6.1-sol"' -c 'review_model="gpt-6.1-sol"' \
+  -c 'sandbox_mode="read-only"' -c 'shell_environment_policy.inherit="none"' \
+  -c 'shell_environment_policy.set={PATH="/usr/bin:/bin"}'
+```
