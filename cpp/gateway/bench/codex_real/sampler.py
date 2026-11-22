@@ -24,7 +24,7 @@ def sample(pid):
     headers = list(MAPPING.finditer(maps))
     labels = [match[0].split(maxsplit=5) for match in headers]
     result = {field: kib(status, field) for field in ("VmRSS", "RssAnon", "VmHWM")}
-    result.update(heap_rss=0, heap_size=0, anonymous_mappings=[], anonymous_kib=0)
+    result.update(heap_rss=0, heap_size=0, heap_anon_huge_kib=0, anonymous_mappings=[], anonymous_kib=0)
     for index, label in enumerate(labels):
         end = headers[index + 1].start() if index + 1 < len(headers) else len(maps)
         body = maps[headers[index].end():end]
@@ -32,10 +32,11 @@ def sample(pid):
         anon = kib(body, "Anonymous")
         result["anonymous_kib"] += anon
         if name == "[heap]":
-            result.update(heap_rss=kib(body, "Rss"), heap_size=kib(body, "Size"))
+            result.update(heap_rss=kib(body, "Rss"), heap_size=kib(body, "Size"), heap_anon_huge_kib=kib(body, "AnonHugePages"))
         elif not name or name.startswith(("[anon:", "[stack")):
             result["anonymous_mappings"].append({"name": name or "anonymous", "permissions": label[1],
-                "size": kib(body, "Size"), "rss": kib(body, "Rss"), "anonymous": anon})
+                "size": kib(body, "Size"), "rss": kib(body, "Rss"), "anonymous": anon,
+                "anon_huge_kib": kib(body, "AnonHugePages")})
     return result
 
 
