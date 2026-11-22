@@ -28,6 +28,7 @@
     "src/rt/kv_sdk.cpp",
     "src/rt/kv_sqlite.cpp",
     "src/rt/kv_value.cpp",
+    "src/rt/memory.cpp",
     "src/rt/number.cpp",
     "src/rt/process.cpp",
     "src/rt/process_loop.cpp",
