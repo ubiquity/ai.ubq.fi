@@ -132,3 +132,23 @@ Commit `e90238c3105cdcee86e4a3f5ced1a7a931ddf138` with tree `11b0005ba37c38526fb
 | Stream SQLite range rows | 10,980 | 13,028 | 45,288 |
 
 Each trial delivered all 60 successful request terminals and settled exactly 60 additional uses for the active key. The catalog remained 389,001 bytes with ETag `"uos-catalog-a877e72d2e2c6ef38cacf86989f69ca2"`. The final package manifest was `a5a9aad32c91bb4e1d2d72c514eae0a9012897eab462f1395e60b6358aaa968c` and the executable was `63d58f454743c9ec26603747700cd9d347ad4b45b21ba838610159c96bb344e2`. Its five-session Heaptrack peak was 8.91 MB with 3.63 MB retained. The Boost.JSON string site fell to 3.37 MB, compared with 11.30 MB on the integration base. The three per-attempt request-body copies in `createCodexResponseState` disappeared from the top sites.
+
+## Long run alongside builds
+
+The final package completed 500 native Codex sessions and 1,500 delivered inference requests while Release and sanitizer builds were running. The key ended at 6,500 committed requests. The run took 733.4 s and crossed two five-minute catalog refreshes. The upstream observed the initial seed and two exact-version refreshes. The first refresh coincided with a rise from 11,052 KiB to 13,488 KiB anonymous RSS. Later samples plateaued near 13,564 KiB after the second refresh. The durable catalog ETag and wire assertions passed.
+
+| Sessions | VmRSS KiB | RssAnon KiB | VmHWM KiB | Resident heap KiB |
+| ---: | ---: | ---: | ---: | ---: |
+| 0 | 30,832 | 6,904 | 30,832 | 2,048 |
+| 1 | 44,716 | 12,852 | 44,716 | 7,944 |
+| 10 | 44,964 | 13,100 | 44,964 | 8,192 |
+| 100 | 42,916 | 11,052 | 45,420 | 6,144 |
+| 500 | 46,452 | 13,564 | 47,612 | 8,192 |
+
+The final single-session trim reduced anonymous RSS by 1,032 KiB, from 11,844 to 10,812 KiB. Allocator state before and after was 4,044,528 bytes in use, 8,796,432 bytes in free blocks and no direct mappings at the checkpoint. The original trim released 7,440 KiB. The final replay control stored an encrypted failure capture and finished at 8,764 KiB anonymous with a 42,760 KiB resident peak. Across both 500-session traces the terminal usage checks found 1,000 tool replies at 40 output tokens, 400 short replies at 50 and 100 long replies at 4,000. Every total matched input plus output usage.
+
+## Release memory gate
+
+Calibration on the final package measured 13,028 KiB anonymous and 45,288 KiB peak resident with the real CLI. The scripted run measured 12,792 and 44,740 KiB. The gate rounds margins of about 30 percent to 17 MiB anonymous and 58 MiB peak resident. The real `--check` passed at 11,704 / 45,512 KiB with those budgets. The scripted `--check` passed at 11,148 / 44,888 KiB. Both completed 20 sessions and 60 inference requests.
+
+Release shard 1 builds the benchmark from its existing objects and uses the native CLI when installed. The fallback exercises the same state, reply shapes and growing tool history with the scripted client. The workflow saves sample, fixture, upstream and budget receipts in the shard artifact. [CI workflow](../../../../.github/workflows/cpp-gateway-ci.yml) · [Local commands](../../bench/codex_real/README.md)
