@@ -32,3 +32,21 @@ Free heap grew in steps during warm-up and remained elevated after traffic stopp
 The process had two threads throughout. The main thread ran HTTP, parsing and stream delivery on the Asio event loop. The SQLite worker was the other thread. GDB found two glibc arenas at round 60. The main arena held 19.76 MiB of address space and had a 0.27 MiB top chunk. The SQLite arena held 4.00 MiB with a 2.05 MiB top chunk. Procfs reported 18 MiB resident in `[heap]`, all backed by transparent huge pages, and about 2.1 MiB resident in the secondary heap. Most free bytes were interior holes in the main arena. GDB read an mmap and trim threshold of 131,072 bytes and `no_dyn_threshold=1`, which confirms that the dynamic threshold did not rise in this build. The workload includes individual JSON strings and transient buffers below 128 KiB. Glibc can also satisfy larger requests from existing arena space and coalesce their freed neighbors into larger holes.
 
 A second run used the inherited-socket allocator probe. Calling `malloc_info` from that thread created the third arena, with 1.99 MiB of free space at the checkpoint. The XML reported 14.74 MiB free in the main arena and 2.08 MiB in the SQLite arena. `malloc_trim(0)` reduced anonymous RSS from 24.10 to 14.66 MiB and resident `[heap]` from 20.00 to 8.57 MiB. `mallinfo2` reported 7.82 MiB live, 18.81 MiB free and zero direct mappings on both sides of that call. Glibc discarded physical pages from free blocks it still owns. The top chunk sizes and the successful page discard explain why shrinking only the end of the heap cannot recover most of the resident pages.
+
+## Allocator controls
+
+Each control ran 60 identical rounds with fresh state and the same baseline executable. A fixture-only `mallopt` interposer changed the measured child's startup setting. For the huge-page control it called `prctl(PR_SET_THP_DISABLE, 1, 0, 0, 0)` at the same point. The idle trim controls used the inherited socket after traffic. Throughput excludes body generation, health samples and the final idle wait, and includes catalog fetches in the wall time. Latency covers each Responses request through the complete SSE body. CPU is gateway user plus system time across the traffic and idle checkpoints.
+
+| Control | Idle anonymous MiB | Live MiB | Free arena MiB | Requests/s | p50 ms | p95 ms | CPU s |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Baseline | 23.18 | 7.73 | 16.04 | 101.39 | 61.01 | 128.43 | 13.10 |
+| One arena | 22.28 | 7.63 | 13.34 | 100.33 | 65.45 | 116.97 | 14.17 |
+| 16 KiB automatic trim threshold | 24.29 | 7.71 | 17.17 | 99.26 | 68.74 | 119.39 | 14.28 |
+| 64 KiB mmap threshold | 24.41 | 7.47 | 17.51 | 102.11 | 61.62 | 129.75 | 14.02 |
+| 32 KiB mmap threshold | 22.96 | 7.64 | 15.97 | 106.04 | 61.02 | 131.17 | 13.76 |
+| 16 KiB mmap threshold | 22.92 | 7.53 | 15.95 | 105.11 | 62.85 | 122.98 | 14.00 |
+| Huge pages disabled | 22.36 | 7.62 | 15.35 | 101.96 | 64.38 | 127.45 | 14.07 |
+| One idle trim with probe | 14.66 | 7.89 | 18.74 | 95.24 | 69.88 | 137.01 | 12.90 |
+| 32 KiB mmap threshold plus one idle trim with probe | 12.83 | 7.60 | 14.61 | 99.94 | 63.45 | 134.86 | 13.28 |
+
+A single arena reduced virtual heap capacity by 2.7 MiB while retaining most of the resident main heap. Disabling huge pages saved some initial anonymous RSS, and the warmed main heap still occupied almost all of its 18 MiB in 4 KiB pages. Lower thresholds left between 15.95 and 17.51 MiB free after the burst. Only the explicit trim returned most of the interior free pages. The active trim candidate retains the existing startup settings and bounds trim attempts with a two-second timer. It checks resident pressure too because glibc can continue counting discarded pages as free arena capacity.
