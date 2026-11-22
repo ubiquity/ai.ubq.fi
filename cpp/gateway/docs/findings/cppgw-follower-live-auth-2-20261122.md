@@ -7,7 +7,8 @@ Base is `fe308a3435a58cd2a0462a3117f54cdce80d3b97` on `claude/cpp-gateway-port`.
 - [x] Wire startup, demand-driven recovery, durable adoption and health.
 - [x] Verify with a concurrent WAL writer, loopback inference and Linux confinement in Release.
 - [x] Document operator setup and record Release and registration receipts.
-- [ ] Record the sealed launcher and ASan/UBSan receipts.
+- [x] Verify the sealed launcher with live state and loopback inference.
+- [ ] Record ASan/UBSan receipts.
 
 ## Code and registration
 
@@ -32,7 +33,13 @@ Each row ran `env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 CC=clang CXX
 | `sqlite` | 3 | 54 |
 | **Total** | **25** | **311** |
 
-The follower HTTP fixture uses a separate process with an open WAL writer. Its forced truncate checkpoints succeeded during both adoption probes and the rejected-candidate probe. Landlock denied writes to all three source files, journal creation, unlink and reads outside the leader's `.data` grant. The recursive listing and metadata for other leader files matched. The follower recovered an early 401 after the five-second read interval, kept serving through busy, closed, missing and garbage source states, and reopened its own database with the last adopted login. The provider mock saw zero OAuth requests. The separate SQLite case read from a directory with no write permission and verified that a missing shared-memory file was neither recreated nor replaced.
+The follower HTTP fixture uses a separate process with an open WAL writer. Its forced truncate checkpoints succeeded during both adoption probes and the rejected-candidate probe. Landlock denied writes to all three source files, journal creation, unlink and a read of a leader file outside `.data`. The recursive listing and metadata for other leader files matched. The follower recovered an early 401 after the five-second read interval, kept serving through busy, closed, missing and garbage source states, and reopened its own database with the last adopted login. The provider mock saw zero OAuth requests. The separate SQLite case read from a directory with no write permission and confirmed that the reader did not recreate a missing shared-memory file.
+
+## Sealed launcher
+
+`bash cpp/gateway/bench/codex_real/sqlite.sh python3 -B cpp/gateway/bench/codex_real/build.py --receipt /tmp/uos-gateway-build/clang++-7053fde9eaca/release/receipt.json --out /var/tmp/cppgw-follower-live-fixture/sealed-final` assembled and bound 60 files from the Release `sqlite` receipt at the tested code commit. The manifest SHA-256 was `938dc5fa94f38abf1b5a18529a54a3e89cc74324b1d4c49e30fcce9a66980efb` and the gateway executable SHA-256 was `85c895a57bca52ef53b09ce42cf7083ea7c9b9df8ee4784ca5aaaf58276f8541`.
+
+The local `launch-smoke` fixture ran via `cpp/gateway/bench/codex_real/sqlite.sh`, `sudo -n unshare --net --mount --pid --fork --mount-proc --propagation private --kill-child=SIGKILL` and `cpp/gateway/cmake/ci/isolate.py`. The outside-route probe returned `ENETUNREACH`. The sealed launcher refused the leader setting without follower mode and refused both a relative path and the follower's own state. The actual gateway adopted one login before listening and recovered a 401 after a second rotation with the same gateway process. The mock saw two usage GETs and zero OAuth calls. The gateway reported Landlock confinement and drained on SIGTERM.
 
 ## Committed-diff review
 
