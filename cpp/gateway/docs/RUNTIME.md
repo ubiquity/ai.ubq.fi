@@ -36,13 +36,15 @@ after 500 mixed sessions. The quiet runs peaked at about 45–46 MiB resident. R
 caps its 20-session check at 17 MiB anonymous and 58 MiB peak resident.
 [Real-client benchmark](../bench/codex_real/README.md) · [Comparison](findings/cppgw-memory-2-20261121.md)
 
-During native glibc service, a two-second timer checks for at least 8 MiB in
-free arena chunks and anonymous RSS more than 5 MiB above live allocator
-bytes. It calls `malloc_trim(0)` under that pressure so the kernel can reclaim
-pages inside fragmented chunks. The timer skips an unchanged post-trim sample,
-is inactive under AddressSanitizer, and is canceled with the serving lifetime.
-The existing seccomp policy permits `madvise`, `munmap` and `brk` under
-Landlock. [Allocator measurements](findings/cppgw-memory-3-allocator-20261122.md)
+Native glibc service disables transparent huge pages for the gateway process
+so the kernel keeps discarded heap pages out of RSS. A one-second timer checks
+for at least 8 MiB in free arena chunks and anonymous RSS more than 5 MiB above
+live allocator bytes. It calls `malloc_trim(0)` after allocator samples
+stabilize, or under sustained pressure more than 24 MiB above live bytes.
+The timer skips an unchanged post-trim sample and ends with the serving
+lifetime. AddressSanitizer builds skip the trimming policy. The existing
+seccomp policy permits `prctl`, `madvise`, `munmap` and `brk` under Landlock.
+[Allocator measurements](findings/cppgw-memory-3-allocator-20261122.md)
 
 ### Process memory telemetry
 
