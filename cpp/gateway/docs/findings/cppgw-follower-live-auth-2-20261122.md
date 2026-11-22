@@ -8,7 +8,7 @@ Base is `fe308a3435a58cd2a0462a3117f54cdce80d3b97` on `claude/cpp-gateway-port`.
 - [x] Verify with a concurrent WAL writer, loopback inference and Linux confinement in Release.
 - [x] Document operator setup and record Release and registration receipts.
 - [x] Verify the sealed launcher with live state and loopback inference.
-- [ ] Record ASan/UBSan receipts.
+- [x] Record ASan/UBSan receipts.
 
 ## Code and registration
 
@@ -34,6 +34,10 @@ Each row ran `env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 CC=clang CXX
 | **Total** | **25** | **311** |
 
 The follower HTTP fixture uses a separate process with an open WAL writer. Its forced truncate checkpoints succeeded during both adoption probes and the rejected-candidate probe. Landlock denied writes to all three source files, journal creation, unlink and a read of a leader file outside `.data`. The recursive listing and metadata for other leader files matched. The follower recovered an early 401 after the five-second read interval, kept serving through busy, closed, missing and garbage source states, and reopened its own database with the last adopted login. The provider mock saw zero OAuth requests. The separate SQLite case read from a directory with no write permission and confirmed that the reader did not recreate a missing shared-memory file.
+
+## ASan, UBSan and LSan
+
+The same nine commands with `--config asan` passed all 25 binaries and 311 cases, with counts matching each Release row. The sanitizer receipts matched commit `26df853e5c5f923c46db0ce2d6a3d2788ce1eb03` and tree `bbf45dc3f606414937c840f221ac40bbb1c46e93`. Only documentation changed between the Release and sanitizer receipts. All 18 receipts recorded unchanged inputs and the same source SHA-256, `af2912b62106e097416692a000f371ddcf3477dddfb048877657f5ab8aad95f1`.
 
 ## Sealed launcher
 
