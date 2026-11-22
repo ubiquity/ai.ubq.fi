@@ -6,6 +6,9 @@ script="$here/run.py"
 if [ "${1:-}" = --codex-memory ]; then
     shift
     script="$here/../codex_memory/run.py"
+elif [ "${1:-}" = --codex-real ]; then
+    shift
+    script="$here/../codex_real/measure.py"
 fi
 exec sudo -n unshare --net --pid --fork --mount-proc --kill-child=SIGKILL -- sh -eu -c '
     ip link set lo up

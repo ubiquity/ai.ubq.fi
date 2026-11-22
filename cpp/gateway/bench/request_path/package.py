@@ -14,6 +14,7 @@ if __name__ == "__main__":
     args, package_args = parser.parse_known_args()
     package = args.source.resolve(strict=True) / "cpp/gateway/tools/package.py"
     sys.argv = [str(package), *package_args]
+    sys.path.insert(0, str(package.parent))
     packager = runpy.run_path(str(package))["main"]
     runtime = packager.__globals__["runtime"]
     multiarch = sysconfig.get_config_var("MULTIARCH")
