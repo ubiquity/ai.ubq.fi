@@ -154,6 +154,20 @@ Calibration on the final package measured 13,028 KiB anonymous and 45,288 KiB pe
 
 Release shard 1 builds the benchmark from its existing objects and uses the native CLI when installed. The fallback exercises the same state, reply shapes and growing tool history with the scripted client. The workflow saves sample, fixture, upstream and budget receipts in the shard artifact. [CI workflow](../../../../.github/workflows/cpp-gateway-ci.yml) · [Local commands](../../bench/codex_real/README.md)
 
+## Run after the builds finish
+
+The final package completed the same 500 sessions in 162.7 s. It used Codex 0.171.0 with SHA-256 `9ba12ec7712e2905b2ea00791f4ebddc9528629cc955d11d25272de445e10643` and state writer `189a3a58259c954cfd8e13065b855f446c558e00f46d36bc31fdf5b0c7eb954d`. The mock served one versioned catalog during seeding. The workload stretched upstream bodies to 428,799 bytes and settled all 1,500 inference requests.
+
+| Sessions | Integration baseline anonymous KiB | Final anonymous KiB | Final resident KiB | Final resident heap KiB |
+| ---: | ---: | ---: | ---: | ---: |
+| 0 | 6,332 | 7,724 | 31,736 | 4,096 |
+| 1 | 19,104 | 9,772 | 41,656 | 6,144 |
+| 10 | 24,824 | 11,820 | 43,704 | 8,192 |
+| 100 | 22,784 | 11,820 | 43,704 | 8,192 |
+| 500 | 22,784 | 13,868 | 45,752 | 10,240 |
+
+Peak resident memory fell from 59,016 to 46,080 KiB. The quiet trial had one 2,048 KiB step at session 111 and held exactly 13,868 KiB anonymous through session 500. At the step, resident `[heap]` grew from 8,192 to 10,240 KiB, allocator free bytes rose from 5,874,048 to 8,034,928, and allocator in-use bytes fell from 4,869,760 to 4,806,032. Between sessions 100 and 500 the SQLite pager grew from 679,664 to 1,554,416 bytes within its configured target. The parser shifted by 21 bytes and the other tracked cache sizes held steady. This compares resident growth with the bounded cache warm-up and the allocator's reuse of pages already resident.
+
 ## Verification
 
 The test driver used Clang 21.1.8, four jobs, the workflow's pinned SQLite 3.54.0 and fresh Linux network, mount and PID namespaces. Release used the frame-pointer and line-table flags used by the profiled packages. The compiler-cache and runtime directories were outside the checkout. The raw SQLite library hash was `2fb9976405cd8f7afcc474acc90b93c087c4ced76b5302ef75dcd79279f9b238`. The benchmark copy, with its package-compatible SONAME and system library placement, was `e1cbbe281d8c6a571930bb04f78e1c05b578abcc15e4e3ef8771d1daddcf2770`.
