@@ -9,6 +9,7 @@
 #include "uos/rt/text_codec.hpp"
 #include "uos/utils.hpp"
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
@@ -287,34 +288,22 @@ namespace uos::responses_stream {
     rt::Task<ReadResult> readWithDeadline(std::shared_ptr<ResponsesStreamSession> session) {
       const double timeoutMs = session->sawEvent ? session->options.inactivityTimeoutMs.value_or(inference_deadline::STREAM_INACTIVITY_DEADLINE_MS)
                                                  : rt::Math::max(0.0, session->firstEventDeadlineAtMs - rt::dateNow());
-      const rt::AbortSignal timeout = rt::AbortSignal::timeout(timeoutMs);
-      rt::EventListener abortTimeout;
+      if (!(timeoutMs >= 0) || std::isinf(timeoutMs))
+        throw rt::TypeError("Value " + rt::numberToString(timeoutMs) + " is outside the range [0, 9007199254740991]");
       const auto inactive = rt::withResolvers<ReadResult>();
-      std::optional<ReadResult> result;
-      rt::Reason failure;
-      try {
-        rt::Promise<ReadResult> read = session->control->reader.readPromise();
-        try {
-          abortTimeout = rt::EventListener([reject = inactive.reject] {
-            reject(rt::makeReason(ResponsesStreamError("Upstream Responses stream became inactive.", {.cause = nullptr, .kind = "inactivity_timeout"})));
-          });
-          timeout.addEventListener("abort", abortTimeout, {.once = true});
-        } catch (...) {
-          inactive.reject(std::current_exception());
-        }
-        std::vector<rt::Promise<ReadResult>> racers{read, inactive.promise};
-        rt::Promise<ReadResult> race = rt::race(std::move(racers));
-        result = co_await race.wait();
-      } catch (...) {
-        failure = std::current_exception();
-      }
-      timeout.removeEventListener("abort", abortTimeout);
-      // The deadline listener is gone. Release the private latch's race reaction.
-      inactive.resolve(ReadResult{.done = true, .value = std::nullopt});
-      if (failure) {
-        std::rethrow_exception(failure);
-      }
-      co_return std::move(*result);
+      auto timer = rt::detail::createExactTimer([reject = inactive.reject] {
+        reject(rt::makeReason(ResponsesStreamError("Upstream Responses stream became inactive.", {.cause = nullptr, .kind = "inactivity_timeout"})));
+      }, timeoutMs);
+      timer.unref();
+      const auto cleanup = rt::scopeExit([&] {
+        rt::clearTimeout(timer);
+        // Release the deadline promise's race reaction when the read wins.
+        inactive.resolve(ReadResult{.done = true, .value = std::nullopt});
+      });
+      const rt::Promise<ReadResult> read = session->control->reader.readPromise();
+      const auto race = rt::race(read, inactive.promise);
+      auto result = co_await race.wait();
+      co_return result;
     }
 
     rt::Task<ResponsesStreamChunk> nextChunk(std::shared_ptr<ResponsesStreamSession> session) {
