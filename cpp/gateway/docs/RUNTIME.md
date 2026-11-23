@@ -60,6 +60,12 @@ Each named entry in `memory.caches` has an `entries` count and a retained
 SQLite reports pager bytes and estimates resident page count from the page
 size. The counters expose sizes and counts. [Real-client measurements](findings/cppgw-memory-2-20261121.md)
 
+`runtime_timers` counts queued timer states and their queue nodes.
+`runtime_pending_promises` counts promises with waiting reactions. Its byte
+estimate includes promise bookkeeping and reaction slots. The two estimates
+exclude data owned by callbacks and derived promise states.
+[Live heap measurements](findings/cppgw-memory-4-live-growth-20261123.md)
+
 ## Input limits
 
 The shared constants in [limits.hpp](../include/uos/rt/limits.hpp) record the target defaults. The enforced limits below apply at the parser, library or transport boundary. Keep smaller existing limits on the same operation and record a larger allowance only for a proven application flow. Map failures to the boundary's established status, close code or exception. Source wiring and executed acceptance are recorded separately below.
