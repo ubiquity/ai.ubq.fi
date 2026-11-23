@@ -31,7 +31,7 @@ namespace uos::auth::passport {
     using rt::record::Reader;
     using rt::record::Writer;
 
-    constexpr std::string_view ISSUER = "https://passport.ubq.fi";
+    constexpr std::string_view ISSUER = "https://auth.ubq.fi";
     constexpr std::string_view ORIGIN = "https://ai.ubq.fi";
     const std::string CALLBACK = std::string(ORIGIN) + "/auth/callback";
     constexpr std::string_view SESSION_COOKIE = "__Host-uos_ai_passport_session";
@@ -337,6 +337,22 @@ namespace uos::auth::passport {
     std::string clearStateCookie() { return std::string(STATE_COOKIE) + "=; Max-Age=0" + std::string(COOKIE_ATTRIBUTES); }
     std::string clearVerifierCookie() { return std::string(VERIFIER_COOKIE) + "=; Max-Age=0" + std::string(COOKIE_ATTRIBUTES); }
 
+    rt::Task<rt::Response> exchangeCode(const json::object& exchange) {
+      rt::RequestInit init;
+      init.method = "POST";
+      init.headers = rt::Headers{{"Content-Type", "application/json"}, {"Accept", "application/json"}};
+      init.body = rt::BodyInit(rt::jsonStringify(json::value(exchange)));
+      init.redirect = "error";
+      init.signal = rt::AbortSignal::timeout(10'000);
+      const rt::RequestInfo url(std::string(ISSUER) + "/api/auth/sso/exchange");
+      try {
+        auto call = rt::fetch(url, std::move(init));
+        co_return co_await std::move(call);
+      } catch (...) {
+        throw PassportError(502);
+      }
+    }
+
     rt::Task<rt::Response> callback(rt::Request req) {
       static const rt::Regex STATE("^[A-Za-z0-9_-]{43}\\.(?:admin|chat)$", "");
       static const rt::Regex VERIFIER("^[A-Za-z0-9_-]{43}$", "");
@@ -360,14 +376,7 @@ namespace uos::auth::passport {
         exchange["redirectUri"] = CALLBACK;
         exchange["codeVerifier"] = *codeVerifier;
         exchange["appSession"] = true;
-        rt::RequestInit init;
-        init.method = "POST";
-        init.headers = rt::Headers{{"Content-Type", "application/json"}, {"Accept", "application/json"}};
-        init.body = rt::BodyInit(rt::jsonStringify(json::value(exchange)));
-        init.redirect = "error";
-        init.signal = rt::AbortSignal::timeout(10'000);
-        const std::string url_ = std::string(ISSUER) + "/api/auth/sso/exchange";
-        auto call = rt::fetch(rt::RequestInfo(url_), std::move(init));
+        auto call = exchangeCode(exchange);
         const rt::Response response = co_await std::move(call);
         if (response.status() >= 400 && response.status() < 500) {
           auto cancelling = cancelBody(response);
