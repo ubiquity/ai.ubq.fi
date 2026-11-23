@@ -1,7 +1,7 @@
 # Live heap after streamed Responses and catalog fetches
 
 - [x] Reproduce streamed growth and measure buffered, unversioned and fresh versioned controls.
-- [ ] Record the growing allocation sites and their owners before changing request lifetimes.
+- [x] Record the growing allocation sites and their owners before changing request lifetimes.
 - [ ] Fix retention at the source and account for the identified process-wide structures.
 - [ ] Demonstrate the Release regression gate failing before the fix and passing after it.
 - [ ] Record the 500-request comparisons and scoped Release and ASan results.
@@ -39,3 +39,9 @@ Heaptrack 1.5 compared separate trials of 25 and 125 completed Lithos streams, e
 `readWithDeadline` was the top stack for the timer and signal allocations. It removes its abort listener and settles the private deadline promise after a read, but keeps the 30-minute timer armed. The largest stack accounted for 999 retained signal states in the 100-request diff. `raceLithosReaderRead` showed retained `withResolvers`, `raceOf` and reaction allocations. Its pending abort promise owns a reaction that captures the abort promise itself and the winning result. The runtime's waiting-promise list still links those promises. The regular buffered-body race already settles its abort promise after removing the listener.
 
 The fresh catalog checks exercise the render and delivery path. The stale refresh and receive-backpressure controls are separate because the deployed cache state and socket timings were unknown.
+
+## Catalog controls and remaining deadline timers
+
+A scratch fixture aged the saved exact-version catalog by ten minutes and made its loopback refreshes return 503. It delivered 500 stale catalogs and made 103 refresh attempts in one trial. Individual immediate health samples sometimes included roughly 680 kB of live refresh work. With a 150 ms drain period at each checkpoint, 500 requests moved live bytes from 4,005,424 to 4,045,008. A separate fresh run with a 32 KiB downstream receive buffer moved from 3,440,752 to 3,474,096 bytes. Neither showed a slope near the reported 19 kB per request.
+
+The two stream fixes in `23d80e470b696501582e671565a57133d3bd460e` reduced the 300-request gate to 522,240 bytes. The new gauges in `25ee71f1932d98ff75312551ac90dffe014bcef2` showed another deadline lifetime. The 500 buffered calls added exactly 1,000 queued timers and the 500 streamed calls added 498 with two short timers expiring during the run. The pending promise count returned to six at each settled checkpoint. The remaining timers came from the whole-request inference deadline created by `dispatchLithosUpstreamResult` and the optional read deadline created by `readBoundedResponseBody`. Both scoped operations settled before their 30-minute timers fired. The residual stream growth was 969,824 bytes, including 391,680 bytes in the SQLite pager. The 500 fresh catalog requests added zero timers or pending promises.
