@@ -79,8 +79,9 @@ each stack. Each phase's peak is taken independently across the trace.
 
 The Release live-heap check uses four scripted API-key clients and the local
 Lithos Chat Completions mock. It exercises the public `ubiquity/deepseek-flash`
-Responses route with mixed 2 kB and 200 kB inputs, plus the 389 kB Codex catalog
-at `/v1/models?client_version=0.171.0`. It reads each response to completion
+Responses route with mixed 2 kB and 200 kB inputs, plus an exact-version Codex
+catalog at `/v1/models?client_version=0.171.0`. The 389 kB synthetic catalog grows
+to about 401 kB with the configured Lithos additions. It reads each response to completion
 and measures allocator in-use bytes after batches of 50. Buffered Responses
 and the unversioned models list provide controls.
 
