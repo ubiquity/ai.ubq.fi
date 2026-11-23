@@ -82,7 +82,7 @@ Lithos Chat Completions mock. It exercises the public `ubiquity/deepseek-flash`
 Responses route with mixed 2 kB and 200 kB inputs, plus an exact-version Codex
 catalog at `/v1/models?client_version=0.171.0`. The 389 kB synthetic catalog grows
 to about 401 kB with the configured Lithos additions. It reads each response to completion
-and measures allocator in-use bytes after batches of 50. Buffered Responses
+and measures allocator in-use bytes after batches of 50 and a brief quiet period. Buffered Responses
 and the unversioned models list provide controls.
 
 Use the same sealed package and isolated command above with

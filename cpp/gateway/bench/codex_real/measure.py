@@ -221,6 +221,8 @@ def measure(args, state, command, environment, mock, catalog):
                 for kind, count, expected in live_growth.batches(pool, port, mock.version, args.sessions, traffic, catalog):
                     require(len(mock.calls) == expected and not mock.failures, "Unexpected Lithos dispatches in the batch")
                     terminals(log, reader, expected, pending, check_memory=True, provider="lithos")
+                    # Give socket teardown and durable callbacks a turn before sampling.
+                    time.sleep(0.05)
                     record(count, kind)
             else:
                 for index in range(1, args.sessions + 1):
