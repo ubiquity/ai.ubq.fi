@@ -1,0 +1,43 @@
+# C++ gateway acceptance and open stages
+
+## Selected Linux ARM64 release
+
+- GCC 16.1.1 with simdjson 5.2.0 DOM and simdutf 9.4.0 Base64 encoding passed 441/441 freshly linked and executed binaries and 5,024/5,024 cases with zero failures or skips. [Selected full suite](../../../.data/cpp-gateway-evidence/full-native-gcc16-selected-vendors-1794950578188873969/suite/suite.json)
+- Two packaging passes reproduced 63 files including vendor licenses and notices. All 21 startup and offline CLI controls and the supported four-row conversion in both directions passed. [Build and package](BUILD.md) and [runtime receipt](/tmp/claude-1002/prod/runtime/final-package-v32/runtime-terminal.json)
+- All four interleaved smoke trials passed with 87/87 terminals per trial and durable usage after reopen. Both native trials started the packaged launcher and verified the gateway executable after readiness. Quiet JSON, regex, HTTP and SSE measurements passed on the same package. [Measured results](PERFORMANCE.md)
+- These results bind package manifest `8c0600e80ccecbbc6cdcf8f471ffe340de64e6c7c2f8bb850ee8a50d7187cbd1` and gateway SHA-256 `58cd26cca3b8c40ac08c5ad09a3e4be87adfc8f0a0cd900e0b6fd42a18f5fa22`. [Package receipt](/tmp/claude-1002/prod/runtime/final-package-v32/package-terminal.json)
+
+## Runtime library programme
+
+The selected JSON parser keeps the JavaScript-exact fallback. The selected simdutf change covers Base64 encoding. UTF validation, transcoding and Base64 decoding require their own parity and performance evidence. The separate replacement programme also tracks the remaining library candidates. [OSS replacement plan](OSS-REPLACEMENT-PLAN.md)
+
+## Storage cutover evidence
+
+Rehearse native reads and writes on a consistent stopped copy, including sparse and cyclic stored values.
+Validate the latest stopped writes in the rollback runtime. Historical forward and reverse conversion evidence
+and tooling are available at [STATE A](https://github.com/ubiquity/ai.ubq.fi/tree/ca045a83ebaab6c50c20567d1a825638abac0891). [Native cutover checklist](CUTOVER.md)
+
+## Validated components and remaining behavior
+
+- **Durable KV.** The SQLite backend has synthetic Bun/C++ interoperability evidence including mixed-process compare-and-swap and process-crash checks. Production requires complete value decoding on a consistent stopped copy, with latest writes, revisions, absolute expiry and private custody preserved. Opening the native store can migrate, expire and requeue data. Use a distinct disposable copy and one SQLite implementation per file in each process. Long soak, power-loss behavior and stopped-state rollback on the latest writes remain open. [Durable KV](rt/kv-durable.md)
+- **Network transport.** Existing loopback evidence covers HTTP/1.1, TLS, pooling, streams, redirects and compression decoding. The source-compatible caller header spelling and Cookie joining have Bun differential evidence. The client sends a buffered-body stream using chunked transfer while Bun supplies Content-Length. Proxy support and server-side TLS are outside the current transport implementation. Real upstream and client acceptance remain open. [Fetch transport](rt/fetch-transport.md)
+- **Compression.** Native builds use direct zlib, Brotli and Zstd libraries. The SDK retains its loader path. Valid gzip output can differ byte-for-byte from Bun while decompressing to the same data. Use the runtime stream/error assertions and the current release suite for exact behavioral qualification. [Gzip and streams](rt/gzip.md)
+- **URL and IDNA.** The Linux native ICU 78 UTS #46 component passed URL 6/6 and IDNA 2/2. It covered 1,260 curated rows and 2,228,224 code-point and context observations, including 4,096 surrogate-invalid observations. The checked URL source SHA-256 is `1ad477bba4c8b1a8e70eae45daddb9434af88027931b96a3cdc3af6242e41af5`. The comparison SDK retains its Latin-1 boundary. The component receipt is `/tmp/claude-1002/prod/idna_regex/idna-runtime-readback.json`.
+- **WebAuthn.** The port from `@simplewebauthn/server` 13.2.2 matches 155 earlier Bun fixture cases covering CBOR, certificates and OpenSSL-backed algorithms. Actual vendor-root attestations and live certificate-revocation-list fetching remain open.
+- **SQLite.** Linux native selects host SQLite 3.54.0. The comparison SDK uses 3.40.1. The Linux Bun 1.4.0 oracle reports 3.53.2. Direct-library component observations match Bun for REAL rendering, six large-number hex forms, concat/octet_length, schema-first NOTADB and double-quoted-string handling. The per-connection expression-depth limit matches Bun's 1,000. The measured Linux candidate passed SQLite 29/29, read-only SQLite 5/5 and SQLite KV 17/17. The separate Mac receipt uses its pinned 3.54.0 dylib and Darwin-specific oracle. [SQLite behavior](rt/sqlite.md) and [Selected full suite](../../../.data/cpp-gateway-evidence/full-native-gcc16-selected-vendors-1794950578188873969/suite/suite.json)
+- **Local helper migration.** The scoped inventory is complete. Preserve stored-view options, array and object predicates, key conversions, error causes and readPromise ordering. The borrowed-string, optional error-carrier and reset-settings exceptions retain their recorded dispositions. [Port notes](PORT-NOTES.md)
+- **Generic thrown values.** The generic reason-string conversion differs from Bun for a JSON object with a non-callable own `toString`. Harmony preserves Bun's `TypeError("No default value")` locally and has 51 recorded edge observations. Other callers of the generic helper need their own evidence for this case.
+
+## Platform and toolchain evidence
+
+- **Apple Silicon.** The external macOS 26.7.2 native build passed 369/369 production compilations, 441/441 binaries and 5,029/5,029 cases at `c6cd29f9e9743e37c4eca1a0313194fd3279ba9e`. The separate fallback-loader receipt passed 4/4 binaries and 91/91 cases. These are build and test receipts for those remote snapshots. Mac package, same-binary service acceptance and the target machine's release identity remain open. [Apple Silicon build and results](MACOS.md)
+- **Linux ARM64 sanitizers.** The supervisor’s Linux ARM64 sanitizer run passed 25/25 selected binaries under ASan, UBSan and LeakSanitizer at commit `5b4a66941`, consuming both vendor libraries. [GitHub run 44183482817](https://github.com/ubiquity/ai.ubq.fi/actions/runs/44183482817) The local whole-suite sanitizer, independent Clang 23 release and scoped ThreadSanitizer gates remain open.
+- **Static analysis.** The broad baseline completed 830/830 units with findings from 54 checks, 14,002 unique diagnostics and 39,429 emissions on remote Ubuntu x86_64 LLVM 24 snapshot `51d7f08b16b6`. The saved currentness readback found 56 changed inputs. It independently reconciled 25 production lifetime sites and their unchanged holder definitions, including the disposition of four historical admin sites. Per-instance triage remains open, and the local LLVM 23 routine check profile is separate. Review diagnostics against the exact source identity and retain narrow dispositions. See the [audit report](findings/cppgw-clang-tidy-audit-20261117.md) and `/tmp/claude-1002/prod/portability_docs/resume-orchestrator-1/checkpoint.md`.
+- **Parser qualification.** The recorded external parser work is tied to its snapshots and selected harnesses. Representative value readback is part of cutover. Preserve the selected functional and sanitizer evidence and its scope.
+- **Admin-supplied regular expressions.** Raw pattern input is confined to authenticated `POST /admin/kv-migration/import`. The route compiles and stores the supplied `RegExp` source without matching a request subject. The supervisor accepted this behavior as TypeScript parity.
+- **Raspberry Pi.** Pi qualification needs the ARM64 loader and complete dependency closure, supported Linux confinement and measured memory under its workload. The selected executables require `GLIBC_2.38` and `GLIBCXX_3.4.32`. The VPS host closure reaches GLIBC 2.43. [Build and ABI evidence](BUILD.md#selected-static-runtime-libraries)
+- **Deployment architecture.** The targets are ARM64. The x86_64 CI work supplies historical portability diagnostics. [Portable CI results](CI.md)
+
+## Production cutover
+
+A cutover requires explicit owner approval and separately verified stopped-copy conversion and rollback, native credential and release ownership, immutable package identity, and authenticated requests through the intended live client route. Where the captured failure reader applies, obtain the standalone Sentinel owner's acceptance of the frozen source and confinement. Draft operator service files are uninstalled. The current scope is synthetic build and runtime qualification.

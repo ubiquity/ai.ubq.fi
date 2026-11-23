@@ -1,0 +1,20 @@
+{
+  "ada": ["src/rt/url.cpp"],
+  "llhttp": [
+    "src/runtime/http.cpp",
+    "tests/legacy/runtime_http_llhttp_test.cpp",
+    "fuzz/http_request.cpp",
+    "fuzz/http_server_library.cpp",
+    "src/rt/fetch_transport_http.cpp",
+    "src/rt/websocket_client.cpp"
+  ],
+  "qcbor": [
+    "src/auth/passkeys.cpp",
+    "tests/legacy/passkeys_asn1_library_test.cpp",
+    "fuzz/passkeys.cpp",
+    "fuzz/passkeys_asn1_library.cpp"
+  ],
+  "quickjs-libregexp": ["src/rt/regex_compile.cpp", "src/rt/regex_match.cpp", "src/rt/regex_tables.cpp"],
+  "simdjson": ["src/rt/json.cpp"],
+  "simdutf": ["src/rt/base64.cpp", "src/rt/string.cpp", "src/rt/text_codec.cpp"]
+}

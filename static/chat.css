@@ -1,0 +1,414 @@
+/*
+ * Chat playground surface. Every colour, radius, control height, shadow, duration, and easing comes
+ * from the shared foundation in static/style.css, so this file declares no palette and no theme:
+ * light, dark, focus rings, selection blue, disabled controls, and reduced motion all follow the
+ * shared tokens. The page is an app viewport rather than a scrolling document, and the shared header
+ * keeps its foundation chrome as the first shell row.
+ */
+
+body[data-page="chat"] {
+  overflow: hidden;
+}
+
+body[data-page="chat"] [data-chat-shell] {
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas:
+    "header header"
+    "sidebar main";
+  gap: 14px;
+  width: 100%;
+  max-width: 1600px;
+  height: 100vh;
+  margin: 0 auto;
+  padding: calc(22px + env(safe-area-inset-top)) clamp(20px, 3vw, 44px) calc(22px + env(safe-area-inset-bottom));
+}
+
+/* The shared header only takes its grid slot here; its surface, border, and radius stay shared. */
+body[data-page="chat"] header[data-shared-header] {
+  grid-area: header;
+}
+
+body[data-page="chat"] [data-chat-sidebar] {
+  grid-area: sidebar;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 14px;
+  min-width: 0;
+  min-height: 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+  overflow: auto;
+}
+
+body[data-page="chat"] [data-chat-sidebar-actions] {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+body[data-page="chat"] [data-chat-sidebar-body] {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+}
+
+body[data-page="chat"] [data-chat-panel] {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+body[data-page="chat"] [data-chat-panel] > summary,
+body[data-page="chat"] [data-passkey-advanced] > summary,
+body[data-page="chat"] [data-token-fallback] > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: var(--control-height);
+  margin: 0;
+  list-style: none;
+  cursor: pointer;
+  color: var(--muted-2);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  transition: color var(--duration-fast) ease;
+}
+
+body[data-page="chat"] [data-chat-panel] > summary::-webkit-details-marker,
+body[data-page="chat"] [data-passkey-advanced] > summary::-webkit-details-marker,
+body[data-page="chat"] [data-token-fallback] > summary::-webkit-details-marker {
+  display: none;
+}
+
+body[data-page="chat"] [data-chat-panel] > summary::marker,
+body[data-page="chat"] [data-passkey-advanced] > summary::marker,
+body[data-page="chat"] [data-token-fallback] > summary::marker {
+  content: "";
+}
+
+body[data-page="chat"] [data-chat-panel] > summary::after,
+body[data-page="chat"] [data-passkey-advanced] > summary::after,
+body[data-page="chat"] [data-token-fallback] > summary::after {
+  content: "";
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid currentcolor;
+  border-bottom: 2px solid currentcolor;
+  transform: rotate(-45deg);
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+body[data-page="chat"] [data-chat-panel][open] > summary::after,
+body[data-page="chat"] [data-passkey-advanced][open] > summary::after,
+body[data-page="chat"] [data-token-fallback][open] > summary::after {
+  transform: rotate(45deg);
+}
+
+body[data-page="chat"] [data-passkey-advanced],
+body[data-page="chat"] [data-token-fallback] {
+  display: grid;
+  gap: 10px;
+}
+
+body[data-page="chat"] [data-panel-body],
+body[data-page="chat"] [data-passkey-advanced-body],
+body[data-page="chat"] [data-token-fallback-body] {
+  display: grid;
+  gap: 12px;
+}
+
+body[data-page="chat"] [data-panel-body] > details[data-disclosure] > summary {
+  display: flex;
+  align-items: center;
+  min-height: var(--control-height);
+  transition: color var(--duration-fast) ease;
+}
+
+body[data-page="chat"] [data-panel-body] > details[data-disclosure] [data-layout="row"] {
+  margin-block: 12px;
+}
+
+/* One icon family: 18px inline currentColor strokes at the shared 1.7 weight. */
+body[data-page="chat"] button svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Auth status text names an arbitrary backend origin, so it must wrap instead of widening the page. */
+body[data-page="chat"] [data-badge] {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+/* Streaming keeps the composer and its model controls live, so they need a disabled treatment. */
+body[data-page="chat"] :is(input, select, textarea):disabled {
+  opacity: 0.52;
+  cursor: not-allowed;
+}
+
+body[data-page="chat"] [data-chat-main] {
+  grid-area: main;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  gap: 16px;
+  min-width: 0;
+  min-height: 0;
+  padding: 4px 0 0;
+}
+
+body[data-page="chat"] [data-chat-topbar] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+}
+
+body[data-page="chat"] [data-messages] {
+  min-height: 0;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow: auto;
+}
+
+body[data-page="chat"] [data-messages]:empty {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 0.875rem;
+  text-align: center;
+}
+
+body[data-page="chat"] [data-messages]:empty::before {
+  content: "Start a new chat.";
+}
+
+body[data-page="chat"] [data-message] {
+  max-width: min(720px, 92%);
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  color: var(--text);
+  display: grid;
+  gap: 8px;
+  font-size: 0.875rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+body[data-page="chat"] [data-message-content] {
+  white-space: pre-wrap;
+}
+
+/*
+ * Streaming insertion point. Token streaming and keyboard-sent messages never animate, so the
+ * caret is a static marker that disappears with [data-streaming] instead of a blinking cursor.
+ */
+body[data-page="chat"] [data-message][data-streaming] [data-message-content]::after {
+  content: "";
+  display: inline-block;
+  width: 2px;
+  height: 1.1em;
+  margin-left: 4px;
+  vertical-align: -0.18em;
+  border-radius: 1px;
+  background: var(--muted);
+}
+
+body[data-page="chat"] [data-message="user"] {
+  align-self: flex-end;
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+body[data-page="chat"] [data-message="assistant"] {
+  align-self: flex-start;
+}
+
+body[data-page="chat"] [data-message="system"] {
+  align-self: center;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 0.8125rem;
+  text-align: center;
+}
+
+body[data-page="chat"] [data-message="error"] {
+  align-self: center;
+  border-color: var(--danger);
+  background: var(--danger-fill);
+  color: var(--danger);
+  font-size: 0.8125rem;
+}
+
+body[data-page="chat"] [data-chat-form] {
+  display: grid;
+  gap: 10px;
+}
+
+body[data-page="chat"] [data-chat-compose] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+
+body[data-page="chat"] [data-chat-compose]:focus-within {
+  border-color: var(--focus-ring);
+  box-shadow:
+    0 0 0 3px var(--focus-ring-soft),
+    var(--shadow-soft);
+}
+
+/* The textarea is borderless inside the compose surface, so the surface carries the focus ring. */
+body[data-page="chat"] [data-chat-form] textarea {
+  min-height: 60px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+body[data-page="chat"] [data-chat-form] textarea:focus {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+body[data-page="chat"] [data-chat-compose-actions] {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+/* Anchored to the button's left edge so a long tooltip stays inside a 320px viewport. */
+body[data-page="chat"] [data-chat-form] button[data-tooltip]::after {
+  left: 0;
+}
+
+body[data-page="chat"] [data-chat-stats] {
+  min-width: 0;
+  min-height: 28px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  text-align: center;
+  white-space: normal;
+}
+
+/* The sidebar action sits near the viewport edge, so its tooltip grows to the right. */
+body[data-page="chat"] [data-chat-sidebar-actions] button[data-tooltip]::after {
+  left: 0;
+  transform-origin: 0 100%;
+  transform: translate(0, 4px) scale(0.97);
+}
+
+body[data-page="chat"] [data-chat-sidebar-actions] button[data-tooltip]:focus-visible::after {
+  transform: translate(0, 0) scale(1);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  body[data-page="chat"] [data-chat-panel] > summary:hover,
+  body[data-page="chat"] [data-passkey-advanced] > summary:hover,
+  body[data-page="chat"] [data-token-fallback] > summary:hover,
+  body[data-page="chat"] [data-panel-body] > details[data-disclosure] > summary:hover {
+    color: var(--text);
+  }
+
+  body[data-page="chat"] [data-chat-sidebar-actions] button[data-tooltip]:hover::after {
+    transform: translate(0, 0) scale(1);
+  }
+}
+
+@media (max-width: 900px) {
+  body[data-page="chat"] {
+    overflow: auto;
+  }
+
+  body[data-page="chat"] [data-chat-shell] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "header"
+      "main"
+      "sidebar";
+    height: auto;
+    min-height: 100vh;
+    padding: calc(14px + env(safe-area-inset-top)) 12px calc(24px + env(safe-area-inset-bottom));
+  }
+
+  body[data-page="chat"] [data-chat-main] {
+    min-height: auto;
+    padding: 4px 0 0;
+  }
+
+  body[data-page="chat"] [data-chat-sidebar] {
+    min-height: auto;
+    padding: 16px;
+  }
+
+  body[data-page="chat"] [data-chat-topbar] {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  body[data-page="chat"] [data-chat-compose] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  body[data-page="chat"] [data-chat-compose-actions] {
+    justify-content: flex-end;
+  }
+
+  body[data-page="chat"] [data-messages] {
+    min-height: 50vh;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body[data-page="chat"] [data-chat-panel] > summary::after,
+  body[data-page="chat"] [data-passkey-advanced] > summary::after,
+  body[data-page="chat"] [data-token-fallback] > summary::after {
+    transition: none;
+  }
+}

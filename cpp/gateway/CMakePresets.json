@@ -1,0 +1,258 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "release",
+      "generator": "Ninja",
+      "binaryDir": "$env{UOS_GATEWAY_BUILD_DIR}",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/native-toolchain.cmake",
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_FLAGS_RELEASE": "-O2 -g0",
+        "UOS_GATEWAY_IS_SDK": "OFF",
+        "UOS_GATEWAY_PROFILE": "release",
+        "UOS_GATEWAY_FRAME_RECYCLING_DISABLED": "ON",
+        "CMAKE_FIND_USE_PACKAGE_REGISTRY": "OFF",
+        "CMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY": "OFF"
+      }
+    },
+    {
+      "name": "clang-release",
+      "generator": "Ninja",
+      "binaryDir": "$env{UOS_GATEWAY_BUILD_DIR}",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/native-toolchain.cmake",
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_FLAGS_RELEASE": "-O2 -g0",
+        "UOS_GATEWAY_IS_SDK": "OFF",
+        "UOS_GATEWAY_PROFILE": "clang-release",
+        "UOS_GATEWAY_FRAME_RECYCLING_DISABLED": "OFF",
+        "CMAKE_FIND_USE_PACKAGE_REGISTRY": "OFF",
+        "CMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY": "OFF"
+      }
+    },
+    {
+      "name": "asan-ubsan-clang",
+      "generator": "Ninja",
+      "binaryDir": "$env{UOS_GATEWAY_BUILD_DIR}",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/native-toolchain.cmake",
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_CXX_FLAGS_RELEASE": "-O2 -g0",
+        "UOS_GATEWAY_IS_SDK": "OFF",
+        "UOS_GATEWAY_PROFILE": "asan-ubsan-clang",
+        "UOS_GATEWAY_FRAME_RECYCLING_DISABLED": "OFF",
+        "CMAKE_FIND_USE_PACKAGE_REGISTRY": "OFF",
+        "CMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY": "OFF",
+        "CMAKE_CXX_FLAGS_RELWITHDEBINFO": "-O1 -g1",
+        "UOS_GATEWAY_SANITIZER": "address,undefined"
+      }
+    },
+    {
+      "name": "asan-ubsan-gcc",
+      "generator": "Ninja",
+      "binaryDir": "$env{UOS_GATEWAY_BUILD_DIR}",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/native-toolchain.cmake",
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_CXX_FLAGS_RELEASE": "-O2 -g0",
+        "UOS_GATEWAY_IS_SDK": "OFF",
+        "UOS_GATEWAY_PROFILE": "asan-ubsan-gcc",
+        "UOS_GATEWAY_FRAME_RECYCLING_DISABLED": "OFF",
+        "CMAKE_FIND_USE_PACKAGE_REGISTRY": "OFF",
+        "CMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY": "OFF",
+        "CMAKE_CXX_FLAGS_RELWITHDEBINFO": "-O1 -g1",
+        "UOS_GATEWAY_SANITIZER": "address,undefined"
+      }
+    },
+    {
+      "name": "tsan-threaded",
+      "generator": "Ninja",
+      "binaryDir": "$env{UOS_GATEWAY_BUILD_DIR}",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/native-toolchain.cmake",
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_CXX_FLAGS_RELEASE": "-O2 -g0",
+        "UOS_GATEWAY_IS_SDK": "OFF",
+        "UOS_GATEWAY_PROFILE": "tsan-threaded",
+        "UOS_GATEWAY_FRAME_RECYCLING_DISABLED": "OFF",
+        "CMAKE_FIND_USE_PACKAGE_REGISTRY": "OFF",
+        "CMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY": "OFF",
+        "CMAKE_CXX_FLAGS_RELWITHDEBINFO": "-O1 -g1",
+        "UOS_GATEWAY_SANITIZER": "thread"
+      }
+    },
+    {
+      "name": "fuzz-clang",
+      "generator": "Ninja",
+      "binaryDir": "$env{UOS_GATEWAY_BUILD_DIR}",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/native-toolchain.cmake",
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_CXX_FLAGS_RELEASE": "-O2 -g0",
+        "UOS_GATEWAY_IS_SDK": "OFF",
+        "UOS_GATEWAY_PROFILE": "fuzz-clang",
+        "UOS_GATEWAY_FRAME_RECYCLING_DISABLED": "OFF",
+        "CMAKE_FIND_USE_PACKAGE_REGISTRY": "OFF",
+        "CMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY": "OFF",
+        "CMAKE_CXX_FLAGS_RELWITHDEBINFO": "-O1 -gline-tables-only -fno-sanitize-recover=all",
+        "UOS_GATEWAY_SANITIZER": "address,undefined",
+        "UOS_GATEWAY_FUZZ": "ON"
+      }
+    },
+    {
+      "name": "clang-libcxx",
+      "generator": "Ninja",
+      "binaryDir": "$env{UOS_GATEWAY_BUILD_DIR}",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/native-toolchain.cmake",
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_FLAGS_RELEASE": "-O2 -g0",
+        "UOS_GATEWAY_IS_SDK": "OFF",
+        "UOS_GATEWAY_PROFILE": "clang-libcxx",
+        "UOS_GATEWAY_FRAME_RECYCLING_DISABLED": "OFF",
+        "CMAKE_FIND_USE_PACKAGE_REGISTRY": "OFF",
+        "CMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY": "OFF",
+        "UOS_GATEWAY_LIBCXX": "ON"
+      }
+    },
+    {
+      "name": "sdk-release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/../../.data/cpp-gateway-release",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/sdk-toolchain.cmake",
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_FLAGS_RELEASE": "-O2 -g0",
+        "UOS_GATEWAY_IS_SDK": "ON",
+        "UOS_GATEWAY_PROFILE": "sdk-release",
+        "CMAKE_FIND_USE_PACKAGE_REGISTRY": "OFF",
+        "CMAKE_FIND_USE_SYSTEM_PACKAGE_REGISTRY": "OFF"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "release",
+      "configurePreset": "release",
+      "jobs": 2
+    },
+    {
+      "name": "clang-release",
+      "configurePreset": "clang-release",
+      "jobs": 2
+    },
+    {
+      "name": "asan-ubsan-clang",
+      "configurePreset": "asan-ubsan-clang",
+      "jobs": 2
+    },
+    {
+      "name": "asan-ubsan-gcc",
+      "configurePreset": "asan-ubsan-gcc",
+      "jobs": 2
+    },
+    {
+      "name": "tsan-threaded",
+      "configurePreset": "tsan-threaded",
+      "jobs": 2
+    },
+    {
+      "name": "fuzz-clang",
+      "configurePreset": "fuzz-clang",
+      "jobs": 2
+    },
+    {
+      "name": "clang-libcxx",
+      "configurePreset": "clang-libcxx",
+      "jobs": 2
+    },
+    {
+      "name": "sdk-release",
+      "configurePreset": "sdk-release",
+      "jobs": 2
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "release",
+      "configurePreset": "release",
+      "execution": {
+        "jobs": 1
+      },
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "clang-release",
+      "configurePreset": "clang-release",
+      "execution": {
+        "jobs": 1
+      },
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "asan-ubsan-clang",
+      "configurePreset": "asan-ubsan-clang",
+      "execution": {
+        "jobs": 1
+      },
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "asan-ubsan-gcc",
+      "configurePreset": "asan-ubsan-gcc",
+      "execution": {
+        "jobs": 1
+      },
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "tsan-threaded",
+      "configurePreset": "tsan-threaded",
+      "execution": {
+        "jobs": 1
+      },
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "fuzz-clang",
+      "configurePreset": "fuzz-clang",
+      "execution": {
+        "jobs": 1
+      },
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "clang-libcxx",
+      "configurePreset": "clang-libcxx",
+      "execution": {
+        "jobs": 1
+      },
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "sdk-release",
+      "configurePreset": "sdk-release",
+      "execution": {
+        "jobs": 1
+      },
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}

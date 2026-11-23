@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Uninstalled native gateway launch",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "packageRoot",
+    "stateRoot",
+    "packageManifestSha256",
+    "hostname",
+    "port"
+  ],
+  "properties": {
+    "schema": { "const": "uos-gateway-launch-v1" },
+    "packageRoot": { "type": "string", "pattern": "^/" },
+    "stateRoot": { "type": "string", "pattern": "^/" },
+    "packageManifestSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "hostname": { "const": "127.0.0.1" },
+    "port": { "type": "integer", "minimum": 0, "maximum": 65535, "not": { "enum": [7999, 8000] } },
+    "fixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["syntheticOrigin"],
+      "properties": {
+        "syntheticOrigin": { "type": "string", "pattern": "^http://127\\.0\\.0\\.1:[0-9]+$" }
+      }
+    }
+  },
+  "allOf": [{ "if": { "required": ["fixture"] }, "then": { "properties": { "port": { "const": 0 } } } }]
+}

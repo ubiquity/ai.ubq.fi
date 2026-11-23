@@ -1,0 +1,9 @@
+# Public UbiquityOS AI Gateway discovery surface
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /admin/
+Disallow: /health/providers
+Disallow: /health/upstream
+
+Sitemap: https://ai.ubq.fi/sitemap.xml

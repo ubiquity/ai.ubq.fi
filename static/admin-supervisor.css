@@ -1,0 +1,639 @@
+/* Codex supervisor panel. Scoped to the admin page; reuses the admin theme tokens.
+   Session rows inherit the console's shared key-item material (style.css [data-key]) and
+   restate only what differs here: a nested surface, a tighter rhythm, and a two-line title
+   so a long prompt reads as prose instead of one clipped line. */
+
+body[data-page="admin"]:not([data-auth-scope="admin"]) #view-tab-supervisor {
+  display: none;
+}
+
+body[data-page="admin"] #view-supervisor [data-supervisor-controls] {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+body[data-page="admin"] #view-supervisor [data-supervisor-controls] input,
+body[data-page="admin"] #view-supervisor [data-supervisor-controls] select {
+  width: 100%;
+}
+
+/* The shared [data-muted] micro-label style is for labels, but these lines are sentences:
+   they stay sentence case at a legible size instead of shouting in tracked caps. */
+body[data-page="admin"] #supervisor-summary,
+body[data-page="admin"] #supervisor-updated,
+body[data-page="admin"] #supervisor-follow-status,
+body[data-page="admin"] #supervisor-brief-status {
+  color: var(--muted);
+  font-weight: 500;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+/* Counts are read at a glance, so the figures line up instead of drifting. */
+body[data-page="admin"] #supervisor-summary {
+  margin: 0;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+body[data-page="admin"] #supervisor-updated {
+  color: var(--muted-2);
+  font-size: 11px;
+}
+
+body[data-page="admin"] #supervisor-notice {
+  display: grid;
+  gap: 6px;
+}
+
+body[data-page="admin"] #supervisor-notice [data-tone="warning"] {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-sm);
+  background: var(--warning-fill);
+  color: var(--warning);
+  font-size: 13px;
+}
+
+/* Quota is context, not the headline: one calm surface with aligned numbers. */
+body[data-page="admin"] #supervisor-quota {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+body[data-page="admin"] #supervisor-quota [data-quota-scope] {
+  margin: 0;
+  color: var(--muted-2);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+body[data-page="admin"] #supervisor-quota [data-quota-list] {
+  display: grid;
+  gap: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+body[data-page="admin"] #supervisor-quota [data-quota-list] p {
+  margin: 0;
+}
+
+/* ── Session list ─────────────────────────────────────────────────────────── */
+
+body[data-page="admin"] #supervisor-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  align-content: start;
+}
+
+/* A flat list, not sixty cards: one hairline between sessions, no repeated border,
+   radius or shadow, and the disclosed body as the only inset surface. */
+body[data-page="admin"] #supervisor-list [data-key="supervisor-session"] {
+  display: block;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  contain-intrinsic-size: 72px;
+  contain-intrinsic-size: auto 72px;
+}
+
+body[data-page="admin"] #supervisor-list > [data-key="supervisor-session"]:last-child {
+  border-bottom: 0;
+}
+
+/* The rail carries an attention state or nothing: `content: none` suppresses it on
+   every other row, so only waiting, stale and failed sessions draw one. */
+body[data-page="admin"] #supervisor-list [data-key="supervisor-session"]::before {
+  content: none;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+}
+
+body[data-page="admin"] #supervisor-list [data-key="supervisor-session"][data-state="stale"] {
+  --key-accent: var(--warning);
+}
+
+body[data-page="admin"] #supervisor-list [data-key="supervisor-session"][data-state="system_error"] {
+  --key-accent: var(--danger);
+}
+
+/* A session waiting on a human is the one case worth pulling out of the row's state. */
+body[data-page="admin"]
+  #supervisor-list
+  [data-key="supervisor-session"]:has([data-role="supervisor-state"][data-waiting="true"]) {
+  --key-accent: var(--warning);
+}
+
+body[data-page="admin"] #supervisor-list [data-key="supervisor-session"][data-state="stale"]::before,
+body[data-page="admin"] #supervisor-list [data-key="supervisor-session"][data-state="system_error"]::before,
+body[data-page="admin"]
+  #supervisor-list
+  [data-key="supervisor-session"]:has([data-role="supervisor-state"][data-waiting="true"])::before {
+  content: "";
+}
+
+/* Follow selection already lives on the pressed button; the overview restates it as a tint. */
+body[data-page="admin"]
+  #supervisor-list
+  [data-key="supervisor-session"]:has([data-action="follow"][aria-pressed="true"]) {
+  background: var(--selection);
+}
+
+/* Two overview lines: title and machine, then status, repository and age. Spans only,
+   because a summary accepts phrasing content. */
+body[data-page="admin"] #supervisor-list summary {
+  position: relative;
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 10px 26px 10px 14px;
+  cursor: pointer;
+  list-style: none;
+}
+
+body[data-page="admin"] #supervisor-list summary::-webkit-details-marker {
+  display: none;
+}
+
+body[data-page="admin"] #supervisor-list summary:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+  border-radius: var(--radius-sm);
+}
+
+/* The marker is static: disclosure feedback is immediate and adds no motion. */
+body[data-page="admin"] #supervisor-list summary::after {
+  content: "";
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  margin-top: -5px;
+  border-right: 2px solid var(--muted-2);
+  border-bottom: 2px solid var(--muted-2);
+  transform: rotate(45deg);
+}
+
+body[data-page="admin"] #supervisor-list details[open] > summary::after {
+  margin-top: -2px;
+  transform: rotate(-135deg);
+}
+
+body[data-page="admin"] #supervisor-list summary > [data-supervisor-overview="head"] {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+body[data-page="admin"] #supervisor-list summary > [data-supervisor-overview="meta"] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 10px;
+  min-width: 0;
+  color: var(--muted-2);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Two lines, then ellipsis: the prompt is the content of this panel. A long unbroken
+   token in a title breaks mid-word rather than pushing the row out of its surface. */
+body[data-page="admin"] #supervisor-list [data-role="supervisor-title"] {
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.4;
+}
+
+body[data-page="admin"] #supervisor-list [data-role="supervisor-machine"] {
+  flex: 0 0 auto;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted-2);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+body[data-page="admin"] #supervisor-list [data-role="supervisor-place"] {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+body[data-page="admin"] #supervisor-list [data-role="supervisor-activity"] {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+body[data-page="admin"] #supervisor-list [data-role="supervisor-state"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 9px 1px 7px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+body[data-page="admin"] #supervisor-list [data-role="supervisor-state"]::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+body[data-page="admin"] #supervisor-list [data-role="supervisor-state"][data-state="active"] {
+  background: var(--success-fill);
+  color: var(--success);
+}
+
+body[data-page="admin"] #supervisor-list [data-role="supervisor-state"][data-state="active"][data-waiting="true"] {
+  background: var(--warning-fill);
+  color: var(--warning);
+}
+
+body[data-page="admin"] #supervisor-list [data-role="supervisor-state"][data-state="stale"] {
+  background: var(--warning-fill);
+  color: var(--warning);
+}
+
+body[data-page="admin"] #supervisor-list [data-role="supervisor-state"][data-state="system_error"] {
+  background: var(--danger-fill);
+  color: var(--danger);
+}
+
+/* The id is a courtesy detail: it stays out of the way until it is needed. */
+body[data-page="admin"] #supervisor-list [data-layout="row"] {
+  align-items: center;
+  gap: 8px;
+}
+
+/* The full id gets its own line and wraps, so an expanded row really exposes it. */
+body[data-page="admin"] #supervisor-list [data-role="supervisor-id"] {
+  flex: 1 1 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted-2);
+}
+
+/* ── Disclosed diagnostics ────────────────────────────────────────────────── */
+
+body[data-page="admin"] #supervisor-list [data-supervisor-disclosure] {
+  display: grid;
+  gap: 10px;
+  margin: 0 14px 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+body[data-page="admin"] #supervisor-list [data-role="supervisor-path"] {
+  display: block;
+  min-width: 0;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+/* Diagnostics wrap together at wide widths and stack when the column is narrow. */
+body[data-page="admin"] #supervisor-list [data-supervisor-facts] {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 4px 16px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+body[data-page="admin"] #supervisor-list [data-supervisor-facts] > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+body[data-page="admin"] #supervisor-list [data-role="supervisor-tokens"],
+body[data-page="admin"] #supervisor-list [data-role="supervisor-sampled"] {
+  color: var(--muted-2);
+}
+
+body[data-page="admin"] #view-supervisor button {
+  min-height: var(--control-height);
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--duration-fast) ease,
+    border-color var(--duration-fast) ease,
+    color var(--duration-fast) ease,
+    transform var(--duration-fast) ease-out;
+}
+
+body[data-page="admin"] #view-supervisor button:active {
+  transform: scale(0.97);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  body[data-page="admin"] #view-supervisor button:hover:not(:disabled) {
+    background: var(--surface-3);
+    color: var(--text);
+  }
+}
+
+body[data-page="admin"] #view-supervisor button:focus-visible {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+body[data-page="admin"] #view-supervisor button:disabled {
+  cursor: default;
+  opacity: 0.52;
+}
+
+/* Copying an id is a convenience, not an action: it stays quiet until hovered. */
+body[data-page="admin"] #view-supervisor button[data-action="copy-id"] {
+  border-color: transparent;
+  color: var(--muted-2);
+  font-size: 12px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  body[data-page="admin"] #view-supervisor button[data-action="copy-id"]:hover:not(:disabled) {
+    border-color: var(--border);
+  }
+}
+
+/* Following is a selection, so it takes the console's blue selection tokens, as the
+   pressed filter buttons elsewhere in admin.css do. Green stays reserved for status. */
+body[data-page="admin"] #view-supervisor button[data-action="follow"][aria-pressed="true"] {
+  border-color: var(--link);
+  background: var(--selection);
+  color: var(--link);
+}
+
+/* ── Inspector ────────────────────────────────────────────────────────────── */
+
+body[data-page="admin"] #view-supervisor [data-supervisor-columns] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+  min-width: 0;
+}
+
+body[data-page="admin"] #view-supervisor [data-supervisor-sessions] {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+  min-width: 0;
+}
+
+body[data-page="admin"] #view-supervisor [data-supervisor-inspector] {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+  min-width: 0;
+}
+
+/* The selected session's recorded output sits beside the list instead of under it. */
+body[data-page="admin"] #supervisor-follow,
+body[data-page="admin"] #supervisor-brief {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+/* The panel card's own overflow: hidden makes a sticky inspector inert, so the list is
+   the scrolling pane at desktop widths whether or not a selection is open; the same
+   bound exists before and after selecting a row, so the overview position is kept. */
+@media (min-width: 1100px) {
+  body[data-page="admin"] #view-supervisor [data-supervisor-sessions] {
+    max-height: max(320px, calc(100vh - 340px));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-right: 4px;
+  }
+
+  /* Two columns only while a section is open, so no empty column is reserved. */
+  body[data-page="admin"]
+    #view-supervisor
+    [data-supervisor-columns]:has([data-supervisor-inspector] > section:not([hidden])) {
+    grid-template-columns: minmax(0, 1fr) minmax(320px, 400px);
+  }
+}
+
+body[data-page="admin"] #supervisor-follow-title,
+body[data-page="admin"] #supervisor-brief-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+body[data-page="admin"] #supervisor-follow-status,
+body[data-page="admin"] #supervisor-brief-status {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+body[data-page="admin"] #supervisor-follow-status[data-state="warning"],
+body[data-page="admin"] #supervisor-brief-status[data-state="warning"] {
+  color: var(--warning);
+}
+
+body[data-page="admin"] #supervisor-follow-log {
+  display: grid;
+  gap: 10px;
+  max-height: 420px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 4px;
+}
+
+body[data-page="admin"] #supervisor-follow-log [data-follow-entry] {
+  display: grid;
+  gap: 5px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+body[data-page="admin"] #supervisor-follow-log [data-follow-entry] p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+
+body[data-page="admin"] #supervisor-follow-log [data-follow-entry] code {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+body[data-page="admin"] #supervisor-follow-log [data-follow-entry] pre {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+
+body[data-page="admin"] #supervisor-follow-log [data-follow-entry] span {
+  color: var(--muted-2);
+  font-size: 11px;
+}
+
+body[data-page="admin"] #supervisor-brief-body {
+  display: grid;
+  gap: 10px;
+}
+
+body[data-page="admin"] #supervisor-brief [data-brief-section] {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+body[data-page="admin"] #supervisor-brief [data-brief-section] h3 {
+  margin: 0;
+  color: var(--muted-2);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+body[data-page="admin"] #supervisor-brief [data-brief-section] p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+
+body[data-page="admin"] #supervisor-empty {
+  margin: 0;
+  padding: 16px 4px;
+  place-items: center;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+/* The read-only provider strip the panel appends shares this page's card body but has
+   no list container of its own; give its entries the same rhythm as the session list. */
+body[data-page="admin"] #view-supervisor [data-provider-list] {
+  display: grid;
+  gap: 8px;
+}
+
+/* ── Narrow viewports ─────────────────────────────────────────────────────── */
+
+@media (max-width: 900px) {
+  /* The search field keeps a full row; the two filters share the next one. */
+  body[data-page="admin"] #view-supervisor [data-supervisor-controls] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  body[data-page="admin"] #view-supervisor [data-supervisor-controls] > [data-field]:first-child {
+    grid-column: 1 / -1;
+  }
+
+  body[data-page="admin"] #supervisor-list [data-supervisor-disclosure] {
+    margin: 0 10px 10px;
+  }
+}
+
+@media (max-width: 620px) {
+  body[data-page="admin"] #view-supervisor [data-supervisor-controls] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* The id takes its own line instead of being squeezed into a sliver beside the actions. */
+  body[data-page="admin"] #supervisor-list [data-role="supervisor-id"] {
+    flex: 1 1 100%;
+  }
+
+  body[data-page="admin"] #supervisor-list summary {
+    padding-right: 22px;
+  }
+
+  body[data-page="admin"] #view-supervisor [data-provider-heading] [data-muted] {
+    text-align: left;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body[data-page="admin"] #view-supervisor button {
+    transition:
+      background var(--duration-fast) ease,
+      border-color var(--duration-fast) ease,
+      color var(--duration-fast) ease;
+  }
+
+  body[data-page="admin"] #view-supervisor button:active {
+    transform: none;
+  }
+}

@@ -1,0 +1,279 @@
+name: C++ gateway CI
+run-name: C++ gateway CI ${{ github.sha }}
+
+# The full gateway suite and the registered library robustness harnesses run on ARM64.
+on:
+  push:
+    branches: [claude/cpp-gateway-port, "pool-merge/**", "agent-jobs/**"]
+  pull_request:
+    branches: [claude/cpp-gateway-port]
+  workflow_dispatch:
+
+concurrency:
+  group: cpp-gateway-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CCACHE_MAXSIZE: 1900MB
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  suite:
+    name: ${{ matrix.config }} suite (shard ${{ matrix.shard }}/4)
+    runs-on: ubuntu-26.04-arm
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        config: [release, asan]
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+        id: checkout
+        with:
+          persist-credentials: false
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang llvm ninja-build pkg-config ccache mold util-linux libboost-json-dev \
+            libboost-container-dev libssl-dev zlib1g-dev libicu-dev libbrotli-dev libzstd-dev
+          clang++ --version
+      - name: Build SQLite 3.54.0 (the suite's pinned version)
+        run: |
+          mkdir -p "$RUNNER_TEMP/sqlite" && cd "$RUNNER_TEMP/sqlite"
+          curl --fail --silent --show-error --location https://www.sqlite.org/2026/sqlite-autoconf-3540000.tar.gz -o sqlite.tar.gz
+          echo "134ec0802dda5795816e25d25872d20b312cb3973438c49b30bc40b7705ea9ed  sqlite.tar.gz" | sha256sum --check
+          tar -xzf sqlite.tar.gz && cd sqlite-autoconf-3540000
+          ./configure --prefix=/usr/local --disable-static --disable-readline CFLAGS='-O2 -DSQLITE_DQS=3' > /dev/null
+          make -j4 > /dev/null && sudo make install > /dev/null && sudo ldconfig
+      - name: Fingerprint the toolchain and vendored sources
+        id: fingerprint
+        run: |
+          fingerprint=$(bash cpp/gateway/tools/ci-cache-key.sh)
+          printf 'hash=%s\n' "$fingerprint" >> "$GITHUB_OUTPUT"
+          printf 'CCACHE_DIR=%s/ccache\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Restore compiler cache
+        id: ccache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-ubuntu-26.04-arm-${{ matrix.config }}-${{ steps.fingerprint.outputs.hash }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-ubuntu-26.04-arm-${{ matrix.config }}-${{ steps.fingerprint.outputs.hash }}-
+      - name: Build and test
+        env:
+          CC: clang
+          CXX: clang++
+          UOS_CI_JOBS: 4
+          UOS_CI_BUILD_DIR: ${{ runner.temp }}/uos-gateway-build
+          UOS_CI_SQLITE_PREFIX: /usr/local
+          CONFIG: ${{ matrix.config }}
+          SHARD: ${{ matrix.shard }}
+        run: |
+          mkdir -p "$UOS_CI_BUILD_DIR"
+          bash cpp/gateway/tools/ci-build.sh --config "$CONFIG" --shard "$SHARD/4" 2>&1 | tee "$UOS_CI_BUILD_DIR/driver.log"
+      - name: Check native gateway session memory
+        if: matrix.config == 'release' && matrix.shard == 1
+        env:
+          UOS_CI_BUILD_DIR: ${{ runner.temp }}/uos-gateway-build
+        run: |
+          sudo apt-get install -y -qq patchelf libsqlite3-dev
+          bench=cpp/gateway/bench
+          receipt=$(find "$UOS_CI_BUILD_DIR" -path '*/release/receipt.json' -type f -print -quit)
+          test -n "$receipt"
+          memory_build="$RUNNER_TEMP/codex-memory-package"
+          bash "$bench/codex_real/sqlite.sh" python3 -B "$bench/codex_real/build.py" \
+            --receipt "$receipt" --out "$memory_build"
+          client=(--scripted)
+          if codex_native=$(python3 -I "$bench/codex_real/measure.py" --find-codex codex); then
+            client=(--codex "$codex_native")
+          fi
+          bash "$bench/codex_real/sqlite.sh" bash "$bench/request_path/isolated.sh" --codex-real \
+            --package "$memory_build/package" --seed-state "$memory_build/seed-state" \
+            --out "$RUNNER_TEMP/codex-memory" --check "${client[@]}"
+          bash "$bench/codex_real/sqlite.sh" bash "$bench/request_path/isolated.sh" --codex-real \
+            --package "$memory_build/package" --seed-state "$memory_build/seed-state" \
+            --out "$RUNNER_TEMP/codex-burst-memory" --scripted --check-burst
+          timeout 240s bash "$bench/codex_real/sqlite.sh" bash "$bench/request_path/isolated.sh" --codex-real \
+            --package "$memory_build/package" --seed-state "$memory_build/seed-state" \
+            --out "$RUNNER_TEMP/codex-live-memory" --scripted --check-live-growth
+      - name: Save compiler cache
+        if: matrix.shard == 1 && steps.ccache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ steps.ccache.outputs.cache-primary-key }}
+      - name: Summarize results
+        if: always()
+        env:
+          CHECKOUT_OUTCOME: ${{ steps.checkout.outcome }}
+          CONFIG: ${{ matrix.config }}
+          UOS_CI_BUILD_DIR: ${{ runner.temp }}/uos-gateway-build
+        run: |
+          mkdir -p "$UOS_CI_BUILD_DIR"
+          summary="$UOS_CI_BUILD_DIR/summary.md"
+          if [[ "$CHECKOUT_OUTCOME" == success ]]; then
+            python3 -B cpp/gateway/cmake/ci/summary.py "$UOS_CI_BUILD_DIR" --config "$CONFIG" > "$summary"
+          else
+            printf '### C++ gateway %s suite\n\nCheckout failed. See the checkout step log.\n' "$CONFIG" > "$summary"
+          fi
+          cat "$summary" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-${{ matrix.config }}-shard-${{ matrix.shard }}
+          path: |
+            ${{ runner.temp }}/uos-gateway-build/*/${{ matrix.config }}/receipt.json
+            ${{ runner.temp }}/uos-gateway-build/*/${{ matrix.config }}/results.tsv
+            ${{ runner.temp }}/uos-gateway-build/**/*.log
+            ${{ runner.temp }}/uos-gateway-build/summary.md
+            ${{ runner.temp }}/codex-memory/fixture.json
+            ${{ runner.temp }}/codex-memory/results.json
+            ${{ runner.temp }}/codex-memory/samples.jsonl
+            ${{ runner.temp }}/codex-memory/upstream.json
+            ${{ runner.temp }}/codex-burst-memory/fixture.json
+            ${{ runner.temp }}/codex-burst-memory/results.json
+            ${{ runner.temp }}/codex-burst-memory/samples.jsonl
+            ${{ runner.temp }}/codex-burst-memory/upstream.json
+            ${{ runner.temp }}/codex-live-memory/fixture.json
+            ${{ runner.temp }}/codex-live-memory/results.json
+            ${{ runner.temp }}/codex-live-memory/samples.jsonl
+            ${{ runner.temp }}/codex-live-memory/upstream.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  targets:
+    name: Discover robustness targets
+    runs-on: ubuntu-26.04-arm
+    outputs:
+      matrix: ${{ steps.list.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Read target registry
+        id: list
+        run: |
+          mkdir -p "$RUNNER_TEMP/fuzz-targets"
+          matrix="$RUNNER_TEMP/fuzz-targets/matrix.json"
+          python3 -B - "$matrix" <<'PY'
+          import json
+          from pathlib import Path
+          import sys
+
+          targets = json.loads(Path("cpp/gateway/fuzz/targets.json").read_text())["targets"]
+          if not isinstance(targets, dict) or not targets:
+              sys.exit("The robustness registry must contain at least one target.")
+          Path(sys.argv[1]).write_text(json.dumps(sorted(targets)) + "\n")
+          PY
+          printf 'matrix=%s\n' "$(cat "$matrix")" >> "$GITHUB_OUTPUT"
+      - name: Summarize target selection
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/fuzz-targets"
+          {
+            printf '### C++ gateway robustness targets\n\n'
+            if [[ -f "$RUNNER_TEMP/fuzz-targets/matrix.json" ]]; then
+              printf '%s\n' '~~~json'
+              cat "$RUNNER_TEMP/fuzz-targets/matrix.json"
+              printf '%s\n' '~~~'
+            else
+              printf 'Target discovery failed. See the checkout or registry step log.\n'
+            fi
+          } | tee "$RUNNER_TEMP/fuzz-targets/summary.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload target selection
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-targets
+          path: ${{ runner.temp }}/fuzz-targets
+          if-no-files-found: warn
+          retention-days: 14
+
+  fuzz:
+    name: robustness (${{ matrix.target }})
+    needs: targets
+    runs-on: ubuntu-26.04-arm
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.targets.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang llvm ccache util-linux libboost-json-dev libboost-container-dev libbrotli-dev \
+            libssl-dev libsqlite3-dev zlib1g-dev libzstd-dev libicu-dev
+          clang++ --version
+      - name: Fingerprint the toolchain and vendored sources
+        id: fingerprint
+        run: |
+          fingerprint=$(bash cpp/gateway/tools/ci-cache-key.sh)
+          printf 'hash=%s\n' "$fingerprint" >> "$GITHUB_OUTPUT"
+          printf 'CCACHE_DIR=%s/ccache\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Restore compiler cache
+        id: ccache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-ubuntu-26.04-arm-fuzz-${{ steps.fingerprint.outputs.hash }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-ubuntu-26.04-arm-fuzz-${{ steps.fingerprint.outputs.hash }}-
+      - name: Build and fuzz
+        env:
+          FUZZ_SECONDS: ${{ github.event_name == 'push' && github.ref == 'refs/heads/claude/cpp-gateway-port' && '2400' || '300' }}
+          FUZZ_TARGET: ${{ matrix.target }}
+        run: |
+          fuzz_out="$RUNNER_TEMP/fuzz"
+          mkdir -p "$fuzz_out/home" "$fuzz_out/tmp"
+          sudo -n unshare --net -- setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-groups --no-new-privs \
+            env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 HOME="$fuzz_out/home" TMPDIR="$fuzz_out/tmp" \
+            CCACHE_DIR="$CCACHE_DIR" CCACHE_MAXSIZE="$CCACHE_MAXSIZE" \
+            python3 -B cpp/gateway/fuzz/ci.py "$FUZZ_TARGET" --seconds "$FUZZ_SECONDS" --jobs 4 --out "$fuzz_out" \
+            2>&1 | tee "$fuzz_out/build.log"
+      - name: Save compiler cache
+        if: matrix.target == fromJSON(needs.targets.outputs.matrix)[0] && steps.ccache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ steps.ccache.outputs.cache-primary-key }}
+      - name: Summarize campaign
+        if: always()
+        env:
+          FUZZ_TARGET: ${{ matrix.target }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/fuzz"
+          {
+            printf '### C++ gateway robustness (%s)\n\n' "$FUZZ_TARGET"
+            if [[ -f "$RUNNER_TEMP/fuzz/summary.json" ]]; then
+              printf '%s\n' '~~~json'
+              cat "$RUNNER_TEMP/fuzz/summary.json"
+              printf '%s\n' '~~~'
+            else
+              printf 'The runner produced no campaign receipt. See the step logs and any uploaded diagnostics.\n'
+            fi
+          } | tee "$RUNNER_TEMP/fuzz/summary.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload campaign results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-${{ matrix.target }}
+          path: |
+            ${{ runner.temp }}/fuzz/artifacts
+            ${{ runner.temp }}/fuzz/build.log
+            ${{ runner.temp }}/fuzz/campaign.log
+            ${{ runner.temp }}/fuzz/summary.json
+            ${{ runner.temp }}/fuzz/summary.md
+          if-no-files-found: warn
+          retention-days: 14

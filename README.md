@@ -1,243 +1,32 @@
-# ai.ubq.fi
+# Ubiquity gateway
 
-OpenAI API-compatible gateway for the ubq.fi ecosystem (Deno Deploy).
+This branch contains the native C++20 gateway for OpenAI-compatible Chat Completions, Responses, and the gateway's model, auth and operator routes. Linux ARM64 is the serving target. The tree includes C++ tests, native build and packaging scripts, and browser assets served from `static/`. The macOS ARM64 package supports native development and an offline version check. [Native gateway guide](cpp/gateway/README.md)
 
-## How auth works
+- [Build and CI](cpp/gateway/docs/CI.md)
+- [Release packages](cpp/gateway/docs/RELEASES.md)
+- [Runtime and operator guide](cpp/gateway/docs/RUNTIME.md)
+- [Arch Linux ARM cutover checklist](cpp/gateway/docs/CUTOVER.md)
+- [Paired conformance](cpp/gateway/docs/CONFORMANCE.md)
 
-- Clients authenticate to `ai.ubq.fi` with a **UBQ gateway token**: `Authorization: Bearer <token>`.
-  - Accepted tokens come from `UBIQUITY_AI_USER_TOKEN` and/or API keys stored in Deno KV (created via
-    `/admin/api-keys`).
-  - Admin tokens (including Deno Deploy tokens) also grant access to client routes (`/v1/*`).
-- The gateway **does not use or forward your client token upstream**.
-  - For upstream requests, it uses **Codex CLI ChatGPT auth** from `CODEX_AUTH_JSON_B64` (base64 of
-    `~/.codex/auth.json`).
-  - Upstream usage/limits are tied to that OpenAI account + plan; client-provided OpenAI API keys are ignored.
-  - The OAuth `client_id` used for refresh-token rotation is **public** (not a secret); the secrets are the tokens in
-    `CODEX_AUTH_JSON_B64` and your client/admin tokens.
+The paired comparison with the TypeScript gateway lives at [commit `ca045a83ebaab6c50c20567d1a825638abac0891`](https://github.com/ubiquity/ai.ubq.fi/tree/ca045a83ebaab6c50c20567d1a825638abac0891/cpp/gateway/conformance).
 
-## Quickstart (curl)
+Run native build, test and packaging commands from the checkout root.
 
-Set a gateway token:
-
-```bash
-export UBIQUITY_AI_USER_TOKEN="..."
+```sh
+cd "$(git rev-parse --show-toplevel)"
 ```
 
-Create one (admin):
+## Output-token caps
 
-```bash
-curl -sS https://ai.ubq.fi/admin/api-keys \
-  -H "Authorization: Bearer $UBIQUITY_AI_ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  --data '{"name":"example key"}' \
-  | jq -r .token
-```
+`max_completion_tokens` is the OpenAI Chat Completions cap. `max_output_tokens` is the OpenAI Responses cap. Both are positive-integer output caps. Do not swap these fields between endpoints.
 
-Health:
+| Request and provider                          | Gateway behavior                                                                                                            |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Chat Completions to Codex                     | `max_completion_tokens` is translated to the Codex Responses field `max_output_tokens`.                                     |
+| Responses to Codex                            | `max_output_tokens` is forwarded as `max_output_tokens`.                                                                    |
+| Chat Completions to Cerebras (`gpt-oss-120b`) | `max_completion_tokens` is forwarded unchanged. The gateway buffers the upstream completion before replaying requested SSE. |
+| Chat Completions to DeepSeek official         | `max_completion_tokens` is translated to DeepSeek's documented `max_tokens`.                                                |
+| Responses to DeepSeek official                | `max_output_tokens` is translated to DeepSeek's documented `max_tokens`.                                                    |
+| Paid fallback (Metered or Surplus)            | Chat `max_completion_tokens` arrives as `max_output_tokens`. Responses forwards its own cap.                                |
 
-```bash
-curl -sS https://ai.ubq.fi/health
-```
-
-List models:
-
-```bash
-curl -sS https://ai.ubq.fi/v1/models \
-  -H "Authorization: Bearer $UBIQUITY_AI_USER_TOKEN"
-```
-
-Whoami (debug which auth method was used; never returns raw secrets):
-
-```bash
-curl -sS https://ai.ubq.fi/v1/auth \
-  -H "Authorization: Bearer $UBIQUITY_AI_USER_TOKEN" \
-  | jq
-```
-
-Chat completion (OpenAI-compatible):
-
-```bash
-curl -sS https://ai.ubq.fi/v1/chat/completions \
-  -H "Authorization: Bearer $UBIQUITY_AI_USER_TOKEN" \
-  -H "Content-Type: application/json" \
-  --data '{
-    "model": "gpt-5.1-codex-mini",
-    "reasoning_effort": "high",
-    "messages": [{"role":"user","content":"Tell me a short joke."}],
-    "stream": false
-  }'
-```
-
-Just the assistant message text:
-
-```bash
-curl -sS https://ai.ubq.fi/v1/chat/completions \
-  -H "Authorization: Bearer $UBIQUITY_AI_USER_TOKEN" \
-  -H "Content-Type: application/json" \
-  --data '{"model":"gpt-5-chat-latest","messages":[{"role":"user","content":"Tell me a short joke."}],"stream":false}' \
-  | jq -r '.choices[0].message.content'
-```
-
-Notes:
-
-- `system` messages are not supported by the Codex upstream; the gateway converts them to `developer`.
-- The Codex upstream requires `stream: true`; when you set `"stream": false`, the gateway buffers the upstream stream
-  and returns a normal JSON response.
-- Defaults: if `model` is omitted/blank, the gateway uses `gpt-5-chat-latest`; if reasoning is omitted, the gateway uses
-  `xhigh` reasoning effort (for `gpt-5*` and `o*` models).
-
-Streaming:
-
-```bash
-curl -N https://ai.ubq.fi/v1/chat/completions \
-  -H "Authorization: Bearer $UBIQUITY_AI_USER_TOKEN" \
-  -H "Content-Type: application/json" \
-  --data '{
-    "model": "gpt-5.1-codex-mini",
-    "stream": true,
-    "messages": [{"role":"user","content":"Say hello in 5 different ways."}]
-  }'
-```
-
-Responses (OpenAI-compatible):
-
-```bash
-curl -sS https://ai.ubq.fi/v1/responses \
-  -H "Authorization: Bearer $UBIQUITY_AI_USER_TOKEN" \
-  -H "Content-Type: application/json" \
-  --data '{
-    "model": "gpt-5-chat-latest",
-    "reasoning": { "effort": "high" },
-    "input": "Summarize this in 1 sentence: ..."
-  }'
-```
-
-## CLI (ubq-ai)
-
-Run from this repo:
-
-```bash
-cd lib/ai.ubq.fi
-export UBIQUITY_AI_USER_TOKEN="..."
-deno task ubq-ai chat "Tell me a short joke."
-```
-
-Client commands also accept an admin token (`UBIQUITY_AI_ADMIN_TOKEN` or `DENO_DEPLOY_TOKEN`) when
-`UBIQUITY_AI_USER_TOKEN` is unset.
-
-Install on your machine:
-
-```bash
-cd lib/ai.ubq.fi
-deno install -g --allow-env --allow-net --allow-read -n ubq-ai scripts/ubq-ai.ts
-```
-
-Examples:
-
-```bash
-export UBIQUITY_AI_USER_TOKEN="..."
-ubq-ai whoami | jq
-ubq-ai models | jq
-ubq-ai chat "Tell me a short joke."
-ubq-ai chat --reasoning-effort high "Solve: 24*7."
-ubq-ai chat --stream "Say hello in 5 different ways."
-ubq-ai responses "Summarize this in 1 sentence: ..."
-ubq-ai responses --reasoning-effort high "Write a short proof sketch for the pigeonhole principle."
-```
-
-Debug (prints useful env/token fingerprints to stderr, never raw secrets):
-
-```bash
-ubq-ai -v models
-```
-
-Admin examples (uses `UBIQUITY_AI_ADMIN_TOKEN` or falls back to `DENO_DEPLOY_TOKEN`):
-
-```bash
-export DENO_DEPLOY_TOKEN="..."
-ubq-ai admin upload-auth --auth-json ~/.codex/auth.json | jq
-ubq-ai admin keys create "example key"
-ubq-ai admin keys list | jq
-```
-
-## Runtime env
-
-- `CODEX_AUTH_JSON_B64` (required): base64 of `~/.codex/auth.json` from a machine that ran `codex login`.
-- `UBIQUITY_AI_USER_TOKEN` (optional): Comma- or newline-separated client tokens accepted via
-  `Authorization: Bearer ...`. The gateway can also accept API keys stored in Deno KV (created via `/admin/api-keys`).
-- `UBIQUITY_AI_ADMIN_TOKEN` (optional, recommended): Tokens accepted for admin endpoints. If unset on Deno Deploy, the
-  admin endpoints accept a Deno Deploy token (`DENO_DEPLOY_TOKEN`) after verification against the Deno API.
-- `CODEX_BASE_URL` (optional): Defaults to `https://chatgpt.com/backend-api/codex`.
-- `CODEX_INSTRUCTIONS_B64` (optional): base64 override for the upstream `instructions` string (defaults to
-  `codex_instructions.md`).
-- `CORS_ALLOW_ORIGIN` (optional): Defaults to `*`.
-
-## Admin: upload/validate Codex auth.json
-
-This validates your posted `auth.json` against the upstream Codex endpoint and, if valid, stores the tokens in Deno KV
-(becoming the active upstream auth for subsequent requests).
-
-Treat `auth.json` as a secret (it contains refresh tokens).
-
-```bash
-export UBIQUITY_AI_ADMIN_TOKEN="..."
-curl -sS https://ai.ubq.fi/admin/codex/auth \
-  -H "Authorization: Bearer $UBIQUITY_AI_ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  --data-binary @~/.codex/auth.json \
-  | jq
-```
-
-Or use the repo helper CLI:
-
-```bash
-cd lib/ai.ubq.fi
-export UBIQUITY_AI_ADMIN_TOKEN="..."
-deno task upload:auth --url https://ai.ubq.fi
-```
-
-The helper CLI also accepts `DENO_DEPLOY_TOKEN` (if `UBIQUITY_AI_ADMIN_TOKEN` is unset).
-
-## Admin: create/manage UBQ API keys
-
-API keys are stored in Deno KV (hashed) and are only returned once on creation.
-
-Create (token only):
-
-```bash
-cd lib/ai.ubq.fi
-export UBIQUITY_AI_ADMIN_TOKEN="..."
-deno task ubq-ai admin keys create "example key"
-```
-
-List (admin):
-
-```bash
-deno task ubq-ai admin keys list
-```
-
-Revoke (admin):
-
-```bash
-deno task ubq-ai admin keys revoke --id "<id>"
-```
-
-## Supported routes
-
-- `GET /` and `GET /health`
-- `POST /admin/codex/auth` (admin only)
-- `POST /admin/api-keys` (admin only)
-- `GET /admin/api-keys` (admin only)
-- `POST /admin/api-keys/revoke` (admin only)
-- `GET /v1/auth`
-- `GET /v1/models`
-- `POST /v1/chat/completions` (streaming and non-streaming)
-- `POST /v1/responses` (streaming and non-streaming; non-streaming buffers upstream SSE)
-
-## Local dev
-
-```bash
-export UBIQUITY_AI_USER_TOKEN="dev-token"
-export CODEX_AUTH_JSON_B64="$(base64 < ~/.codex/auth.json | tr -d '\n')"
-deno task dev
-```
+DeepSeek official uses `https://api.deepseek.com/chat/completions` and returns `deepseek_api_key_missing` when its key is absent. When translating Responses API tool history to Chat Completions, a function call and its output become an assistant turn with `tool_calls` followed by the tool result.
