@@ -22,6 +22,27 @@
 #include "uos/rt/clock.hpp"
 #include <memory>
 
+namespace uos::provider::lithos {
+  class RequestDeadline {
+  public:
+    RequestDeadline()
+      : timer_(rt::detail::createExactTimer([controller = controller_] {
+          controller.abort(rt::timeoutErrorReason());
+        }, inference_deadline::INFERENCE_DEADLINE_MS)) {
+      timer_.unref();
+    }
+    ~RequestDeadline() { rt::clearTimeout(timer_); }
+    RequestDeadline(const RequestDeadline&) = delete;
+    RequestDeadline& operator=(const RequestDeadline&) = delete;
+
+    rt::AbortSignal signal() const { return controller_.signal(); }
+
+  private:
+    rt::AbortController controller_;
+    rt::Timeout timer_;
+  };
+}
+
 namespace uos::provider::lithos_handlers {
   using namespace openai_telemetry;
   using namespace upstream_wire;
@@ -253,8 +274,10 @@ namespace uos::provider::lithos_handlers {
       }
     }
     rt::Task<LithosDispatchResult> dispatchLithosUpstreamResult(rt::Request req, json::object body, std::string modelRaw,
-      const UsageContext* usageContext, bool streamed, std::optional<LithosRefusalWaitPolicy> refusalWaitPolicy = std::nullopt) {
-      auto downstreamSignal = openai::downstreamSignalFor(req, usageContext), requestSignal = openai::inferenceSignal(req, usageContext);
+      const UsageContext* usageContext, const RequestDeadline& deadline, bool streamed,
+      std::optional<LithosRefusalWaitPolicy> refusalWaitPolicy = std::nullopt) {
+      auto downstreamSignal = openai::downstreamSignalFor(req, usageContext);
+      auto requestSignal = rt::AbortSignal::any({downstreamSignal, deadline.signal()});
       auto canonicalModel = lithosUpstreamModelFor(modelRaw).value_or(rt::trim(modelRaw));
       auto ladder = lithosFailoverLadderFor(modelRaw); auto stickyTarget = lithosFailoverTargetAt(modelRaw, rt::dateNow());
       std::size_t ladderIndex = 0;
@@ -286,7 +309,8 @@ namespace uos::provider::lithos_handlers {
     if (usageContext && usageContext->responseTelemetry) { usageContext->responseTelemetry->provider = "lithos";
       usageContext->responseTelemetry->reasoning = fields.reasoning; usageContext->responseTelemetry->outputTokenAllowance = deepseek::handlers::deepSeekChatClientOutputAllowance(rawRecord); }
     RecordRequestUsageDetails details{modelRaw, "chat.completions", fields.clientWantsStream, fields.reasoning}; auto requestUsage = recordRequestUsage(usageContext, details); co_await requestUsage.wait();
-    auto dispatchTask = dispatchLithosUpstreamResult(req, body, modelRaw, usageContext, fields.clientWantsStream); auto dispatched = co_await std::move(dispatchTask);
+    const auto deadline = std::make_shared<RequestDeadline>();
+    auto dispatchTask = dispatchLithosUpstreamResult(req, body, modelRaw, usageContext, *deadline, fields.clientWantsStream); auto dispatched = co_await std::move(dispatchTask);
     if (auto* pending = std::get_if<LithosPendingDispatch>(&dispatched)) {
       auto servedModel = std::make_shared<std::string>(modelRaw);
       auto upstream = pending->pending.then([servedModel](const LithosDispatchOutcome& outcome) {
@@ -294,14 +318,14 @@ namespace uos::provider::lithos_handlers {
         return std::get<LithosDispatchFailed>(outcome).response;
       });
       std::function<std::string()> served = [servedModel] { return *servedModel; };
-      co_return streamLithosChatCompletion(upstream, std::nullopt, usageContext, pending->downstreamSignal, pending->requestSignal, *upstreamModel, served, pending->cancel);
+      co_return streamLithosChatCompletion(upstream, std::nullopt, usageContext, pending->downstreamSignal, pending->requestSignal, *upstreamModel, served, pending->cancel, deadline);
     }
     if (auto* failure = std::get_if<LithosDispatchFailed>(&dispatched)) {
-      if (fields.clientWantsStream) co_return streamLithosChatCompletion(failure->response, std::nullopt, usageContext, failure->downstreamSignal, failure->requestSignal, *upstreamModel, modelRaw);
+      if (fields.clientWantsStream) co_return streamLithosChatCompletion(failure->response, std::nullopt, usageContext, failure->downstreamSignal, failure->requestSignal, *upstreamModel, modelRaw, {}, deadline);
       co_return failure->response;
     }
     auto result = std::get<LithosDispatchOk>(dispatched);
-    if (fields.clientWantsStream) co_return streamLithosChatCompletion(result.upstream, result.providerRequestId, usageContext, result.downstreamSignal, result.requestSignal, *upstreamModel, result.servedModel);
+    if (fields.clientWantsStream) co_return streamLithosChatCompletion(result.upstream, result.providerRequestId, usageContext, result.downstreamSignal, result.requestSignal, *upstreamModel, result.servedModel, {}, deadline);
     bounded_response_body::ReadBoundedResponseBodyOptions captureOptions{.signal = result.requestSignal, .maxBytes = LITHOS_BUFFERED_BODY_MAX_BYTES,
       .timeoutMs = inference_deadline::BUFFERED_INFERENCE_DEADLINE_MS, .cancellationReason = "LithosAI Chat Completions response was incomplete"};
     auto captureTask = bounded_response_body::readBoundedResponseBody(result.upstream, captureOptions); auto captured = co_await std::move(captureTask);
@@ -375,7 +399,8 @@ namespace uos::provider::lithos_handlers {
       usageContext->responseTelemetry->reasoning = reasoningLabel; usageContext->responseTelemetry->outputTokenAllowance = rt::getNumber(value.body, "max_tokens"); }
     RecordRequestUsageDetails details{modelRaw, "responses", clientWantsStream, reasoningLabel}; auto requestUsage = recordRequestUsage(usageContext, details); co_await requestUsage.wait();
     auto createdAtSeconds = rt::Math::floor(rt::dateNow() / 1000);
-    auto dispatchTask = dispatchLithosUpstreamResult(req, value.body, modelRaw, usageContext, clientWantsStream, options.refusalWaitPolicy); auto dispatched = co_await std::move(dispatchTask);
+    const auto deadline = std::make_shared<RequestDeadline>();
+    auto dispatchTask = dispatchLithosUpstreamResult(req, value.body, modelRaw, usageContext, *deadline, clientWantsStream, options.refusalWaitPolicy); auto dispatched = co_await std::move(dispatchTask);
     if (auto* pending = std::get_if<LithosPendingDispatch>(&dispatched)) {
       auto servedModel = std::make_shared<std::string>(modelRaw);
       auto upstream = pending->pending.then([servedModel](const LithosDispatchOutcome& outcome) {
@@ -384,16 +409,16 @@ namespace uos::provider::lithos_handlers {
       });
       std::function<std::string()> served = [servedModel] { return *servedModel; };
       co_return streamLithosResponses(upstream, modelRaw, responseIdFor(std::nullopt), createdAtSeconds, echo, value.toolNames, value.customToolNames,
-        std::nullopt, usageContext, pending->downstreamSignal, pending->requestSignal, *upstreamModel, served, pending->cancel);
+        std::nullopt, usageContext, pending->downstreamSignal, pending->requestSignal, *upstreamModel, served, pending->cancel, deadline);
     }
     if (auto* failure = std::get_if<LithosDispatchFailed>(&dispatched)) {
       if (clientWantsStream) co_return streamLithosResponses(failure->response, modelRaw, responseIdFor(std::nullopt), createdAtSeconds, echo, value.toolNames,
-        value.customToolNames, std::nullopt, usageContext, failure->downstreamSignal, failure->requestSignal, *upstreamModel, modelRaw);
+        value.customToolNames, std::nullopt, usageContext, failure->downstreamSignal, failure->requestSignal, *upstreamModel, modelRaw, {}, deadline);
       co_return failure->response;
     }
     auto result = std::get<LithosDispatchOk>(dispatched); auto responseId = responseIdFor(result.providerRequestId);
     if (clientWantsStream) co_return streamLithosResponses(result.upstream, modelRaw, responseId, createdAtSeconds, echo, value.toolNames, value.customToolNames,
-      result.providerRequestId, usageContext, result.downstreamSignal, result.requestSignal, *upstreamModel, result.servedModel);
+      result.providerRequestId, usageContext, result.downstreamSignal, result.requestSignal, *upstreamModel, result.servedModel, {}, deadline);
     BufferedLithosResponsesOptions buffered{result.upstream, modelRaw, responseId, echo, value.toolNames, value.customToolNames, *upstreamModel,
       result.servedModel, result.providerRequestId, result.requestSignal, result.downstreamSignal, usageContext};
     auto task = finalizeBufferedLithosResponses(buffered); auto response = co_await std::move(task); co_return response;

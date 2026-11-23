@@ -248,9 +248,10 @@ def measure(args, state, command, environment, mock, catalog):
                         terminals(log, reader, start + count, pending, failure=kind == "replay", check_memory=args.check)
                     mock.script = None
                     record(index, kind)
-            if args.burst:
+            if args.burst or args.live_growth:
                 time.sleep(3)
                 record(args.sessions, "idle")
+            if args.burst:
                 user_s, system_s = (right - left for left, right in zip(cpu_before, cpu(pid), strict=True))
             if probe:
                 (args.out / "malloc-info.xml").write_text(allocator_info(probe))
