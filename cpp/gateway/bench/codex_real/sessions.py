@@ -129,9 +129,9 @@ class Scripted:
         with closing(connection(self.port)) as conn:
             return self.send(conn, body, failure=failure)
 
-    def send(self, conn, body, *, failure=False):
+    def send(self, conn, body, *, failure=False, headers=None):
         text, output, terminal, seen = [], [], None, None
-        conn.request("POST", "/v1/responses", body, {**self.headers(), "Content-Type": "application/json"})
+        conn.request("POST", "/v1/responses", body, {**(self.headers() if headers is None else headers), "Content-Type": "application/json"})
         response = conn.getresponse()
         require(response.status == 200 and response.getheader("Content-Type", "").startswith("text/event-stream"),
                 f"Expected SSE, received {response.status}")

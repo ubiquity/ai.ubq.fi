@@ -76,3 +76,17 @@ For phase totals, pass the recorded `heaptrack.zst` to
 `python3 -B cpp/gateway/bench/codex_real/profile.py <trace>`. It uses
 `zstdcat` and groups live allocation bytes by the first matching frame on
 each stack. Each phase's peak is taken independently across the trace.
+
+The Release live-heap check uses four scripted API-key clients and the local
+Lithos Chat Completions mock. It exercises the public `ubiquity/deepseek-flash`
+Responses route with mixed 2 kB and 200 kB inputs, plus the 389 kB Codex catalog
+at `/v1/models?client_version=0.171.0`. It reads each response to completion
+and measures allocator in-use bytes after batches of 50. Buffered Responses
+and the unversioned models list provide controls.
+
+Use the same sealed package and isolated command above with
+`--scripted --check-live-growth`. After warm-up, the sum of the largest
+live-byte increases in the streamed and versioned lanes must stay within
+1 MiB over 300 requests per lane. Use `--scripted --live-growth all --sessions 500`
+for a longer comparison, or select `stream`, `buffered`, `versioned` or `public`
+in `--live-growth` to profile one lane.
