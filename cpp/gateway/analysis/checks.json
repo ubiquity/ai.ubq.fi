@@ -1,0 +1,28 @@
+{
+  "version": 7,
+  "checks": [
+    "cppcoreguidelines-avoid-capturing-lambda-coroutines",
+    "cppcoreguidelines-avoid-reference-coroutine-parameters",
+    "misc-coroutine-hostile-raii",
+    "bugprone-use-after-move",
+    "bugprone-unchecked-optional-access",
+    "bugprone-dangling-handle",
+    "bugprone-move-forwarding-reference",
+    "bugprone-forwarding-reference-overload",
+    "bugprone-move-constructor-init",
+    "bugprone-use-after-free",
+    "performance-move-const-arg",
+    "performance-no-automatic-move",
+    "performance-unnecessary-copy-initialization",
+    "performance-unnecessary-value-param"
+  ],
+  "rationale": {
+    "coroutines": "Captures and borrowed parameters can outlive invocation frames; hostile RAII may cross a suspension.",
+    "move": "Moved JSON, owning coroutine state and forwarding wrappers need explicit lifetime analysis.",
+    "optional": "Untrusted parser results use optional; unchecked reads can fail on malformed input.",
+    "dangling": "String and regex match handles borrow JSON and input storage.",
+    "clang-analyzer-*": "Installed non-debug path-sensitive checks cover null, bounds, uninitialized, heap and resource paths.",
+    "performance": "Only inexpensive copy/move checks; no broad style or pedantic groups. Findings remain individually classified."
+  },
+  "suppression_policy": "No broad suppression or accepted baseline. Exact false-positive fingerprints require original diagnostics and matching compiler/header/check identities."
+}

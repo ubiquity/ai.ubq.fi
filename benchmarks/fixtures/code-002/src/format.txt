@@ -1,3 +1,0 @@
-def format_name(first, last):
-    # TODO: return "<last>, <first>"
-    return ""

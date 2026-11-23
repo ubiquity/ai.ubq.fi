@@ -1,3 +1,0 @@
-one harmony_token
-other
-second harmony_token

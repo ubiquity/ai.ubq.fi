@@ -1,0 +1,117 @@
+# Returning freed gateway heap on Linux
+
+- [x] Reproduce retained free heap with mixed concurrent Codex traffic.
+- [x] Attribute retained pages by thread, arena and mapping before changing the gateway.
+- [x] Compare allocator options and record memory, throughput, latency and CPU.
+- [x] Guard retained free heap in Release CI and document the runtime policy.
+- [x] Verify the affected Release and ASan suites, registration and committed diff.
+
+## Starting point
+
+The integration base is `834c97e5`. The runner is Ubuntu 26.04.1 on Linux ARM64 with glibc 2.43, Clang 21 and four CPUs. All gateway runs use fresh state and a loopback upstream under the existing namespace and sealed-package checks.
+
+The deployed process grew from 3.8 to 42.5 MiB anonymous over two hours. Live allocator bytes leveled off around 8 MiB as free arena bytes reached 37.1 MiB. The startup executable already fixes glibc's mmap threshold at 128 KiB. The earlier serial Codex benchmark observed arena pages that `malloc_trim(0)` could return. The new workload exercises overlapping requests and varied payload sizes. [Earlier measurements](cppgw-memory-2-20261121.md)
+
+## Reproduction and cause
+
+The existing sealed benchmark now runs eight concurrent scripted clients against the same programmed Codex upstream, exact-version catalog and 512,231-row SQLite fixture. Each round fetches eight 389,001-byte catalogs and delivers 32 streamed turns. The seed varies the width of seven input messages per turn. Upstream request bodies ranged from 1,490 to 563,541 bytes. All 1,920 inference requests produced delivered terminals and exactly 1,920 additional durable uses.
+
+The baseline package came from integration commit `834c97e54ac410c43476f98dfda5120a27dd972e`, tree `3883cf8bf37711b2f1204beebb3ef1874c6e5638`. Its manifest SHA-256 is `f826edf36359459079073e153bc6216d7f42dbdd25806ee705bd24b9315f98bc` and executable SHA-256 is `d822bdfc302aaa306cef3bba75938b942456d84b96d64880bfeab3a423c75d1e`. The harness at `460286402fef20767a140ba6ed4120f21e0ff835` ran via `bash cpp/gateway/bench/codex_real/sqlite.sh bash cpp/gateway/bench/request_path/isolated.sh --codex-real --package <package> --seed-state <writer> --out <new-directory> --burst --sessions 60 --scripted`. The separate allocator sample adds `--trim`. Both launches used Landlock ABI 8 and seccomp TSYNC.
+
+| Round | Anonymous MiB | Allocator in use MiB | Allocator free MiB | Direct mmap MiB |
+| ---: | ---: | ---: | ---: | ---: |
+| 0 | 7.00 | 2.26 | 3.50 | 0 |
+| 1 | 21.06 | 5.11 | 14.65 | 0 |
+| 10 | 25.06 | 5.82 | 17.94 | 0 |
+| 20 | 23.06 | 7.07 | 14.70 | 0 |
+| 40 | 23.06 | 7.52 | 14.25 | 0 |
+| 60, idle | 23.18 | 7.73 | 16.04 | 0 |
+
+Free heap grew in steps during warm-up and remained elevated after traffic stopped. The loopback fixture reproduced the gap between live data and resident memory. Its free heap plateaued during the 60 rounds, so this run did not reproduce the full two-hour deployment trajectory. At idle the largest cache gauges were 1.81 MiB of SQLite pages and 0.76 MiB of catalog.
+
+The process had two threads throughout. The main thread ran HTTP, parsing and stream delivery on the Asio event loop. The SQLite worker was the other thread. GDB found two glibc arenas at round 60. The main arena held 19.76 MiB of address space and had a 0.27 MiB top chunk. The SQLite arena held 4.00 MiB with a 2.05 MiB top chunk. Procfs reported 18 MiB resident in `[heap]`, all backed by transparent huge pages, and about 2.1 MiB resident in the secondary heap. Most free bytes were interior holes in the main arena. GDB read an mmap and trim threshold of 131,072 bytes and `no_dyn_threshold=1`, which confirms that the dynamic threshold did not rise in this build. The workload includes individual JSON strings and transient buffers below 128 KiB. Glibc can also satisfy larger requests from existing arena space and coalesce their freed neighbors into larger holes.
+
+A second run used the inherited-socket allocator probe. Calling `malloc_info` from that thread created the third arena, with 1.99 MiB of free space at the checkpoint. The XML reported 14.74 MiB free in the main arena and 2.08 MiB in the SQLite arena. `malloc_trim(0)` reduced anonymous RSS from 24.10 to 14.66 MiB and resident `[heap]` from 20.00 to 8.57 MiB. `mallinfo2` reported 7.82 MiB live, 18.81 MiB free and zero direct mappings on both sides of that call. Glibc discarded physical pages from free blocks it still owns. The top chunk sizes and the successful page discard explain why shrinking only the end of the heap cannot recover most of the resident pages.
+
+## Allocator controls
+
+Each control ran 60 identical rounds with fresh state and the same baseline executable. A fixture-only `mallopt` interposer changed the measured child's startup setting. For the huge-page control it called `prctl(PR_SET_THP_DISABLE, 1, 0, 0, 0)` at the same point. The idle trim controls used the inherited socket after traffic. Throughput excludes body generation, health samples and the final idle wait, and includes catalog fetches in the wall time. Latency covers each Responses request through the complete SSE body. CPU is gateway user plus system time across the traffic and idle checkpoints.
+
+| Control | Idle anonymous MiB | Live MiB | Free arena MiB | Requests/s | p50 ms | p95 ms | CPU s |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Baseline | 23.18 | 7.73 | 16.04 | 101.39 | 61.01 | 128.43 | 13.10 |
+| One arena | 22.28 | 7.63 | 13.34 | 100.33 | 65.45 | 116.97 | 14.17 |
+| 16 KiB automatic trim threshold | 24.29 | 7.71 | 17.17 | 99.26 | 68.74 | 119.39 | 14.28 |
+| 64 KiB mmap threshold | 24.41 | 7.47 | 17.51 | 102.11 | 61.62 | 129.75 | 14.02 |
+| 32 KiB mmap threshold | 22.96 | 7.64 | 15.97 | 106.04 | 61.02 | 131.17 | 13.76 |
+| 16 KiB mmap threshold | 22.92 | 7.53 | 15.95 | 105.11 | 62.85 | 122.98 | 14.00 |
+| Huge pages disabled | 22.36 | 7.62 | 15.35 | 101.96 | 64.38 | 127.45 | 14.07 |
+| One idle trim with probe | 14.66 | 7.89 | 18.74 | 95.24 | 69.88 | 137.01 | 12.90 |
+| 32 KiB mmap threshold plus one idle trim with probe | 12.83 | 7.60 | 14.61 | 99.94 | 63.45 | 134.86 | 13.28 |
+
+A single arena reduced virtual heap capacity by 2.7 MiB while retaining most of the resident main heap. Disabling huge pages saved some initial anonymous RSS, and the warmed main heap still occupied almost all of its 18 MiB in 4 KiB pages. Lower thresholds left between 15.95 and 17.51 MiB free after the burst. Only the explicit trim returned most of the interior free pages. The active trim candidate retains the existing startup settings and bounds trim attempts with a two-second timer. It checks resident pressure too because glibc can continue counting discarded pages as free arena capacity.
+
+The sealed timer-only trial at `dc60af66cdb09cca7d1a90e40386d302e7e3b7a8` briefly reduced anonymous RSS to 15.58 MiB at round 40. At the last traffic sample `[heap]` had zero anonymous huge-page bytes. Three seconds later it held 16 MiB of anonymous huge pages and the process still had 19.86 MiB anonymous RSS for 7.74 MiB live. The kernel had collapsed the heap into huge pages again after the trim. The next control combines trimming with a per-process transparent huge-page opt-out.
+
+The timer with the per-process huge-page opt-out reached 11.20 MiB idle anonymous RSS and 7.78 MiB live, with zero huge pages. Its free-arena count stayed between 12.35 and 16.27 MiB. This experimental run delivered 95.16 requests/s, p50 70.02 ms and p95 125.38 ms, with 15.68 CPU seconds. The final policy defers ordinary trims until consecutive samples stabilize, while higher resident pressure can still trigger a trim during traffic.
+
+## Sealed build measurements
+
+The final gateway checks memory once a second after confinement. It trims with at least 8 MiB free and anonymous RSS more than 5 MiB above live allocator bytes once consecutive samples agree. The timer also trims if that gap exceeds 24 MiB during active traffic. The Linux process opts out of transparent huge pages before serving to keep discarded pages out of RSS. The existing seccomp filter already allows `prctl`, `madvise`, `munmap` and `brk`.
+
+The following medians come from three 60-round runs per build after compilation ended, alternated in both orders with fresh state. Each run delivered and settled 1,920 streamed inference requests and fetched 480 exact-version catalogs. Idle samples followed three seconds without traffic.
+
+| Metric | Baseline median | Final median |
+| --- | ---: | ---: |
+| Idle anonymous RSS, MiB | 24.39 | 13.07 |
+| Idle live allocator, MiB | 8.28 | 7.97 |
+| Idle anonymous RSS above live, MiB | 16.12 | 4.74 |
+| Idle free arena capacity, MiB | 16.67 | 16.79 |
+| Peak resident RSS, MiB | 58.35 | 57.66 |
+| Inference requests/s | 155.91 | 155.99 |
+| p50 latency, ms | 38.75 | 38.32 |
+| p95 latency, ms | 81.56 | 83.14 |
+| Gateway CPU, seconds | 14.01 | 13.95 |
+
+The three final idle gaps were 3.49, 4.74 and 5.10 MiB. Final free-arena medians for rounds 1–20, 21–40 and 41–60 were 15.26, 14.53 and 14.06 MiB, with a maximum of 17.56 MiB. The kernel reclaimed resident pages inside that bounded arena capacity. The median p95 increase was 1.9%. Baseline throughput varied from 150 to 176 requests/s across the three runs.
+
+Three additional paired runs started both packages simultaneously, with each isolated workload pinned to two CPUs and the CPU assignments swapped for the middle pair. Median throughput was 134.01 to 129.82 requests/s (−3.1%). The p50 was 47.18 to 48.50 ms (+2.8%), p95 was 89.25 to 90.80 ms (+1.7%), and gateway CPU was 14.80 to 15.55 seconds (+5.1%). The idle gap was 14.44 to 4.00 MiB.
+
+## Release regression
+
+The Release shard 1 job keeps the existing serial Codex memory check and adds `--scripted --check-burst`. This runs 20 rounds, verifies all 640 delivered terminals and checks the durable quota count. It caps sampled free arena capacity at 24 MiB and idle anonymous RSS above live allocator bytes at 9 MiB. Free arena capacity includes space glibc can reuse after the kernel has discarded its pages, so the second gate checks the resident effect. The gate has no throughput or latency assertion.
+
+| Package | Highest sampled free arena bytes | Idle anonymous bytes above live | Outcome |
+| --- | ---: | ---: | --- |
+| Integration baseline | 16,923,792 | 16,353,920 | Failed at the 9 MiB idle limit |
+| Final sealed build | 16,341,200 | 4,602,064 | Passed |
+
+The baseline gate receipt SHA-256 is `dd26b42c591f9238f81475775e269f0742b381d695abdc65618856ec465c0610`. The passing receipt SHA-256 is `b7795c1d7b11eb694a1d314a89ac5b8468ac19a5bd7b2cd0ff1f9a16bbc719eb`.
+
+The existing 20-session native Codex 0.171.0 check passed with 11,676 KiB anonymous and 44,228 KiB peak resident after 60 inference requests. Its scripted fallback passed at 9,640 KiB anonymous and 43,544 KiB peak resident. Both met the existing 17 MiB anonymous and 58 MiB peak resident limits.
+
+## Verification
+
+The runtime and CI gate are in commit `7e4516d0dcf4321b8a96148a3393acc0e442bdf5`, tree `48fa7d76be07b88f40cca48a9111eac7f1ca34b1`. The sealed executable SHA-256 is `cf4ebf56a5ef83e9c0bcf75acf6112d72f40c00aaccaf0f0f766163ae9fcc002` and manifest SHA-256 is `4f597c18ae5a7a8e8b0cc2712b6063190769332eabfa8c270a7535ef360164e2`.
+
+| CI driver invocation | Passed | Receipt SHA-256 |
+| --- | --- | --- |
+| `python3 -B "$scratch/affected.py" --config release` | 9 binaries, 90 cases | `59c362f71d0096e9d9908238867a2ce5dc123686adde43f9f9686ba32acc3ddd` |
+| `python3 -B "$scratch/affected.py" --config asan` | 9 binaries, 90 cases | `45e3bfbbc64aa79731d254940f9eba0ddeae0a89a034ad27a084de3fa3f6ee9c` |
+
+The scratch selector passed the following registered tests to `cpp/gateway/cmake/ci/driver.py`.
+
+- `oss_gateway_http_test`, `serve_test`, `serve_delivery_http_test`, `runtime_native_startup_test`
+- `permissions_linux_test`, `permissions_linux_reduced_test`, `permissions_linux_service_manager_test`
+- `rt/fetch_transport_test`, `rt/kv_sqlite_test`
+
+Both receipts record stable input SHA-256 `7336e8d56ad9e96a761d65c9b54bc9c9fbb6bdf225cfacac4e6aafb31039d58c`, Clang 21.1.8, four jobs and the workflow's pinned SQLite 3.54.0. The driver used fresh Linux network, mount and PID namespaces. The ASan prewarm overlapped edits and the driver rejected that earlier receipt. The final ASan receipt is from a separate invocation on the committed source. Compiling `runtime/startup.cpp` with the ASan receipt's flags succeeded, and `nm -u` on the ASan memory object confirmed the absence of `prctl` and `malloc_trim` references.
+
+`python3 -B cpp/gateway/tools/links.py --check` passed all 453 registrations, and `git diff --check claude/cpp-gateway-port...HEAD` passed. A committed review with both refs fetched used the following command in a credential-free loopback namespace with native Codex 0.171.0. The base was `834c97e54ac410c43476f98dfda5120a27dd972e` and the head was `7e4516d0dcf4321b8a96148a3393acc0e442bdf5`. It exited 124 after logging `failed to connect to Responses WebSocket stage=Unknown`. No complete review result was available.
+
+```sh
+timeout -k 2s 25s codex review --base refs/review/base \
+  -c 'model="gpt-6.1-sol"' -c 'review_model="gpt-6.1-sol"' \
+  -c 'sandbox_mode="read-only"' -c 'shell_environment_policy.inherit="none"' \
+  -c 'shell_environment_policy.set={PATH="/usr/bin:/bin"}'
+```

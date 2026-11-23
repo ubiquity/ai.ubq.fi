@@ -690,9 +690,16 @@
               <section id="gemini-quota-card" data-capacity-source="gemini" aria-labelledby="gemini-quota-title" hidden>
                 <header>
                   <h3 id="gemini-quota-title">Gemini subscription</h3>
-                  <span id="gemini-quota-badge" data-badge></span>
+                  <div data-action-row>
+                    <span id="gemini-quota-badge" data-badge></span>
+                    <button id="gemini-quota-refresh" type="button" hidden>Refresh usage</button>
+                  </div>
                 </header>
                 <p id="gemini-quota-details" data-muted data-help></p>
+                <p data-muted data-help>
+                  Routing, model exposure and provider allowlists use Providers and Models. Credential renewal, overage
+                  settings and account switching remain with the signed-in Antigravity CLI.
+                </p>
                 <div id="gemini-quota-buckets" data-capacity-list></div>
               </section>
               <p id="gemini-quota-status" data-muted data-help hidden></p>
@@ -1126,6 +1133,6 @@
         </button>
       </section>
     </div>
-    <script type="module" src="/admin.js?v=gemini-quota-20261118"></script>
+    <script type="module" src="/admin.js?v=gemini-inference-20261118"></script>
   </body>
 </html>

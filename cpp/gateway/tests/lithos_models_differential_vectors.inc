@@ -1,0 +1,7 @@
+static constexpr std::string_view recordedVectors =
+  "H4sIAAAAAAAC/82Uz2qEMBDGX0VytuCftmu9taVPsSzLmIx12ehIEiuL+O5N9qARit1Dl5pDopMv8/0mDNkPTEKBkuWMA69QBFi3"
+  "5sJC9gWyQ5Y3nZSh3ZNSszwaw1nfUHDGm5TypA2KWTmwmgQ62X5gJ2EVr3aTKwQny1N39hp+88PRFH73ww/JeAhZ1wr3ewRzrG3e"
+  "eJdF0xgnqtinuta7NagCRNDCRRJs4b6SJRo/U1luDaskxf+luVI3xTNV6lNVxrRBCSfZKdwA26PPZipF/YbgnhavCvao1qCcQBvf"
+  "K7vdaudbkRSoghKbX/rn7xxdzFpCQcr4jg3UdmUfSpGrvUat4RPnAxwso/0SbE6c+Yl1A62uyNytjIUbJ5Co7a0F1Kw20CT0XVc6"
+  "49lNyez68rOr6em+rodv5kmjmhcHAAA="
+;

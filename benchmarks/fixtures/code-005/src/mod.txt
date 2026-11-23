@@ -1,4 +1,0 @@
-def helper():
-    return 42
-
-# TODO: export helper

@@ -278,6 +278,7 @@ const geminiQuotaBadge = mustGet("gemini-quota-badge");
 const geminiQuotaDetails = mustGet("gemini-quota-details");
 const geminiQuotaBuckets = mustGet("gemini-quota-buckets");
 const geminiQuotaStatus = mustGet("gemini-quota-status");
+const geminiQuotaRefresh = mustGet("gemini-quota-refresh");
 const providerCapacityLedger = mustGet("provider-capacity-ledger");
 const claudeSubscriptionControls = mustGet("claude-subscription-controls");
 const claudeCredentialSummary = mustGet("claude-credential-summary");
@@ -1152,13 +1153,15 @@ const renderGeminiQuotaBucket = ([id, bucket], snapshot) => {
 const renderGeminiQuota = (snapshot) => {
   const observed = snapshot?.status === "observed";
   const buckets = observed ? Object.entries(snapshot.quota) : [];
+  const refreshSupported = snapshot?.refresh_supported === true;
   const age = typeof snapshot?.age_ms === "number" ? ` · Observed ${formatGeminiQuotaAge(snapshot.age_ms)}` : "";
-  geminiQuotaCard.hidden = buckets.length === 0;
+  geminiQuotaCard.hidden = buckets.length === 0 && !refreshSupported;
+  geminiQuotaRefresh.hidden = !refreshSupported;
   geminiQuotaStatus.hidden = !geminiQuotaCard.hidden || snapshot === null;
   geminiQuotaStatus.textContent = "";
   geminiQuotaDetails.textContent = "";
   geminiQuotaBuckets.replaceChildren();
-  if (geminiQuotaCard.hidden) {
+  if (buckets.length === 0) {
     const message =
       {
         missing: "No local Antigravity CLI snapshot",
@@ -1166,12 +1169,17 @@ const renderGeminiQuota = (snapshot) => {
         invalid_event: "Latest Antigravity CLI event was invalid",
         observed: "Antigravity CLI reported no quota buckets",
       }[snapshot?.status] ?? "Local Antigravity CLI snapshot unavailable";
-    if (snapshot !== null) geminiQuotaStatus.textContent = `Gemini subscription · ${message}${age}`;
+    if (geminiQuotaCard.hidden) {
+      if (snapshot !== null) geminiQuotaStatus.textContent = `Gemini subscription · ${message}${age}`;
+    } else {
+      setBadge(geminiQuotaBadge, "unknown", message);
+      geminiQuotaDetails.textContent = `Antigravity CLI · ${message}${age}`;
+    }
     return;
   }
   const stale = snapshot.age_ms >= 300_000;
   setBadge(geminiQuotaBadge, stale ? "unknown" : "ok", stale ? "Stale observation" : "Local observation");
-  geminiQuotaDetails.textContent = `Antigravity CLI · Display only · ${snapshot.plan_tier ?? "Plan not reported"}${age} (${formatCapacityTimestamp(snapshot.observed_at_ms)})`;
+  geminiQuotaDetails.textContent = `Antigravity CLI · ${snapshot.plan_tier ?? "Plan not reported"}${age} (${formatCapacityTimestamp(snapshot.observed_at_ms)})`;
   geminiQuotaBuckets.append(...buckets.map((bucket) => renderGeminiQuotaBucket(bucket, snapshot)));
 };
 
@@ -1179,28 +1187,43 @@ let geminiQuotaRequest = null;
 const clearGeminiQuota = () => {
   geminiQuotaRequest?.abort();
   geminiQuotaRequest = null;
+  geminiQuotaRefresh.disabled = false;
   renderGeminiQuota(null);
 };
 
-const loadGeminiQuota = async () => {
+const loadGeminiQuota = async (options = {}) => {
   if (geminiQuotaRequest || !adminAccessState.isAdmin || !hasAdminCredential()) return;
+  const refresh = options.refresh === true;
   const request = new AbortController();
   geminiQuotaRequest = request;
   let snapshot;
+  if (refresh) {
+    geminiQuotaRefresh.disabled = true;
+    setBadge(geminiQuotaBadge, "unknown", "Refreshing");
+  }
   try {
-    const response = await fetch(apiUrl(GEMINI_QUOTA_PATH), {
+    const response = await fetch(apiUrl(refresh ? `${GEMINI_QUOTA_PATH}/refresh` : GEMINI_QUOTA_PATH), {
+      method: refresh ? "POST" : "GET",
       cache: "no-store",
       headers: { Authorization: `Bearer ${getAdminToken()}` },
-      signal: AbortSignal.any([request.signal, AbortSignal.timeout(8000)]),
+      signal: AbortSignal.any([request.signal, AbortSignal.timeout(15000)]),
     });
     if (response.ok) snapshot = await response.json();
+    else if (refresh) {
+      const body = await response.json().catch(() => null);
+      toast.error?.(body?.error?.message ?? "Gemini quota refresh failed");
+    }
   } catch {
     // A failed read clears the previous observation on this panel.
   }
   if (geminiQuotaRequest !== request) return;
   geminiQuotaRequest = null;
+  geminiQuotaRefresh.disabled = false;
   renderGeminiQuota(snapshot ?? { status: "unavailable" });
 };
+geminiQuotaRefresh.addEventListener("click", () => {
+  void loadGeminiQuota({ refresh: true });
+});
 
 const capacityAdditionalLimitLabel = (limit) => {
   const name = typeof limit?.limit_name === "string" ? limit.limit_name.trim() : "";

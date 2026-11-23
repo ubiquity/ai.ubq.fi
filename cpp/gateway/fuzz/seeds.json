@@ -1,0 +1,2144 @@
+[
+  {
+    "target": "json",
+    "path": "fuzz/corpus/json/74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+    "sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+    "bytes": 4,
+    "origin": "synthetic JSON edge forms matching tests/rt/json_test.cpp"
+  },
+  {
+    "target": "json",
+    "path": "fuzz/corpus/json/b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b",
+    "sha256": "b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b",
+    "bytes": 4,
+    "origin": "synthetic JSON edge forms matching tests/rt/json_test.cpp"
+  },
+  {
+    "target": "json",
+    "path": "fuzz/corpus/json/ed79f26d03f412bde3db206601a698e0bb451bea9e3cc25289636ac17ea74b0a",
+    "sha256": "ed79f26d03f412bde3db206601a698e0bb451bea9e3cc25289636ac17ea74b0a",
+    "bytes": 2,
+    "origin": "synthetic JSON edge forms matching tests/rt/json_test.cpp"
+  },
+  {
+    "target": "json",
+    "path": "fuzz/corpus/json/a1c367c29158357e62a3ff5d3e800fb7698a22396439dbc0a9d4929322afd35d",
+    "sha256": "a1c367c29158357e62a3ff5d3e800fb7698a22396439dbc0a9d4929322afd35d",
+    "bytes": 16,
+    "origin": "synthetic JSON edge forms matching tests/rt/json_test.cpp"
+  },
+  {
+    "target": "json",
+    "path": "fuzz/corpus/json/cbc17c6a929e9970e7028dde3f8ef4c601e6b39b2ced9f48daf4f1f394ab9eaf",
+    "sha256": "cbc17c6a929e9970e7028dde3f8ef4c601e6b39b2ced9f48daf4f1f394ab9eaf",
+    "bytes": 28,
+    "origin": "synthetic JSON edge forms matching tests/rt/json_test.cpp"
+  },
+  {
+    "target": "json",
+    "path": "fuzz/corpus/json/8c0c59dd0d275aadcd462a5fe12eb352cbdfeaf961eae4f85a4660521df7d2f5",
+    "sha256": "8c0c59dd0d275aadcd462a5fe12eb352cbdfeaf961eae4f85a4660521df7d2f5",
+    "bytes": 8,
+    "origin": "synthetic JSON edge forms matching tests/rt/json_test.cpp"
+  },
+  {
+    "target": "json",
+    "path": "fuzz/corpus/json/b2d3da6f524e2498194717d153a5621e2618d7643c1b23dbbcb2ebe52fa7933e",
+    "sha256": "b2d3da6f524e2498194717d153a5621e2618d7643c1b23dbbcb2ebe52fa7933e",
+    "bytes": 3,
+    "origin": "synthetic JSON edge forms matching tests/rt/json_test.cpp"
+  },
+  {
+    "target": "json",
+    "path": "fuzz/corpus/json/021fb596db81e6d02bf3d2586ee3981fe519f275c0ac9ca76bbcf2ebb4097d96",
+    "sha256": "021fb596db81e6d02bf3d2586ee3981fe519f275c0ac9ca76bbcf2ebb4097d96",
+    "bytes": 1,
+    "origin": "synthetic JSON edge forms matching tests/rt/json_test.cpp"
+  },
+  {
+    "target": "json",
+    "path": "fuzz/corpus/json/f0244ae1938270f711155b0a26a4307cde7050495140dd858a88a1cfc378cf40",
+    "sha256": "f0244ae1938270f711155b0a26a4307cde7050495140dd858a88a1cfc378cf40",
+    "bytes": 129,
+    "origin": "synthetic JSON edge forms matching tests/rt/json_test.cpp"
+  },
+  {
+    "target": "url",
+    "path": "fuzz/corpus/url/ce2720fb4fe1ac6a271a4e32361801b1420cda9309a1e1a5e868cd25ff5560b5",
+    "sha256": "ce2720fb4fe1ac6a271a4e32361801b1420cda9309a1e1a5e868cd25ff5560b5",
+    "bytes": 30,
+    "origin": "public/synthetic WHATWG vectors from tests/rt/url_test.cpp"
+  },
+  {
+    "target": "url",
+    "path": "fuzz/corpus/url/1f50f7f938a6090b58ae7de95a11a9024cee7eac7e0bdd2554cce0b3c984ead6",
+    "sha256": "1f50f7f938a6090b58ae7de95a11a9024cee7eac7e0bdd2554cce0b3c984ead6",
+    "bytes": 16,
+    "origin": "public/synthetic WHATWG vectors from tests/rt/url_test.cpp"
+  },
+  {
+    "target": "url",
+    "path": "fuzz/corpus/url/6c3629ffe6b1041068c00e0fd3ec2198764d90a4fa5f1a76aa627e20866096ad",
+    "sha256": "6c3629ffe6b1041068c00e0fd3ec2198764d90a4fa5f1a76aa627e20866096ad",
+    "bytes": 14,
+    "origin": "public/synthetic WHATWG vectors from tests/rt/url_test.cpp"
+  },
+  {
+    "target": "url",
+    "path": "fuzz/corpus/url/5dba5c555b327f7939046313ee61daf163b9185b9e7643ff6baf3895f33f34bd",
+    "sha256": "5dba5c555b327f7939046313ee61daf163b9185b9e7643ff6baf3895f33f34bd",
+    "bytes": 19,
+    "origin": "public/synthetic WHATWG vectors from tests/rt/url_test.cpp"
+  },
+  {
+    "target": "url",
+    "path": "fuzz/corpus/url/c08bb6e773f6a0eec6ce8f7f42686a567d8cbe71212252568e7f551cb4e4d499",
+    "sha256": "c08bb6e773f6a0eec6ce8f7f42686a567d8cbe71212252568e7f551cb4e4d499",
+    "bytes": 16,
+    "origin": "public/synthetic WHATWG vectors from tests/rt/url_test.cpp"
+  },
+  {
+    "target": "url",
+    "path": "fuzz/corpus/url/c65314f8c0ef151be445e26c497b76aeded35acc4fadae99d727e7091f0ae89a",
+    "sha256": "c65314f8c0ef151be445e26c497b76aeded35acc4fadae99d727e7091f0ae89a",
+    "bytes": 14,
+    "origin": "public/synthetic WHATWG vectors from tests/rt/url_test.cpp"
+  },
+  {
+    "target": "url",
+    "path": "fuzz/corpus/url/670af6eaba47db7d0b36cec8170022386128df39c113b235451298e3c85d0dd7",
+    "sha256": "670af6eaba47db7d0b36cec8170022386128df39c113b235451298e3c85d0dd7",
+    "bytes": 26,
+    "origin": "public/synthetic WHATWG vectors from tests/rt/url_test.cpp"
+  },
+  {
+    "target": "url",
+    "path": "fuzz/corpus/url/2506b3695490ec6e408e60563bad82652238fc619d9257461141777f0be46956",
+    "sha256": "2506b3695490ec6e408e60563bad82652238fc619d9257461141777f0be46956",
+    "bytes": 25,
+    "origin": "public/synthetic WHATWG vectors from tests/rt/url_test.cpp"
+  },
+  {
+    "target": "url",
+    "path": "fuzz/corpus/url/d79babdf05736b699cb5ddf7a9c5fc44bf9215b697cce58f0cdd87ae5693ff7d",
+    "sha256": "d79babdf05736b699cb5ddf7a9c5fc44bf9215b697cce58f0cdd87ae5693ff7d",
+    "bytes": 11,
+    "origin": "public/synthetic WHATWG vectors from tests/rt/url_test.cpp"
+  },
+  {
+    "target": "regex",
+    "path": "fuzz/corpus/regex/25542cdb6d7c4c8187e5f81a1b499b357f990a7fa0465dacf78e15f2f9221c2e",
+    "sha256": "25542cdb6d7c4c8187e5f81a1b499b357f990a7fa0465dacf78e15f2f9221c2e",
+    "bytes": 17,
+    "origin": "synthetic patterns represented in tests/rt/regex_test.cpp"
+  },
+  {
+    "target": "regex",
+    "path": "fuzz/corpus/regex/27e11bd2381b6e8e9d98c82e3dc6edce6b5b847e33f24ec0c100efbf9e3b5191",
+    "sha256": "27e11bd2381b6e8e9d98c82e3dc6edce6b5b847e33f24ec0c100efbf9e3b5191",
+    "bytes": 13,
+    "origin": "synthetic patterns represented in tests/rt/regex_test.cpp"
+  },
+  {
+    "target": "regex",
+    "path": "fuzz/corpus/regex/ac9fcc27586879dc4239362c34386566baf64e6801dab3abad1d5b119465d800",
+    "sha256": "ac9fcc27586879dc4239362c34386566baf64e6801dab3abad1d5b119465d800",
+    "bytes": 14,
+    "origin": "synthetic patterns represented in tests/rt/regex_test.cpp"
+  },
+  {
+    "target": "regex",
+    "path": "fuzz/corpus/regex/ec0321a732235737b9297d6392eef69e2083f8d96662bb6b80480b0279ec2326",
+    "sha256": "ec0321a732235737b9297d6392eef69e2083f8d96662bb6b80480b0279ec2326",
+    "bytes": 15,
+    "origin": "synthetic patterns represented in tests/rt/regex_test.cpp"
+  },
+  {
+    "target": "regex",
+    "path": "fuzz/corpus/regex/b4dca662a919aea51f019f101eaddf07c9976d3623b1d9bc92167f0b041860cf",
+    "sha256": "b4dca662a919aea51f019f101eaddf07c9976d3623b1d9bc92167f0b041860cf",
+    "bytes": 18,
+    "origin": "synthetic patterns represented in tests/rt/regex_test.cpp"
+  },
+  {
+    "target": "regex",
+    "path": "fuzz/corpus/regex/581f9d77e70e1ecb37f65edb07fbcb97ceb791a30f9d8de8b967110126f77eba",
+    "sha256": "581f9d77e70e1ecb37f65edb07fbcb97ceb791a30f9d8de8b967110126f77eba",
+    "bytes": 4,
+    "origin": "synthetic patterns represented in tests/rt/regex_test.cpp"
+  },
+  {
+    "target": "sse",
+    "path": "fuzz/corpus/sse/94a6ff0e84712203a2ce4c85a679932d2697018cad9ac155f54ddce5f0106f40",
+    "sha256": "94a6ff0e84712203a2ce4c85a679932d2697018cad9ac155f54ddce5f0106f40",
+    "bytes": 37,
+    "origin": "public synthetic SSE framing forms"
+  },
+  {
+    "target": "sse",
+    "path": "fuzz/corpus/sse/21576e8b43baad8bb03c8a8c70eae5311bd71bab376b9589862fab06a038cf2a",
+    "sha256": "21576e8b43baad8bb03c8a8c70eae5311bd71bab376b9589862fab06a038cf2a",
+    "bytes": 27,
+    "origin": "public synthetic SSE framing forms"
+  },
+  {
+    "target": "sse",
+    "path": "fuzz/corpus/sse/03b5d8bd71dd19e87cf26c32b2fdd9b6ddd52ddda4efd9bf09516459ccb9718a",
+    "sha256": "03b5d8bd71dd19e87cf26c32b2fdd9b6ddd52ddda4efd9bf09516459ccb9718a",
+    "bytes": 15,
+    "origin": "public synthetic SSE framing forms"
+  },
+  {
+    "target": "sse",
+    "path": "fuzz/corpus/sse/278fb9d7d6848660df29286bb55c570645fbc80c459f2061a5ebe49d1607f8cc",
+    "sha256": "278fb9d7d6848660df29286bb55c570645fbc80c459f2061a5ebe49d1607f8cc",
+    "bytes": 37,
+    "origin": "public synthetic SSE framing forms"
+  },
+  {
+    "target": "sse",
+    "path": "fuzz/corpus/sse/fb8c517e7a6f84c61b348826ec2936fb8824cb5bb114f4dda063a8307524c25b",
+    "sha256": "fb8c517e7a6f84c61b348826ec2936fb8824cb5bb114f4dda063a8307524c25b",
+    "bytes": 13,
+    "origin": "public synthetic SSE framing forms"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/ef453ede47be4be239479aac8960fb4b674b88f2160e70728edc557ad85728f9",
+    "sha256": "ef453ede47be4be239479aac8960fb4b674b88f2160e70728edc557ad85728f9",
+    "bytes": 5,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/917344677b5340473148a399a2bb0416d627a109d5e38a91d36d0109084d126c",
+    "sha256": "917344677b5340473148a399a2bb0416d627a109d5e38a91d36d0109084d126c",
+    "bytes": 5,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/cc4cffa4535bff1e4bbdad63b1f039aa7a9c43661b889aac4bc79e54538f8a1c",
+    "sha256": "cc4cffa4535bff1e4bbdad63b1f039aa7a9c43661b889aac4bc79e54538f8a1c",
+    "bytes": 5,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/4531d360c04d478b059ec44eb742aaf9787bd6bb3f51e6c0ab8de36729d96c0e",
+    "sha256": "4531d360c04d478b059ec44eb742aaf9787bd6bb3f51e6c0ab8de36729d96c0e",
+    "bytes": 5,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/3e9c80438d1aeeb2e19fd6e899411f0f5e4f7fb2e047a2ad668eaefd3e394dc7",
+    "sha256": "3e9c80438d1aeeb2e19fd6e899411f0f5e4f7fb2e047a2ad668eaefd3e394dc7",
+    "bytes": 5,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/e484ea37d680d849bde43cbcdae7b0710537ecc14259c047939c2de7b4aa563d",
+    "sha256": "e484ea37d680d849bde43cbcdae7b0710537ecc14259c047939c2de7b4aa563d",
+    "bytes": 5,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/c7a1c5c78c64ddaa000d33612d89daa837a8949250a1bb3a799d640786654024",
+    "sha256": "c7a1c5c78c64ddaa000d33612d89daa837a8949250a1bb3a799d640786654024",
+    "bytes": 9,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/d7d9365c2134d0f5efa2929427756966638212f5553013591b364b85c2d13073",
+    "sha256": "d7d9365c2134d0f5efa2929427756966638212f5553013591b364b85c2d13073",
+    "bytes": 9,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/469efe61912bd877ecd1032d8ee95ac7adb762d46bf5814e3dd4599e3a28d3f2",
+    "sha256": "469efe61912bd877ecd1032d8ee95ac7adb762d46bf5814e3dd4599e3a28d3f2",
+    "bytes": 9,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/e2490054652363aebd8f5512e57b2f78b26f08382de25b6540f2f8f3b227f9fd",
+    "sha256": "e2490054652363aebd8f5512e57b2f78b26f08382de25b6540f2f8f3b227f9fd",
+    "bytes": 13,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/da2536f5d3ca3e71fb5c13476bf932771012b0195bf628b6a42a87101267b00a",
+    "sha256": "da2536f5d3ca3e71fb5c13476bf932771012b0195bf628b6a42a87101267b00a",
+    "bytes": 13,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/0f9a9100fd909d7d6ba764cbb811467e0b985eb6f6d3e0701463f253f3c984a8",
+    "sha256": "0f9a9100fd909d7d6ba764cbb811467e0b985eb6f6d3e0701463f253f3c984a8",
+    "bytes": 13,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/ddd71e01f8097e460170659e74848a70b7d2110e1f63ad0546a8cf861741f677",
+    "sha256": "ddd71e01f8097e460170659e74848a70b7d2110e1f63ad0546a8cf861741f677",
+    "bytes": 13,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/66a201b7c369e3ca32faca37e291eaa0c2b1d0f837ec1117046c77a3b3e480b3",
+    "sha256": "66a201b7c369e3ca32faca37e291eaa0c2b1d0f837ec1117046c77a3b3e480b3",
+    "bytes": 13,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/57a1e9e3c11f67732610add1891d833e87e2cbccdd3ec77035bb1bf63ea87687",
+    "sha256": "57a1e9e3c11f67732610add1891d833e87e2cbccdd3ec77035bb1bf63ea87687",
+    "bytes": 13,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/7011c33c37eeab4663f24d113c50b67ce2b763e4453f51f1ee791861d2273572",
+    "sha256": "7011c33c37eeab4663f24d113c50b67ce2b763e4453f51f1ee791861d2273572",
+    "bytes": 9,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/8b18d366b8ab1bc6e13c19f88cda19f2723b8982507a81aea8dccf684a7dc67b",
+    "sha256": "8b18d366b8ab1bc6e13c19f88cda19f2723b8982507a81aea8dccf684a7dc67b",
+    "bytes": 9,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/b46a7bd4f49832df745e049a5c6eb6671b4e83f6c418afaa5b73ac41c5cea742",
+    "sha256": "b46a7bd4f49832df745e049a5c6eb6671b4e83f6c418afaa5b73ac41c5cea742",
+    "bytes": 39,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/167886ea62a6cc1b43ed0a2a63753e4a243302cc6c9ed82c162aed98d7773c27",
+    "sha256": "167886ea62a6cc1b43ed0a2a63753e4a243302cc6c9ed82c162aed98d7773c27",
+    "bytes": 5,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/47600797ef780f87269c250086d3b62a1c03dd291487b33ce2e295992d21a444",
+    "sha256": "47600797ef780f87269c250086d3b62a1c03dd291487b33ce2e295992d21a444",
+    "bytes": 14,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/e6eaf4401ba035885a45949bc70d530491dbbe2ba05718b7267663812e89b9a5",
+    "sha256": "e6eaf4401ba035885a45949bc70d530491dbbe2ba05718b7267663812e89b9a5",
+    "bytes": 14,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/0ab7fee5ee6eeffe015c34d5a0ed62f8ca429c5abaf1e3cb9235ff90271b06cc",
+    "sha256": "0ab7fee5ee6eeffe015c34d5a0ed62f8ca429c5abaf1e3cb9235ff90271b06cc",
+    "bytes": 13,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/829b6b0adf0d7dbd3b5052176f6f59dcfe4f43822ae657e21bb5ec7c2a36c0a2",
+    "sha256": "829b6b0adf0d7dbd3b5052176f6f59dcfe4f43822ae657e21bb5ec7c2a36c0a2",
+    "bytes": 15,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/029ef3876aa3a3744520952e223efc770893ee2de45ef5c8f186f55ba4cdde5d",
+    "sha256": "029ef3876aa3a3744520952e223efc770893ee2de45ef5c8f186f55ba4cdde5d",
+    "bytes": 13,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/1e57f4dae562c1198ba685e2262627b0be15321c08c8aa5e97c904219ca8fe15",
+    "sha256": "1e57f4dae562c1198ba685e2262627b0be15321c08c8aa5e97c904219ca8fe15",
+    "bytes": 13,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/bfeeb1a30c824cc26455d9af3b90cbcb8a1e5317b9ec504e4733b45f54d17fbf",
+    "sha256": "bfeeb1a30c824cc26455d9af3b90cbcb8a1e5317b9ec504e4733b45f54d17fbf",
+    "bytes": 12,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/6dda0ce358229fbb16240639b9460468cc22a85f5faea0f8d0017a1068c53082",
+    "sha256": "6dda0ce358229fbb16240639b9460468cc22a85f5faea0f8d0017a1068c53082",
+    "bytes": 12,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/242567f3e2ea409064a19642f4ac3f35edf30470a2d53672fc92f0ccdfa089e8",
+    "sha256": "242567f3e2ea409064a19642f4ac3f35edf30470a2d53672fc92f0ccdfa089e8",
+    "bytes": 10,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/ef99e434e729f5757614bd09780e6d36828067894a2540000f3da57a250ac6cc",
+    "sha256": "ef99e434e729f5757614bd09780e6d36828067894a2540000f3da57a250ac6cc",
+    "bytes": 18,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/3e94b645c3bd06c05e217effb39e89293d03218621108820c4f64b5a2fea4c57",
+    "sha256": "3e94b645c3bd06c05e217effb39e89293d03218621108820c4f64b5a2fea4c57",
+    "bytes": 26,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/d23320af9764cc154288413548d59dbd918ac6edf31e2fb8c6a14debd7cf0cf4",
+    "sha256": "d23320af9764cc154288413548d59dbd918ac6edf31e2fb8c6a14debd7cf0cf4",
+    "bytes": 26,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/b739e4276bbdc6027fa8458572c63f858c7846b92005c23d8745c2832e2bb24e",
+    "sha256": "b739e4276bbdc6027fa8458572c63f858c7846b92005c23d8745c2832e2bb24e",
+    "bytes": 18,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/890f336fd318118972719427af247911742e6d818f6529559b00ae4db02d4803",
+    "sha256": "890f336fd318118972719427af247911742e6d818f6529559b00ae4db02d4803",
+    "bytes": 34,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/a1ca5a31b61d124c4185c50cb83065406a835bcd847f3c257ce30db9d79ea815",
+    "sha256": "a1ca5a31b61d124c4185c50cb83065406a835bcd847f3c257ce30db9d79ea815",
+    "bytes": 48,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/fbf8bd6b61d43429eb52995960c0c6bcd973547be3a77be557cbc4070f1db644",
+    "sha256": "fbf8bd6b61d43429eb52995960c0c6bcd973547be3a77be557cbc4070f1db644",
+    "bytes": 34,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/191b9e24c6aad8c883632bed55b769e829faef9c9cac806cf54e79d6b25f02b5",
+    "sha256": "191b9e24c6aad8c883632bed55b769e829faef9c9cac806cf54e79d6b25f02b5",
+    "bytes": 31,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/28c9dfaa7a612329e6725802c533914cdff230cf6bd6622b9c5e34e1c55eb419",
+    "sha256": "28c9dfaa7a612329e6725802c533914cdff230cf6bd6622b9c5e34e1c55eb419",
+    "bytes": 36,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/264376d3e42fc17a0d9788c7a0aedd81d7ea2ef8b44fd19944d03ef624fd23ce",
+    "sha256": "264376d3e42fc17a0d9788c7a0aedd81d7ea2ef8b44fd19944d03ef624fd23ce",
+    "bytes": 15,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/bbc044e242317e83b7ae2f34802af3beaa6da18da504b377c2fe6d3c5735f1a6",
+    "sha256": "bbc044e242317e83b7ae2f34802af3beaa6da18da504b377c2fe6d3c5735f1a6",
+    "bytes": 35,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/c2dfe94c2764254adbbaff8b5d3bf68e6bffb5db3ce978f5a7d621f9e559144b",
+    "sha256": "c2dfe94c2764254adbbaff8b5d3bf68e6bffb5db3ce978f5a7d621f9e559144b",
+    "bytes": 35,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/0a17241a3ec06f63f15e95144144ccb42132b751eac2ce7d4947850dc4c21092",
+    "sha256": "0a17241a3ec06f63f15e95144144ccb42132b751eac2ce7d4947850dc4c21092",
+    "bytes": 47,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/56cfb63b7ddb99588dd4e8db54c50ec13eb9d177490e15b762a651c6fa6a2253",
+    "sha256": "56cfb63b7ddb99588dd4e8db54c50ec13eb9d177490e15b762a651c6fa6a2253",
+    "bytes": 39,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/839bd0476aefcd957a474ceba70b24599580641801997f216b4976d2c75c2467",
+    "sha256": "839bd0476aefcd957a474ceba70b24599580641801997f216b4976d2c75c2467",
+    "bytes": 39,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/ddd4ce4b5a90c77cc8d7f87c473506b8577febfd001a07d9a21bbbe913995388",
+    "sha256": "ddd4ce4b5a90c77cc8d7f87c473506b8577febfd001a07d9a21bbbe913995388",
+    "bytes": 32,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/f6340885d78a82094d753d86727291eeef95349b14602d3b8527e1ecd863a3c2",
+    "sha256": "f6340885d78a82094d753d86727291eeef95349b14602d3b8527e1ecd863a3c2",
+    "bytes": 32,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/1114353ea7685db719039efdbe78646b528dd8ac82b5740acf73579ace53cd98",
+    "sha256": "1114353ea7685db719039efdbe78646b528dd8ac82b5740acf73579ace53cd98",
+    "bytes": 33,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/eaa2efb0f8602897c2b6a03af65108b9487db03b508f36e3d2b06cdefea8e0ad",
+    "sha256": "eaa2efb0f8602897c2b6a03af65108b9487db03b508f36e3d2b06cdefea8e0ad",
+    "bytes": 35,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/4626f62a4142e690e43759a269c4f189684d4ff65448b751f886329f066dcdc7",
+    "sha256": "4626f62a4142e690e43759a269c4f189684d4ff65448b751f886329f066dcdc7",
+    "bytes": 35,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/f51f71b58c0c9951d348e9c012dd135b5652bb093ee5cdea308cd0e2b5d3f5e4",
+    "sha256": "f51f71b58c0c9951d348e9c012dd135b5652bb093ee5cdea308cd0e2b5d3f5e4",
+    "bytes": 35,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/3b5df6cb67988a50164b6f7daa85298a7d76266cca7e17f239c32f82679eaf4a",
+    "sha256": "3b5df6cb67988a50164b6f7daa85298a7d76266cca7e17f239c32f82679eaf4a",
+    "bytes": 13,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/160bbd99e6ccf95287cb1248ceedb83e3265360e2fdddc2d43d1bc0470ef80f7",
+    "sha256": "160bbd99e6ccf95287cb1248ceedb83e3265360e2fdddc2d43d1bc0470ef80f7",
+    "bytes": 13,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/58713d36c2def6c27a5dfacff6d69a0199c5689eb89fd63cb1c3165300146a30",
+    "sha256": "58713d36c2def6c27a5dfacff6d69a0199c5689eb89fd63cb1c3165300146a30",
+    "bytes": 13,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/66580c85f00bbab6fd428f97aa7b3466bc6f090d84f18b58c748a1425dcd29c7",
+    "sha256": "66580c85f00bbab6fd428f97aa7b3466bc6f090d84f18b58c748a1425dcd29c7",
+    "bytes": 18,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/c75c7512d202549ca49c52cdf67544c4c9b5b84bb486aea9ebc6f33f07bcc3d5",
+    "sha256": "c75c7512d202549ca49c52cdf67544c4c9b5b84bb486aea9ebc6f33f07bcc3d5",
+    "bytes": 21,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/5aaed1696f121969cb72935141ef8c179c77a22a04c4aae3783adfcd54d4b85f",
+    "sha256": "5aaed1696f121969cb72935141ef8c179c77a22a04c4aae3783adfcd54d4b85f",
+    "bytes": 20,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/286ee983c1534428a3fe207431370f07d28dee866df7b4063328be5b57ae8ac3",
+    "sha256": "286ee983c1534428a3fe207431370f07d28dee866df7b4063328be5b57ae8ac3",
+    "bytes": 17,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/89ecf3264a1b59ed740a9f36cd4464d5e7a5bf30ef532846e6dbf2aabbcb704c",
+    "sha256": "89ecf3264a1b59ed740a9f36cd4464d5e7a5bf30ef532846e6dbf2aabbcb704c",
+    "bytes": 122,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/303fcdb020756c3e779bb9269aa0c9a5df9b6dc024091aaec1147acbb22a94d8",
+    "sha256": "303fcdb020756c3e779bb9269aa0c9a5df9b6dc024091aaec1147acbb22a94d8",
+    "bytes": 106,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/1fe7300175f4149cb92db6b8ef389f2ea8f46296e572ffd776a85991762a22d7",
+    "sha256": "1fe7300175f4149cb92db6b8ef389f2ea8f46296e572ffd776a85991762a22d7",
+    "bytes": 93,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/d681205d829850d0ea05f6b2ffe3d0d2a222a64d970ed2bafd57f94801bc82f3",
+    "sha256": "d681205d829850d0ea05f6b2ffe3d0d2a222a64d970ed2bafd57f94801bc82f3",
+    "bytes": 105,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/26f39716f4e09c9eaa971ce1324888b050d232d1c485b189435cb7c4bd1d16f0",
+    "sha256": "26f39716f4e09c9eaa971ce1324888b050d232d1c485b189435cb7c4bd1d16f0",
+    "bytes": 110,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/2bf9f1d5812008957ced68aa9148ed374028deab799b5d952c60d62588e52fe0",
+    "sha256": "2bf9f1d5812008957ced68aa9148ed374028deab799b5d952c60d62588e52fe0",
+    "bytes": 107,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/f66826c9f67e5f321d436703938141949e55a21e367c83d254422d93e5608f16",
+    "sha256": "f66826c9f67e5f321d436703938141949e55a21e367c83d254422d93e5608f16",
+    "bytes": 104,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/b854c098373c48706afaa402619658317385f47ab20388f63f6a6427b3013928",
+    "sha256": "b854c098373c48706afaa402619658317385f47ab20388f63f6a6427b3013928",
+    "bytes": 105,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/1b1605487344bfdad6e942cfb89fe6558bffa93fe0629d5d058846cb9e4f45b3",
+    "sha256": "1b1605487344bfdad6e942cfb89fe6558bffa93fe0629d5d058846cb9e4f45b3",
+    "bytes": 102,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/e91c37b5e8787b2ca3764c721146c29d8b06559a663d9b01bd67db5535c2868f",
+    "sha256": "e91c37b5e8787b2ca3764c721146c29d8b06559a663d9b01bd67db5535c2868f",
+    "bytes": 13,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/7157a0b95c735f29aeee69cdc509e2dc6015ffc9bdd9c108671704af024e3f85",
+    "sha256": "7157a0b95c735f29aeee69cdc509e2dc6015ffc9bdd9c108671704af024e3f85",
+    "bytes": 35,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/e52efab6f489cf61d32998beea9563e42c2bb27416e4f787698f5aad9bdb13d3",
+    "sha256": "e52efab6f489cf61d32998beea9563e42c2bb27416e4f787698f5aad9bdb13d3",
+    "bytes": 27,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/e0da4cce26588507d3343c0e2cdb22e45f5916779084db9c5f7c020c65879347",
+    "sha256": "e0da4cce26588507d3343c0e2cdb22e45f5916779084db9c5f7c020c65879347",
+    "bytes": 18,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/ccada21b6d5e216ed529836a7abe31b999f9452a5efad2f1b7c8dcc73edce1ef",
+    "sha256": "ccada21b6d5e216ed529836a7abe31b999f9452a5efad2f1b7c8dcc73edce1ef",
+    "bytes": 9,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/c8db23f8194305d965f146863be631823f382d6f392ab941ec4b52f1a1d85f26",
+    "sha256": "c8db23f8194305d965f146863be631823f382d6f392ab941ec4b52f1a1d85f26",
+    "bytes": 44,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/44e4156d8c1e960bb6b8872851512a20923e573557e5c593b619a4703065681e",
+    "sha256": "44e4156d8c1e960bb6b8872851512a20923e573557e5c593b619a4703065681e",
+    "bytes": 47,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/d2259d3804ed7536a261060d89c5ea34123e4e7165754871916c167a25e91f8f",
+    "sha256": "d2259d3804ed7536a261060d89c5ea34123e4e7165754871916c167a25e91f8f",
+    "bytes": 14,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/d2ded03335a3012eaea8b8dff2302a0dc2b793efaa4c6024feca1c7e497234c7",
+    "sha256": "d2ded03335a3012eaea8b8dff2302a0dc2b793efaa4c6024feca1c7e497234c7",
+    "bytes": 15,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/f327844aaf025d9ea5dcbe6d7672ecccbabc433d533e783ee3a0faa5d549e2d1",
+    "sha256": "f327844aaf025d9ea5dcbe6d7672ecccbabc433d533e783ee3a0faa5d549e2d1",
+    "bytes": 53,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/6400aa904b8746d1b40662fc84d71f8917e15dd37bacbe5d452461f5c127a852",
+    "sha256": "6400aa904b8746d1b40662fc84d71f8917e15dd37bacbe5d452461f5c127a852",
+    "bytes": 32,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/b203e82b6ef1161b305e9e3d0d56afbcf517f720376b8ea43b4dcbaf05b641a1",
+    "sha256": "b203e82b6ef1161b305e9e3d0d56afbcf517f720376b8ea43b4dcbaf05b641a1",
+    "bytes": 34,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/397803440cce15f1cba539397cb2627dddb27a151de4bc860756872491ae80cc",
+    "sha256": "397803440cce15f1cba539397cb2627dddb27a151de4bc860756872491ae80cc",
+    "bytes": 48,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/14212bbae62f0e8275687ae90e5cfc9a78074cb9d2fc75e2a4b164c3f3abe610",
+    "sha256": "14212bbae62f0e8275687ae90e5cfc9a78074cb9d2fc75e2a4b164c3f3abe610",
+    "bytes": 44,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/a077230f9a3e3cb712394203ec1d9f79bf0cff74e23238bd3cb203ae57d6b1d6",
+    "sha256": "a077230f9a3e3cb712394203ec1d9f79bf0cff74e23238bd3cb203ae57d6b1d6",
+    "bytes": 32,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/1c5bcd5555894aa8acf789202ef9d586dbb72b29e53d57930a7629e310553e20",
+    "sha256": "1c5bcd5555894aa8acf789202ef9d586dbb72b29e53d57930a7629e310553e20",
+    "bytes": 78,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/8d2627e4aa82dd890c4fa0e833dd45a7096bcf414724d2cf52d5808cc3922b07",
+    "sha256": "8d2627e4aa82dd890c4fa0e833dd45a7096bcf414724d2cf52d5808cc3922b07",
+    "bytes": 51,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/54872d3709a612a0ce269fe323980d59f86a3718a94dd280806c7add900f6eb2",
+    "sha256": "54872d3709a612a0ce269fe323980d59f86a3718a94dd280806c7add900f6eb2",
+    "bytes": 70,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/b1b7a982895bc68cfed70ba41a5eb818ae4393904734d644dac9510aaf27d6d1",
+    "sha256": "b1b7a982895bc68cfed70ba41a5eb818ae4393904734d644dac9510aaf27d6d1",
+    "bytes": 134,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/b48311832d7ebbf12f12a37b4fc3f9140fe76cdf83eebacf8db530b4a1fca65f",
+    "sha256": "b48311832d7ebbf12f12a37b4fc3f9140fe76cdf83eebacf8db530b4a1fca65f",
+    "bytes": 611,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "kv_jsc",
+    "path": "fuzz/corpus/kv_jsc/6fa3e88faab97c5bcb78e8b1c41ccb5a57828c8274a79830a77fde61c6215f15",
+    "sha256": "6fa3e88faab97c5bcb78e8b1c41ccb5a57828c8274a79830a77fde61c6215f15",
+    "bytes": 129,
+    "origin": "tests/rt/kv_jsc_deserialize_vectors.inc: Bun 1.4.0 public generated vector"
+  },
+  {
+    "target": "http_request",
+    "path": "fuzz/corpus/http_request/81103d6cb074d3d1c45686d56990ec4097a0dda4f3874efb3e87c97918776352",
+    "sha256": "81103d6cb074d3d1c45686d56990ec4097a0dda4f3874efb3e87c97918776352",
+    "bytes": 41,
+    "origin": "synthetic node:http request forms in runtime HTTP differential tests"
+  },
+  {
+    "target": "http_request",
+    "path": "fuzz/corpus/http_request/1d596b6a439f6af0491c742bf9c986d443fda4b529bc4392647effdcb326b65e",
+    "sha256": "1d596b6a439f6af0491c742bf9c986d443fda4b529bc4392647effdcb326b65e",
+    "bytes": 64,
+    "origin": "synthetic node:http request forms in runtime HTTP differential tests"
+  },
+  {
+    "target": "http_request",
+    "path": "fuzz/corpus/http_request/4b19b9bec4cc685a33dd32102cb0a60cfb0fc09358e797b62a9196902baf8a7d",
+    "sha256": "4b19b9bec4cc685a33dd32102cb0a60cfb0fc09358e797b62a9196902baf8a7d",
+    "bytes": 83,
+    "origin": "synthetic node:http request forms in runtime HTTP differential tests"
+  },
+  {
+    "target": "http_request",
+    "path": "fuzz/corpus/http_request/de18fbe0df927e8bf0e27af3dcc9e6819150ac20fd6ce1f195052073fa1bc333",
+    "sha256": "de18fbe0df927e8bf0e27af3dcc9e6819150ac20fd6ce1f195052073fa1bc333",
+    "bytes": 38,
+    "origin": "synthetic node:http request forms in runtime HTTP differential tests"
+  },
+  {
+    "target": "http_request",
+    "path": "fuzz/corpus/http_request/6ec63b40bcbc26b71deda762dfd844f0c7f15410fd084e53085d3dcbc357675f",
+    "sha256": "6ec63b40bcbc26b71deda762dfd844f0c7f15410fd084e53085d3dcbc357675f",
+    "bytes": 18,
+    "origin": "synthetic node:http request forms in runtime HTTP differential tests"
+  },
+  {
+    "target": "fetch_response",
+    "path": "fuzz/corpus/fetch_response/5e3365978d7c2724aec3ddc34a496ee6a51e6096058f159e30c0387fe71b2074",
+    "sha256": "5e3365978d7c2724aec3ddc34a496ee6a51e6096058f159e30c0387fe71b2074",
+    "bytes": 41,
+    "origin": "synthetic fetch head and chunked framing vectors"
+  },
+  {
+    "target": "fetch_response",
+    "path": "fuzz/corpus/fetch_response/f98e2f7c552abc822a1aad8f292c6222ecb4033b43802f4718c66dd761a662f1",
+    "sha256": "f98e2f7c552abc822a1aad8f292c6222ecb4033b43802f4718c66dd761a662f1",
+    "bytes": 20,
+    "origin": "synthetic fetch head and chunked framing vectors"
+  },
+  {
+    "target": "fetch_response",
+    "path": "fuzz/corpus/fetch_response/33468f8c09d219c8c3b19f3a29d2e2aee35554d2483b707757706411acd0af4f",
+    "sha256": "33468f8c09d219c8c3b19f3a29d2e2aee35554d2483b707757706411acd0af4f",
+    "bytes": 47,
+    "origin": "synthetic fetch head and chunked framing vectors"
+  },
+  {
+    "target": "fetch_response",
+    "path": "fuzz/corpus/fetch_response/1ac35ce332d93b6b552d0a5948e477a7cc9445eb072641f33bebdc0b5a2c1568",
+    "sha256": "1ac35ce332d93b6b552d0a5948e477a7cc9445eb072641f33bebdc0b5a2c1568",
+    "bytes": 25,
+    "origin": "synthetic fetch head and chunked framing vectors"
+  },
+  {
+    "target": "fetch_response",
+    "path": "fuzz/corpus/fetch_response/cb1c3da731b99e18ae9c62b353d241602fa5a74d949c04851b630e3471f0c43e",
+    "sha256": "cb1c3da731b99e18ae9c62b353d241602fa5a74d949c04851b630e3471f0c43e",
+    "bytes": 19,
+    "origin": "synthetic fetch head and chunked framing vectors"
+  },
+  {
+    "target": "websocket",
+    "path": "fuzz/corpus/websocket/d25897de3ad323d6e38fe22fe1338cae7f84da5d3f897fa1ebe870cb831f640d",
+    "sha256": "d25897de3ad323d6e38fe22fe1338cae7f84da5d3f897fa1ebe870cb831f640d",
+    "bytes": 4,
+    "origin": "public synthetic RFC6455 receiver vectors"
+  },
+  {
+    "target": "websocket",
+    "path": "fuzz/corpus/websocket/3aced62a53a3a5c672447dba371a9b342cec7bfe591e59981b2c8400c9a57340",
+    "sha256": "3aced62a53a3a5c672447dba371a9b342cec7bfe591e59981b2c8400c9a57340",
+    "bytes": 8,
+    "origin": "public synthetic RFC6455 receiver vectors"
+  },
+  {
+    "target": "websocket",
+    "path": "fuzz/corpus/websocket/65b3ad9d667d74c69019fc7f9f135460c01eb550f7690e301df3e0f9b2714399",
+    "sha256": "65b3ad9d667d74c69019fc7f9f135460c01eb550f7690e301df3e0f9b2714399",
+    "bytes": 4,
+    "origin": "public synthetic RFC6455 receiver vectors"
+  },
+  {
+    "target": "websocket",
+    "path": "fuzz/corpus/websocket/0ad54710f173fa383bcd1a1068ff7d05104ed3dda9dfd8edb3b458b88d88056f",
+    "sha256": "0ad54710f173fa383bcd1a1068ff7d05104ed3dda9dfd8edb3b458b88d88056f",
+    "bytes": 6,
+    "origin": "public synthetic RFC6455 receiver vectors"
+  },
+  {
+    "target": "websocket",
+    "path": "fuzz/corpus/websocket/abc8a336b459eb08ac926b0c1cf19f0741bf543c64aaa7fccbba331c8ba0fc23",
+    "sha256": "abc8a336b459eb08ac926b0c1cf19f0741bf543c64aaa7fccbba331c8ba0fc23",
+    "bytes": 2,
+    "origin": "public synthetic RFC6455 receiver vectors"
+  },
+  {
+    "target": "websocket",
+    "path": "fuzz/corpus/websocket/daaef113199a8d8e63e625c94217a87f71bb3ba7817cd7285031b06cffb08871",
+    "sha256": "daaef113199a8d8e63e625c94217a87f71bb3ba7817cd7285031b06cffb08871",
+    "bytes": 10,
+    "origin": "public synthetic RFC6455 receiver vectors"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/eaf132c40462dd25ee5be6c7944953c92f544953f110bb3a6630b9cb34f13e17",
+    "sha256": "eaf132c40462dd25ee5be6c7944953c92f544953f110bb3a6630b9cb34f13e17",
+    "bytes": 2,
+    "origin": "synthetic CBOR decoder edges"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/96a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7",
+    "sha256": "96a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7",
+    "bytes": 2,
+    "origin": "synthetic CBOR decoder edges"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/be79ce5064cce20cd182066d111c31df1ad8efeb32f4402fbf2c0073816a68b6",
+    "sha256": "be79ce5064cce20cd182066d111c31df1ad8efeb32f4402fbf2c0073816a68b6",
+    "bytes": 3,
+    "origin": "synthetic CBOR decoder edges"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/8d66dd1f2ce58d7bc52e37e40264272c89ceccf2163ab057ff367a26cd461580",
+    "sha256": "8d66dd1f2ce58d7bc52e37e40264272c89ceccf2163ab057ff367a26cd461580",
+    "bytes": 5,
+    "origin": "synthetic CBOR decoder edges"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/f6c8712d91c9764688fd509fb0c78f0111e5daf054d3418c96250b52fce1f1d1",
+    "sha256": "f6c8712d91c9764688fd509fb0c78f0111e5daf054d3418c96250b52fce1f1d1",
+    "bytes": 3,
+    "origin": "synthetic CBOR decoder edges"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/c34eb445f308bf18e01f4b655a4469671a6c0200f258a3fe14aa088459ec777f",
+    "sha256": "c34eb445f308bf18e01f4b655a4469671a6c0200f258a3fe14aa088459ec777f",
+    "bytes": 10,
+    "origin": "synthetic CBOR decoder edges"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/3ca1eb93e33e51ba6e3cd8ee66a4e7af100f30d18ae1a7290fd13f858fd88420",
+    "sha256": "3ca1eb93e33e51ba6e3cd8ee66a4e7af100f30d18ae1a7290fd13f858fd88420",
+    "bytes": 3,
+    "origin": "synthetic ASN.1/Certificate schema edges"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/16721a1fd34b4784bffb1c15f1b7b055d6a5ee5abee7b7cd615c3adc6741a6af",
+    "sha256": "16721a1fd34b4784bffb1c15f1b7b055d6a5ee5abee7b7cd615c3adc6741a6af",
+    "bytes": 3,
+    "origin": "synthetic ASN.1/Certificate schema edges"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/d6c3e1e7bc6b234efe65a74afc471828b649ca9ea0e9bba5775eff7d0d230692",
+    "sha256": "d6c3e1e7bc6b234efe65a74afc471828b649ca9ea0e9bba5775eff7d0d230692",
+    "bytes": 4,
+    "origin": "synthetic ASN.1/Certificate schema edges"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/159607cfffb763515eadc58f6ee02b1e5973f1592af825df87e8497600e1cad6",
+    "sha256": "159607cfffb763515eadc58f6ee02b1e5973f1592af825df87e8497600e1cad6",
+    "bytes": 4,
+    "origin": "synthetic ASN.1/Certificate schema edges"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/4d134d612be6e29422ee7ef43a732ad4507005bfc38713a421d3f8afb4097eb0",
+    "sha256": "4d134d612be6e29422ee7ef43a732ad4507005bfc38713a421d3f8afb4097eb0",
+    "bytes": 8,
+    "origin": "synthetic ASN.1/Certificate schema edges"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/7c71084f11b76756c581077512ef96e6212c7b01f3bdb875de91f547272a3d75",
+    "sha256": "7c71084f11b76756c581077512ef96e6212c7b01f3bdb875de91f547272a3d75",
+    "bytes": 8,
+    "origin": "synthetic ASN.1/Certificate schema edges"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/66617b17c2fd3737d2891f968979fb67ea4d87f52101c3f06264cb39c1f76e9e",
+    "sha256": "66617b17c2fd3737d2891f968979fb67ea4d87f52101c3f06264cb39c1f76e9e",
+    "bytes": 4,
+    "origin": "synthetic ASN.1/Certificate schema edges"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/b524fe4b70a652a43e2c730369bd43f9facd138e4993b8302dd6ea73e8e69fd0",
+    "sha256": "b524fe4b70a652a43e2c730369bd43f9facd138e4993b8302dd6ea73e8e69fd0",
+    "bytes": 4,
+    "origin": "synthetic ASN.1/Certificate schema edges"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/20d1ea4ee7359933747d2b9d0d41a951e8a279443f321e4230a2a389a1f2806b",
+    "sha256": "20d1ea4ee7359933747d2b9d0d41a951e8a279443f321e4230a2a389a1f2806b",
+    "bytes": 171,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/20d1ea4ee7359933747d2b9d0d41a951e8a279443f321e4230a2a389a1f2806b",
+    "sha256": "20d1ea4ee7359933747d2b9d0d41a951e8a279443f321e4230a2a389a1f2806b",
+    "bytes": 171,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/281ae7de49ba243a5a59b1594fd8bfbd11e6c9678c4cba874f284350c54c87c8",
+    "sha256": "281ae7de49ba243a5a59b1594fd8bfbd11e6c9678c4cba874f284350c54c87c8",
+    "bytes": 171,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/d5a5b3374ae9bff67cf85e0a11e68a4904d8104ed4b878d990c9bf3db0eca1ed",
+    "sha256": "d5a5b3374ae9bff67cf85e0a11e68a4904d8104ed4b878d990c9bf3db0eca1ed",
+    "bytes": 240,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/a69a21be6e7906c478db4d880f025765d22a50ce4c833c88b0e65846d37a2bb5",
+    "sha256": "a69a21be6e7906c478db4d880f025765d22a50ce4c833c88b0e65846d37a2bb5",
+    "bytes": 204,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/b21287ad4ad12a801d71fd267df31608b91533fbdcf7435086ced0655c365831",
+    "sha256": "b21287ad4ad12a801d71fd267df31608b91533fbdcf7435086ced0655c365831",
+    "bytes": 367,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/5a96bd5a0835bc1ef6010a6d8df5e0d99cd03278fc69e2aa8cb093631f0b241f",
+    "sha256": "5a96bd5a0835bc1ef6010a6d8df5e0d99cd03278fc69e2aa8cb093631f0b241f",
+    "bytes": 367,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/266e0be2d128d81cc094749a6e2bfb291caf13c4272ee4e3ca4192e5e94a63d9",
+    "sha256": "266e0be2d128d81cc094749a6e2bfb291caf13c4272ee4e3ca4192e5e94a63d9",
+    "bytes": 366,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/d37e081e32a3a2b828cebd30083123f2d67ba2be25ebcb13c1d73b4601fbf19f",
+    "sha256": "d37e081e32a3a2b828cebd30083123f2d67ba2be25ebcb13c1d73b4601fbf19f",
+    "bytes": 136,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/89fae4403525d27e84301575d6e915be5aa0dcd403f7ecc9331a243a7aa990f6",
+    "sha256": "89fae4403525d27e84301575d6e915be5aa0dcd403f7ecc9331a243a7aa990f6",
+    "bytes": 177,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/2e228d94c62fe1d668eb0d0e0ab77861f65c59436e6750d8a57c2f0d0cdb8f8b",
+    "sha256": "2e228d94c62fe1d668eb0d0e0ab77861f65c59436e6750d8a57c2f0d0cdb8f8b",
+    "bytes": 171,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/b4b0158bb3f287eb1efbac368f365bc4ab5caccf868b808e2fec178db5cde547",
+    "sha256": "b4b0158bb3f287eb1efbac368f365bc4ab5caccf868b808e2fec178db5cde547",
+    "bytes": 172,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/6c19233f3368636a8a362750544ddb53b51a5e7560d9bf6154b81ca2c0d93de9",
+    "sha256": "6c19233f3368636a8a362750544ddb53b51a5e7560d9bf6154b81ca2c0d93de9",
+    "bytes": 171,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/fc59beed682595c4d89e975ba96d95f2840abb1ab253d4cba516561bd2f47859",
+    "sha256": "fc59beed682595c4d89e975ba96d95f2840abb1ab253d4cba516561bd2f47859",
+    "bytes": 171,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/20d1ea4ee7359933747d2b9d0d41a951e8a279443f321e4230a2a389a1f2806b",
+    "sha256": "20d1ea4ee7359933747d2b9d0d41a951e8a279443f321e4230a2a389a1f2806b",
+    "bytes": 171,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/09eb796acb1d9524959a3e64fbcf39a9a7f55f481dfbe3525023bcf148edebeb",
+    "sha256": "09eb796acb1d9524959a3e64fbcf39a9a7f55f481dfbe3525023bcf148edebeb",
+    "bytes": 162,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/69eedc4c320451b822ba3d7886c8004da630f3b2206910feac26db09c865f8e3",
+    "sha256": "69eedc4c320451b822ba3d7886c8004da630f3b2206910feac26db09c865f8e3",
+    "bytes": 174,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/c47e8a2e27670b63d89871eae1f47147f03d5b30bf54d74df289ca26e68b6ea9",
+    "sha256": "c47e8a2e27670b63d89871eae1f47147f03d5b30bf54d74df289ca26e68b6ea9",
+    "bytes": 167,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/20d1ea4ee7359933747d2b9d0d41a951e8a279443f321e4230a2a389a1f2806b",
+    "sha256": "20d1ea4ee7359933747d2b9d0d41a951e8a279443f321e4230a2a389a1f2806b",
+    "bytes": 171,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/20d1ea4ee7359933747d2b9d0d41a951e8a279443f321e4230a2a389a1f2806b",
+    "sha256": "20d1ea4ee7359933747d2b9d0d41a951e8a279443f321e4230a2a389a1f2806b",
+    "bytes": 171,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/6698cf1d210b8aa13a387246b9a36968fa41c716d7a574aac7713d909fe6b0fc",
+    "sha256": "6698cf1d210b8aa13a387246b9a36968fa41c716d7a574aac7713d909fe6b0fc",
+    "bytes": 171,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/d6cbb05f0bb6bbf5722663db3a8f9078dfb6f9e121d25e0ab065753a6ba4b894",
+    "sha256": "d6cbb05f0bb6bbf5722663db3a8f9078dfb6f9e121d25e0ab065753a6ba4b894",
+    "bytes": 171,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/90abaa732142c0d81742f56f4aef2245a0d6fed076980ccdb8a9349f5f2228f5",
+    "sha256": "90abaa732142c0d81742f56f4aef2245a0d6fed076980ccdb8a9349f5f2228f5",
+    "bytes": 171,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/ac8a0410ec8fd972ebedc155618e0e9ef179adb86c613f9077a0ea7d9c5ba0d0",
+    "sha256": "ac8a0410ec8fd972ebedc155618e0e9ef179adb86c613f9077a0ea7d9c5ba0d0",
+    "bytes": 171,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/138e3c77c2b11f2d09bd6834f0482cd802557c4c1c517ffd95983a8bb4903824",
+    "sha256": "138e3c77c2b11f2d09bd6834f0482cd802557c4c1c517ffd95983a8bb4903824",
+    "bytes": 68,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/8841d6cc34c2644057400068836ef2f1c0a727c18131a355a94962c2e013c8a0",
+    "sha256": "8841d6cc34c2644057400068836ef2f1c0a727c18131a355a94962c2e013c8a0",
+    "bytes": 171,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/a4c9bd84b39e48c65a15f3c0594bd0c45ee42fd02aedef7eec15efbec6d1865e",
+    "sha256": "a4c9bd84b39e48c65a15f3c0594bd0c45ee42fd02aedef7eec15efbec6d1865e",
+    "bytes": 185,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/6e60a28901cb229b48e17b45fd6bc5376a38851462b574f114e7e9366de10ed8",
+    "sha256": "6e60a28901cb229b48e17b45fd6bc5376a38851462b574f114e7e9366de10ed8",
+    "bytes": 172,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/2d5772a84cf6e7e083203f9385efd34ee96827e3d922fd3c1f395e2cb174f42a",
+    "sha256": "2d5772a84cf6e7e083203f9385efd34ee96827e3d922fd3c1f395e2cb174f42a",
+    "bytes": 172,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/20d1ea4ee7359933747d2b9d0d41a951e8a279443f321e4230a2a389a1f2806b",
+    "sha256": "20d1ea4ee7359933747d2b9d0d41a951e8a279443f321e4230a2a389a1f2806b",
+    "bytes": 171,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/20d1ea4ee7359933747d2b9d0d41a951e8a279443f321e4230a2a389a1f2806b",
+    "sha256": "20d1ea4ee7359933747d2b9d0d41a951e8a279443f321e4230a2a389a1f2806b",
+    "bytes": 171,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/20d1ea4ee7359933747d2b9d0d41a951e8a279443f321e4230a2a389a1f2806b",
+    "sha256": "20d1ea4ee7359933747d2b9d0d41a951e8a279443f321e4230a2a389a1f2806b",
+    "bytes": 171,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/20d1ea4ee7359933747d2b9d0d41a951e8a279443f321e4230a2a389a1f2806b",
+    "sha256": "20d1ea4ee7359933747d2b9d0d41a951e8a279443f321e4230a2a389a1f2806b",
+    "bytes": 171,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/20d1ea4ee7359933747d2b9d0d41a951e8a279443f321e4230a2a389a1f2806b",
+    "sha256": "20d1ea4ee7359933747d2b9d0d41a951e8a279443f321e4230a2a389a1f2806b",
+    "bytes": 171,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/20d1ea4ee7359933747d2b9d0d41a951e8a279443f321e4230a2a389a1f2806b",
+    "sha256": "20d1ea4ee7359933747d2b9d0d41a951e8a279443f321e4230a2a389a1f2806b",
+    "bytes": 171,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/1327f679dfe23352e864d8632bcce0b948199606506a34933bb4c7b63827a9f5",
+    "sha256": "1327f679dfe23352e864d8632bcce0b948199606506a34933bb4c7b63827a9f5",
+    "bytes": 146,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/13377ba0eb22d7513de2f25afc157b418f2e0b07d981ab740f901adb1c03aa7d",
+    "sha256": "13377ba0eb22d7513de2f25afc157b418f2e0b07d981ab740f901adb1c03aa7d",
+    "bytes": 172,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/72f45a422e8c4a394756226b6fc136ed826773e743406ae1e49fc580806469f1",
+    "sha256": "72f45a422e8c4a394756226b6fc136ed826773e743406ae1e49fc580806469f1",
+    "bytes": 175,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/dfd67970442da5fb23237433d216130ddc5dfb0a10d3221e359fb8b3639aeece",
+    "sha256": "dfd67970442da5fb23237433d216130ddc5dfb0a10d3221e359fb8b3639aeece",
+    "bytes": 104,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/5ca4d6d8b409bd353d27c840b1e5c400a3a38c7763b0454b04d47fe3bcf3f6db",
+    "sha256": "5ca4d6d8b409bd353d27c840b1e5c400a3a38c7763b0454b04d47fe3bcf3f6db",
+    "bytes": 95,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/20d1ea4ee7359933747d2b9d0d41a951e8a279443f321e4230a2a389a1f2806b",
+    "sha256": "20d1ea4ee7359933747d2b9d0d41a951e8a279443f321e4230a2a389a1f2806b",
+    "bytes": 171,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/20d1ea4ee7359933747d2b9d0d41a951e8a279443f321e4230a2a389a1f2806b",
+    "sha256": "20d1ea4ee7359933747d2b9d0d41a951e8a279443f321e4230a2a389a1f2806b",
+    "bytes": 171,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/c7e996efbacdaae0ceb619f2f7d9b543cf1ec2b1843f895db097d654cdbf5a2a",
+    "sha256": "c7e996efbacdaae0ceb619f2f7d9b543cf1ec2b1843f895db097d654cdbf5a2a",
+    "bytes": 254,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/33eb4d95c274242687ebf6a3cb5d74f0db31b0a1f3c5a254841eeb0bae1ba28b",
+    "sha256": "33eb4d95c274242687ebf6a3cb5d74f0db31b0a1f3c5a254841eeb0bae1ba28b",
+    "bytes": 639,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/460094ce5cca76af7443add9c11a8b91c64d24b14308ec4b25c096932df059d5",
+    "sha256": "460094ce5cca76af7443add9c11a8b91c64d24b14308ec4b25c096932df059d5",
+    "bytes": 637,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/36e8b55784777ddc2beb2381aad3cb73a0183a7af28c9e328509c1a13b099f1b",
+    "sha256": "36e8b55784777ddc2beb2381aad3cb73a0183a7af28c9e328509c1a13b099f1b",
+    "bytes": 213,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/76d91ae359238240a17e2998505329a9dcccfca0da2738c779028391ca828b55",
+    "sha256": "76d91ae359238240a17e2998505329a9dcccfca0da2738c779028391ca828b55",
+    "bytes": 254,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/8c3426df8f9790365795294485fcc3fd9b8463ba8e59d0bb5fe4684435828184",
+    "sha256": "8c3426df8f9790365795294485fcc3fd9b8463ba8e59d0bb5fe4684435828184",
+    "bytes": 249,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/00124cb5f2f9caf02951118e6afd7b3d49aca00fab204b4a719c2cb8b812d940",
+    "sha256": "00124cb5f2f9caf02951118e6afd7b3d49aca00fab204b4a719c2cb8b812d940",
+    "bytes": 706,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/7932f6d267a034a8bab5e56cc55c4b2abfe1f2bbd2c1a4d05004f41672c10f4b",
+    "sha256": "7932f6d267a034a8bab5e56cc55c4b2abfe1f2bbd2c1a4d05004f41672c10f4b",
+    "bytes": 670,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/b8c02652cb26444dde357c6122c269a7964458488bd909c06b9071abbce54a34",
+    "sha256": "b8c02652cb26444dde357c6122c269a7964458488bd909c06b9071abbce54a34",
+    "bytes": 705,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/6531cd8e83f185166917587ab8cd3c737bbf18f538991e0127de8161a74f02a4",
+    "sha256": "6531cd8e83f185166917587ab8cd3c737bbf18f538991e0127de8161a74f02a4",
+    "bytes": 637,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/76a4e9da5442121c6e91e5858d99988acd2017dd2d266ffff873a53803095eff",
+    "sha256": "76a4e9da5442121c6e91e5858d99988acd2017dd2d266ffff873a53803095eff",
+    "bytes": 655,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/7aba55395040fae3ceab5f03c3bdcefa27b87dc3451fefca99f245545585cffb",
+    "sha256": "7aba55395040fae3ceab5f03c3bdcefa27b87dc3451fefca99f245545585cffb",
+    "bytes": 673,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/4f984659b5c326255970d90b751af42c63ed5d1f8489a253ded69e2dece8437d",
+    "sha256": "4f984659b5c326255970d90b751af42c63ed5d1f8489a253ded69e2dece8437d",
+    "bytes": 669,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/a7613d2abaa384f1684105ae9270ec2637b59678e4a924d34c590540fe2fb7d9",
+    "sha256": "a7613d2abaa384f1684105ae9270ec2637b59678e4a924d34c590540fe2fb7d9",
+    "bytes": 674,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/1eea15227a51dd1ea5dec2782ae1f8f19c20032bb6eca88d392136c0067a6945",
+    "sha256": "1eea15227a51dd1ea5dec2782ae1f8f19c20032bb6eca88d392136c0067a6945",
+    "bytes": 587,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/1c310556d8008f21c09185a2d7b1d6bf1c590f8499d7ba597de6d35c086ce785",
+    "sha256": "1c310556d8008f21c09185a2d7b1d6bf1c590f8499d7ba597de6d35c086ce785",
+    "bytes": 588,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/e8f5a3c32e934bfd5c5f8b57af55ddbc880618981b47851f29f7339cedff6c3f",
+    "sha256": "e8f5a3c32e934bfd5c5f8b57af55ddbc880618981b47851f29f7339cedff6c3f",
+    "bytes": 253,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/ee81293340f2dfea28198860d797d9d31754d1dfb194b2c79f04bab37d76b3cd",
+    "sha256": "ee81293340f2dfea28198860d797d9d31754d1dfb194b2c79f04bab37d76b3cd",
+    "bytes": 1441,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/e3e156d9cbec9990de1e1d635e3b119c16327a51fef08a781cca4c05811914c6",
+    "sha256": "e3e156d9cbec9990de1e1d635e3b119c16327a51fef08a781cca4c05811914c6",
+    "bytes": 1441,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/ac11cbd97297d5c55e03a875d80611b65be5e2f10677673702d909aec383403f",
+    "sha256": "ac11cbd97297d5c55e03a875d80611b65be5e2f10677673702d909aec383403f",
+    "bytes": 1438,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/1607ebf33fdb43dfb338c37beafa7047d6597720e06516ee85429b45e814a5e0",
+    "sha256": "1607ebf33fdb43dfb338c37beafa7047d6597720e06516ee85429b45e814a5e0",
+    "bytes": 1441,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/19e161d2170418673f455f508b0167850787deb0c45b8fd3f75598d772fed52d",
+    "sha256": "19e161d2170418673f455f508b0167850787deb0c45b8fd3f75598d772fed52d",
+    "bytes": 1444,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/dd5293d971f433d4093efe85776a479d40a6ddfa47bfa9eeefaf2b8e36264f91",
+    "sha256": "dd5293d971f433d4093efe85776a479d40a6ddfa47bfa9eeefaf2b8e36264f91",
+    "bytes": 589,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/d6cb8efe17f81089ba0b049b9a4b64ee7a342f94115d4c608404c11cb24f7f3b",
+    "sha256": "d6cb8efe17f81089ba0b049b9a4b64ee7a342f94115d4c608404c11cb24f7f3b",
+    "bytes": 605,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/fbe7f685d2c89a2a516571c75d8f2c2d53d81634e7e166a325f3664f14a1c7f0",
+    "sha256": "fbe7f685d2c89a2a516571c75d8f2c2d53d81634e7e166a325f3664f14a1c7f0",
+    "bytes": 212,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/f3cfe8c8981d1df668fdd6f0d3b7cc3f3af5b744ea5bbd3b9485b44a7e4109b3",
+    "sha256": "f3cfe8c8981d1df668fdd6f0d3b7cc3f3af5b744ea5bbd3b9485b44a7e4109b3",
+    "bytes": 1128,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/e8eab5a7352769814d31c40d8ed75cb0b53052822fec6f98fb5582d4d4358fe2",
+    "sha256": "e8eab5a7352769814d31c40d8ed75cb0b53052822fec6f98fb5582d4d4358fe2",
+    "bytes": 1127,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/9af5af89903a607ea76fdab7f548e94a1d64054576d4c45a00ae159011967874",
+    "sha256": "9af5af89903a607ea76fdab7f548e94a1d64054576d4c45a00ae159011967874",
+    "bytes": 1134,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/a90aabad6178f6861cf9079dcd2dd4147eac41f6433e508770bf9ac3014f0839",
+    "sha256": "a90aabad6178f6861cf9079dcd2dd4147eac41f6433e508770bf9ac3014f0839",
+    "bytes": 1127,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/ddad10a9df79e2b199f0ed245c8570c729d0b41cbc7bc44df2cdb42a989a9f25",
+    "sha256": "ddad10a9df79e2b199f0ed245c8570c729d0b41cbc7bc44df2cdb42a989a9f25",
+    "bytes": 962,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/0fbb574276a90eca8acfc427db4856969cbbfa3cca433179ff560fbc8fd49003",
+    "sha256": "0fbb574276a90eca8acfc427db4856969cbbfa3cca433179ff560fbc8fd49003",
+    "bytes": 1085,
+    "origin": "public synthetic WebAuthn differential attestationObject"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  },
+  {
+    "target": "passkeys",
+    "path": "fuzz/corpus/passkeys/900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "sha256": "900a6de8e0dc50c734d22402585ce8e8924fad7413aacdd123aace89b0baef50",
+    "bytes": 187,
+    "origin": "public synthetic WebAuthn differential CRL vector"
+  }
+]

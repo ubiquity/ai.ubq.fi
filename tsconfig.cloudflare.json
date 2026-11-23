@@ -1,9 +1,0 @@
-{
-  "extends": "./tsconfig.json",
-  "compilerOptions": {
-    "lib": ["ESNext"],
-    "types": []
-  },
-  "include": ["cloudflare.config.ts", "wrangler.config.ts", "tools/cloudflare/runtime.generated.d.ts"],
-  "exclude": ["node_modules"]
-}

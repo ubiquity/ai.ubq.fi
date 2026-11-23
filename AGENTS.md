@@ -1,185 +1,29 @@
-# Project Guidance
+# Native gateway project guidance
 
-## Runtime and Migration Scope
+## Scope and verification
 
-- Run first-party TypeScript directly with pinned Bun 1.4.0, using root `package.json` dependencies and frozen `bun.lock` installs. Strict no-emit TypeScript checking is a separate required gate; Bun execution alone does not type-check the program. The 2026-10-14 decision in `docs/DECISIONS.md` supersedes Deno-only runtime, dependency-location, and gate commands only for this repository.
-- Preserve the `node:http` transport delivery receipt and the actual pinned `ws@8.18.3` custom-header, payload-limit, and Unix-domain-socket contracts. Use the `#http` WebSocket loader rather than Bun's bare-`ws` substitute. Quota and paid-accounting settlement require the existing semantic terminal and actual delivery outcome, with one admission lifetime and exactly one settlement; durable request writes must drain before telemetry and KV closure.
-- Disable automatic dotenv discovery for isolated checks and runtime launchers. Immutable launchers use `--no-env-file --no-install`, explicitly load only the repository-root `.env`, and refuse missing or corrupt runtime, dependency, or native artifacts. Prepare and bind artifacts before immutable publication; never download, install, or compile at application startup. Auxiliary native guard or KV builds do not compile application TypeScript.
-- Treat legacy Deno V8 and Bun JavaScriptCore storage value codecs as incompatible. Open only a correctly codec-marked Bun database at `.data/kv-bun.sqlite3`; retain the legacy `.data/kv.sqlite3` untouched. Conversion requires a stopped source, consistent backup, explicit new destination, and validation of raw keys, revisions, absolute expiry, and typed values. Returning to Deno after Bun writes requires reverse conversion of the latest stopped Bun state, a verified private rollback receipt, and the supported legacy release/profile; restoring a stale backup loses writes. Never convert a live database during startup or deployment.
-- Pinned Deno is permitted only for the explicit offline legacy V8 codec and reverse-conversion helper, plus the external tool-owned evidence helper. It is not the application runtime or an ordinary build, test, or CI dependency. Preserve real OS read/write/network/process confinement; unsupported platform enforcement must fail closed rather than use a JavaScript permission facade.
-- The Bun migration PR does not authorize production or Mac service activation, live database conversion, credential changes, or provider-credit spend. Retain every credential, routing, accounting, review, ownership, immutable-release, and client-acceptance rule below.
+- The C++20 gateway, its C++ tests, Linux launch tools and package sources live under `cpp/gateway`. Keep builds, tests, CI and packaging independent of other application runtimes. Keep gateway CI, release assembly, artifact validation, fixtures and source registration self-contained there. Root `static/` and the two root PNGs are public runtime assets.
+- Use the qualified platform and dependencies in [CI.md](cpp/gateway/docs/CI.md). Map changed paths to the smallest applicable checks. The regular registration gate is `python3 -B cpp/gateway/tools/links.py --check`. Run tests through the supported OS isolation with an empty home, fresh temp, a credential-free environment and loopback mocks. Unsupported confinement fails closed.
+- Run `git diff --check` for documentation-only work. Keep generated output, dependencies, caches and credentials out of Git.
+- Preserve every native test registration and all published OpenAI request schemas. Keep the official unversioned `GET /v1/models` schema and the separate exact-version Codex catalog. Supported Codex CLI fields for `/v1/responses` belong in explicit compatibility extensions. Preserve each advertised reasoning tier verbatim, normalize a catalog's null effort to `none`, forward explicit `none` and translate the advanced `ultra` preset to upstream `max`.
+- The paired comparison with the TypeScript gateway lives at [commit `ca045a83ebaab6c50c20567d1a825638abac0891`](https://github.com/ubiquity/ai.ubq.fi/tree/ca045a83ebaab6c50c20567d1a825638abac0891/cpp/gateway/conformance).
 
-## Rust Port Rules
+## Runtime and data
 
-- The owner's Rust rules are non-negotiable for every first-party crate under `rust/crates` and every new Rust source file; they were recorded from <https://x.com/dj_d_sol/status/2113543433516421153> on 2026-10-23.
-- No first-party crate may exceed 1000 lines. Measure the crate's owned production Rust source under `src/`; integration tests and vendored dependencies are separate crates.
-- No re-exports. Do not forward names with `pub use`; import each item from its defining module.
-- No `#[path = "..."]`. Keep the module tree conventional and move shared test or support code into a real module.
-- No `include!`. Use modules and typed constants instead of splicing source text into a crate.
-- The current port predates these rules and is not compliant. Treat existing violations as mandatory migration debt, not precedent: no change may add or enlarge a violation, new or substantially rewritten crates must comply immediately, and the port cannot be accepted as complete until every remaining violation is removed.
-- `scripts/rust-quality.ts` is the structural ratchet: `bun run rust:quality` enforces crate size and all rule violations; `bun run rust:quality:update` may only tighten the baseline.
-- Lint policy is selective. No `#[allow]` or `#[expect]` suppressions; no whole `pedantic`/`restriction` groups. Stage a noisy lint with `--force-warn` plus a baseline before making it fatal. Do not copy the TypeScript cognitive-complexity number into Clippy; use the 120-line function, 7-argument, nesting-5 thresholds in `rust/clippy.toml`.
-- Compile performance is measured, not assumed. Keep `[profile.release]` unchanged until the complete Worker build is measured; use the separate `release-candidate` profile for thin-LTO experiments, and keep dev/test debug at line tables only.
-- New crates target one cohesive responsibility at 600-850 lines. Test targets are separate crates with the same 1000-line cap. The full policy and migration order are in `docs/research/rust-quality-compile-performance-2026-10-23.md`.
+- Keep one admission lifetime and exactly one quota and paid-accounting settlement based on the semantic terminal and actual delivery outcome. Drain durable request writes before telemetry and KV closure.
+- The inference waterfall uses eligible Codex subscription capacity first, Surplus Intelligence second and OpenLux last. Keep one durable global active subscription across principals, keys and models. Move it only for classified current invalidity, authoritative applicable exhaustion, removed or replaced accounts, or the authenticated manual banked-reset promotion. Advance past subscriptions only with fresh strong unavailability evidence for the full selected pool. Advance between paid tiers only on authoritative quota or capacity. Keep quota-only reset proof separate and preserve paid limits. Timeouts, stalled streams, network errors and 5xx are transient failures.
+- Cerebras `gpt-oss-120b` is buffered even when it emits upstream SSE. A reasoning-only response at the token budget that omits usable content fails with `cerebras_upstream_invalid_response` (502).
+- Keep immutable package assembly and runtime verification, including manifest, gateway executable, licenses and runtime closure. Build, install and bind all artifacts before publication. Disable automatic dotenv and dependency discovery. Load only the explicitly selected environment under the approved launcher and fail closed on missing or corrupt assets. [Runtime and package layout](cpp/gateway/docs/RUNTIME.md)
+- Keep the marked Bun/JSC database at `.data/kv-bun.sqlite3` and the original Deno/V8 database at `.data/kv.sqlite3`. Shut down the writer, preserve a consistent backup and use an explicit new destination before offline conversion. Verify raw keys, revisions, expiry and typed values. A rollback to the legacy codec requires the latest stopped state, a private reverse-conversion receipt and the supported legacy profile. Use the archived offline tooling under the original OS confinement. [STATE A](https://github.com/ubiquity/ai.ubq.fi/tree/ca045a83ebaab6c50c20567d1a825638abac0891)
 
-## Local Credential Recovery Safety
+## Credentials and service ownership
 
-- A request to repair one invalid local provider account does not authorize invalidating, revoking, rotating, or
-  replacing other accounts' credentials or API keys. Never perform a bulk credential reset for a single-account repair.
-- Before attempting OAuth refresh, login, or credential upload, identify the exact account and inspect the existing
-  credential sources without exposing secrets. Check the access token's expiry, not the ID token's expiry or file
-  timestamp. Do not try stale refresh tokens while a valid credential for that account may already exist.
-- Treat OAuth refresh as a credential mutation: shared or synchronized refresh tokens can affect other clients and
-  hosts. Do not refresh or replace shared credentials without first establishing their ownership and the effect on
-  existing sessions. Preserve the user's synchronized auth files and all unrelated API keys.
-- Do not use `POST /admin/codex/auth` as a harmless validation probe. It can refresh upstream credentials and replace
-  the local account pool entry, model catalog, and runtime configuration. Before using it, establish those effects and
-  preserve the affected local state so unintended local changes can be recovered. A local backup cannot undo upstream
-  token revocation or rotation.
-- Verify recovery through the requested localhost inference endpoint and confirm that existing clients still work. An
-  upload HTTP 200, a valid model catalog, or a healthy server response alone is not recovery proof. If a repair breaks
-  existing access, stop credential mutations, inspect the exact failure, and recover only the affected state.
+- Treat OAuth refresh or credential upload as a mutation. Inspect the exact account and access-token expiry without printing secrets. Identify ownership and shared sessions before changing the account. Preserve unrelated accounts, synchronized auth files and API keys. `POST /admin/codex/auth` can refresh credentials and replace account, catalog and runtime state. Recovery is accepted through the requested authenticated inference endpoint, with existing clients still working.
+- Production uses its approved branch and immutable release layout on the VPS. Service activation, Mac or VPS deployment, live state conversion, DNS/Cloudflare changes and provider spend require separate authorization. Keep the proxied `ai.ubq.fi` A record and hostname-specific Worker exclusion. Retain deployment locks, verify directly from the Mac to the VPS with authenticated inference, and require the exact Git SHA and `vps-<full-sha>` in the VPS health body and identity headers. Check the public health route after an authorized ingress change. [Side-by-side operation](cpp/gateway/docs/SIDE-BY-SIDE.md)
+- Sentinel scheduling and reader ownership live with the standalone project. Keep captures and replay bound to the exact source and verified artifacts. A live cutover requires that owner's acceptance of the frozen causal reader with OS confinement and process-execution denial.
 
-- Keep OpenAI-compatible endpoints and request bodies aligned with the official OpenAI API schema. Do not add
-  gateway-only aliases, sentinel values, or alternate wire formats.
-- Keep `GET /v1/models` without query parameters strictly OpenAI-compatible. Treat `GET /v1/models?client_version=X.Y.Z`
-  as a separate Codex-native compatibility contract that returns the rich upstream `{ "models": [...] }` catalog for
-  that exact client version; never describe the versioned response as an official OpenAI schema.
-- Treat Codex CLI compatibility as a first-class gateway contract for `/v1/responses`. Accept fields emitted by
-  supported Codex CLI versions through explicit compatibility extensions that remain separate from the official OpenAI
-  schema allowlists and drift checks; do not present those extensions as official OpenAI fields.
-- Treat the uploaded Codex CLI model catalog as the source of truth for reasoning tier strings. Preserve every non-empty
-  advertised tier verbatim and do not enforce a hard-coded tier allowlist or tier membership check.
-- Never advertise a reasoning tier a source omitted. The endpoint rejects values its catalog does not list
-  (`gpt-6-astra` answers `reasoning.effort: "none"` with a 400 naming low..max), so an injected tier is a promise the
-  gateway cannot keep. Normalize a null effort in upstream metadata to `none`, because that null is the upstream's own
-  no-reasoning value, and preserve `none` verbatim at the Codex upstream request boundary: never translate an explicit
-  no-reasoning request to an omitted field or `null`. A model no source describes still defaults to `none` alone.
-- Mirror Codex CLI wire translation for advanced presets: send `ultra` upstream as `max`. Treat Codex's automatic
-  multi-agent delegation for `ultra` as client-side orchestration, not as a distinct upstream reasoning effort.
-- Use this fixed inference waterfall, in cost order: eligible Codex subscription capacity first, Surplus Intelligence
-  second, and OpenLux last. Advance past subscriptions only after authoritative full-pool unavailability as defined
-  below; advance between paid tiers only after authoritative quota or capacity signals. Do not treat a transient
-  timeout, stalled stream, network or read error, or upstream 5xx as quota exhaustion.
-- Route ordinary Codex inference through one durable global active subscription shared by every principal, key, and
-  model: bootstrap the first eligible configured account, keep it despite headroom, idle time, restarts, old per-key
-  affinities, reorder, or successful same-identity credential refresh, and move it only for authoritative
-  model-applicable quota or capacity exhaustion, a classified current-credential invalidity, removal/replacement of
-  the account in the auth pool, or the explicitly authenticated manual banked-reset promotion recorded in `docs/DECISIONS.md`. Never restore a retired per-key affinity override or a capacity-balancing order, and
-  advance the provider waterfall only after fresh strong proof that every selected pool account has applicable quota or
-  capacity exhaustion or invalid credentials matching its current credential fingerprint. Keep quota-only proof separate
-  for reset eligibility and redemption; preserve the existing paid limits and provider selection.
-- Production runs on `codex@vps.pavlovcik.com` in `/home/codex/repos/ubiquity/ai.ubq.fi`. Deno Deploy hosting is
-  retired; do not deploy this service there.
-- Keep the service configuration in `ops/` and link its systemd files from `/etc/systemd/system/`. Keep secrets in the repository-root `.env`, the marked Bun KV in `.data/kv-bun.sqlite3`, the retained legacy Deno KV in `.data/kv.sqlite3`, and immutable releases in `.data/releases/<full-git-sha>`.
-- Serialize VPS deployment writers with `.data/deploy.lock`. Run `bun run deploy:vps` from the clean VPS checkout
-  after required CI passes. The launcher resolves `.data/current` once so live code and assets stay on the selected
-  release.
-- A deployment is accepted only when a direct Mac-to-VPS authenticated inference request succeeds and `/health` returns
-  the full Git SHA and `vps-<full-git-sha>` in both its body and identity headers. Verify the public
-  `https://ai.ubq.fi/health` route after a DNS or proxy change.
-- Cloudflare must retain the proxied `ai.ubq.fi` A record and the hostname-specific Worker exclusion route; the wildcard
-  Worker otherwise sends requests to retired Deno hosting.
+## Review and delivery
 
-## Upstream Provider Constraints
-
-- Cerebras does not support streaming for `gpt-oss-120b`. Treat that model as non-streaming whatever the request asks
-  for: never depend on progressive output, never add streaming-only behavior or tests for it, and do not "fix" the
-  gateway into assuming incremental delivery. The upstream still answers `stream: true` with SSE frames (a 2026-09-20
-  probe received multiplexed deltas), but the gateway buffers this route and replays the finished completion in a burst,
-  so a client-visible `text/event-stream` here is not incremental generation.
-- A Cerebras response that stops at the token budget can carry reasoning only, with `content: null` and
-  `finish_reason: "length"`. The gateway fails that closed as `cerebras_upstream_invalid_response` (502) rather than
-  returning an unusable empty completion, so expect that status when `max_completion_tokens` is too small for a
-  reasoning model instead of treating it as a transport fault.
-
-## Sentinel Retirement
-
-- Sentinel automation has moved to the separate `ubiquity/sentinel` repository. Do not restore embedded Sentinel
-  workflows, schedules, incident dispatch, or deployment credentials in this repository.
-- The owner approved authenticated failure capture/export, bounded upstream replay data, and exact-build receipts on
-  2026-09-07 for the standalone Sentinel integration. Keep scheduling and agents standalone; live activation and
-  promotion ownership transfer remain separate from this integration.
-- Before production Bun cutover, the standalone Sentinel integration owner must authorize and accept its frozen-source causal reader against the captured Bun source and trusted offline runtime/dependency artifacts, with frozen hashes, no dotenv or automatic installs, equivalent OS isolation, and proven process-execution denial. This migration transfers no Sentinel checkout or caller-write authority. Legacy captures remain bound to their recorded source SHA; source PR or gateway tests do not prove that external reader gate.
-
-## Rolling Local Code Review Workflow
-
-- Ship a bounded pull request for each unit of work and merge it only after the required deterministic CI and branch
-  protections pass, then test the merged result, continue with the next pull request, and collect review findings from
-  earlier pull requests only after the fact.
-- Run reviews with the actual local Codex review mode: `codex review --base <base-branch>` for a pull request's
-  committed diff (fetch the base and head first), or `codex review --commit <sha>` / `codex review --uncommitted` for
-  other targets; `codex exec review` runs the same review mode non-interactively. Choose the reviewer with
-  `review_model` where a dedicated review model is configured (the gateway exposes `codex-auto-review`).
-- Never request a review by prompting a normal-mode session, and never post `@codex review` or invoke the hosted Codex
-  GitHub app: external review requests are retired.
-- Review latency is never a merge gate. A review that has not completed, an unreviewed pull request, or a review run
-  that could not start must not block delivery, merging, testing, or the next unit of work.
-- No review finding of any severity (P0, P1, P2, or P3) gates merge, delivery, testing, or the next unit of work:
-  deterministic CI and branch protections are the only merge gates. Every severity enters the asynchronous official
-  review backlog after the fact, with P0 then P1 priority (P0 before P1 before P2 before P3) for selection as normal
-  future work. Every claim and remediation carries exact evidence (exact reviewed head and base SHA, the review command
-  and model identity, and the original finding text), and the existing production preview, health-identity, monitoring,
-  and acceptance safeguards remain mandatory for every deployed candidate.
-- Treat malformed, incomplete, or identity-mismatched review data as fail-closed: preserve the exact evidence, ingest
-  nothing, and surface the failure. Never drop findings, salvage a partial parse, or mark a failed review complete.
-
-## GitHub Actions Budget
-
-- The repository is optimizing GitHub Actions usage because the owner's GitHub Free monthly minute allowance is being
-  exhausted. `.github/workflows/deno-deploy.yml` is the problematic high-cost workflow. It may run only after a pull
-  request merge or through explicit manual dispatch; do not add push, pull-request-open/synchronize, merge-group, or
-  scheduled triggers.
-- Do not dispatch, rerun, re-enable, or trigger any workflow merely to validate a branch. Leave a manually disabled
-  workflow disabled unless the owner explicitly asks to enable it. Use the change-scoped local gates and report missing
-  hosted evidence rather than spending minutes on a convenience run.
-- While this quota policy is active, it supersedes the normal expectation of hosted CI before merging a bounded change.
-  Merge after the selected local gates pass, then use the post-merge run as the hosted receipt. Never describe a
-  post-merge run as pre-merge acceptance, and request owner authorization for any extra run that is not the automatic
-  post-merge execution.
-
-## Repository Completion and Checkout Handoff
-
-- Do not leave completed or accepted work only in a worktree, local branch, or unpushed commit. Commit and push every
-  completed task branch, integrate it into `development` through the normal pull request and review workflow using an
-  ancestry-preserving merge commit, and push the resulting `development` state.
-- Immediately before declaring a task complete, fetch `origin/development`, prove every accepted task-created tip is an
-  ancestor of the refreshed `origin/development`, and prove local `development` matches `origin/development`.
-- Leave the repository-root checkout clean, on `development`, and fast-forwarded to `origin/development`. If another
-  writer actively owns that checkout, preserve its state and coordinate until its completed work is integrated; never
-  switch or overwrite an active or dirty checkout to satisfy this handoff rule.
-- Preserve unfinished work in its existing owned branch or worktree and report its owner and next action. Do not merge
-  unknown or incomplete work, discard dirty state, or describe accepted work as complete while it remains outside the
-  `development` Git graph.
-
-## Lint, Format and Type Gates
-
-- Select verification from the changed surface. Before running a gate, list the changed paths and map them to the smallest checks that can detect a regression in that change. Do not run unrelated repository tests merely because they are available.
-- A documentation-only change requires formatting of the changed documents and `git diff --check`. Do not run `verify`, repository-wide ESLint, Knip, TypeScript, native compilation, test profiles, or deployment tests for a documentation-only change.
-- A source change starts with the tests for the changed module, changed-file lint, and typechecking when types or imports changed. Add the file-size ratchet only when a changed source or test file is near a limit. Run the full `bun --no-env-file run verify` aggregate only when the change crosses a shared runtime, schema, migration, release, or deployment boundary that focused checks cannot prove.
-- The repository test entrypoints intentionally enforce dependency scope. A changed TypeScript or JavaScript path runs only test files whose transitive imports reach that path; unrelated tests must not execute. A documentation-only change, or a source change that reaches no test, prints `TEST EXECUTION INTENTIONALLY SKIPPED` and exits `0`. `bun test`, `bun run test`, and `bun run verify` use this selection; use `TEST_SCOPE_FORCE=1` only for an explicitly requested full test run.
-- GitHub Actions consumes the same selector before installing dependencies or compiling native artifacts. Documentation-only changes run only changed-document formatting; source changes run affected tests; native, macOS, and release-artifact jobs run only when the selected paths and tests require them.
-- Platform-specific tests run on the matching platform. A macOS host uses focused local checks and the configured Darwin jobs; it must not run Linux-only fixtures that require `/usr/bin/unshare` or another unavailable platform facility. A failed or skipped incompatible local check is not evidence to rerun the whole suite.
-- Preserve the frozen dependency rule: both root and `tools/lint/bun.lock` must exist before a frozen install, and neither lockfile may be regenerated to make verification pass. Never fall back to another package manager.
-- Prettier owns every supported first-party format through `.prettierrc`, `.prettierignore`, and `scripts/format.sh`: TypeScript and `.mjs` retain 160 columns, supported non-TypeScript formats retain 120, and Markdown preserves paragraph wrapping. Use `bun --no-env-file run format:check`; do not add a Deno formatter fallback or apply a whole-repository autofix.
-- Run `bun --no-env-file run build` and `bun --no-env-file run test` after any `--fix` run. `build` delegates to the strict no-emit `check` task; the explicit TypeScript checker is the type authority, and successful execution or transpilation cannot replace it. Isolated test children disable dotenv and auto-install, retain their original named environment profiles, and run behind the actual supported OS fixture-network boundary. `verify` includes the existing offline benchmark test profile once; stress, live e2e, and live benchmark probes remain separately selected.
-- The TypeScript check and test suite decide whether a lint fix is correct. Never add `eslint-disable`, `@ts-ignore` or `as any` to silence a finding: if a finding is deliberate-by-design, narrow it in `tools/lint/eslint.config.mjs` with the measurement recorded in a comment, the way the existing DIVERGENCE entries do.
-- File-size no-growth is enforced by `scripts/file-size-ratchet.ts`: source files cap at 1000 lines and tests at 1500,
-  and `file-size-baseline.json` records a per-file ceiling for every grandfathered oversized file. Never raise a
-  recorded ceiling or hand-add an entry; after shrinking a recorded file run `bun run size:update`, which only lowers
-  or drops ceilings and refuses to record new debt.
-- Declare first-party runtime and development dependencies in the root `package.json` and pin the install graph in `bun.lock`. Preserve the selected dependency versions and repository import/type contracts; a runtime migration is not permission for unrelated upgrades.
-- Use the committed TypeScript configuration with explicit Bun and Node types for the application and typed lint environment. Do not restore a blanket Deno global shim or the retired `.deno-types.d.ts` generation step.
-
-## Codex Orchestration
-
-- Treat each implementation and delivery unit as a versioned work contract. Before editing, state the objective, non-goals, invariants, provider or behavior matrix, owned and prohibited paths, acceptance surface and commands, unknowns, and stop condition. Material requirement changes increment the contract version and mark affected code, tests, and evidence stale before further implementation.
-- Resolve material assumptions before implementation. Provider, catalog, schema, and host semantics must come from a current observation or an explicitly named fallback behavior; do not implement a guess that a later answer may replace. For multi-provider routing, collect the provider matrix once during discovery and derive one implementation strategy before code.
-- For work spanning discovery, implementation, verification, and deployment, separate controller, research, implementation, verification, and delivery responsibilities when delegation is enabled and authorized. Discovery returns a compact matrix; one worker owns writes; verification returns exact gates and evidence; delivery returns health and inference receipts. The controller integrates summaries, paths, hashes, and receipts rather than replaying raw logs.
-- Define a long operation's result, expected runtime, observable progress, recovery action, and call and output budget before starting it. Batch independent reads and commands, request only the output needed, and stop a phase with a compact checkpoint when it exceeds its expected time or produces no new evidence.
-- Do not re-enter the model only to ask whether external work has finished. Use one persistent execution handle or delivery watcher, emit state changes only, and return once with the terminal result. A poll is justified only by changed external state or a confirmed-live handle.
-- Make delivery a bounded pipeline after an authorized push: identify the exact CI run for the pushed SHA, wait for terminal success, run Mac and VPS deployment concurrently because their hosts and deployment locks are independent, then collect both health and authenticated inference receipts before acceptance. A failed CI run stops deployment, and every claim remains bound to the exact green SHA.
-- Preserve the rule that CI contains no automatic deployment. A local delivery watcher may wait for CI and then invoke the separately authorized deployment commands; it must not add a hosted automatic deployment trigger.
-- Bind pre-push evidence to the exact commit tree. After all writers stop, run the change-scoped gates selected by the rule above once on the final tree and record the full commit SHA, tree hash, commands, and results. Any subsequent source edit invalidates that receipt. Do not expand to `bun --no-env-file run verify` by default.
-- Run `bun --no-env-file run size:check` immediately after a large source edit as an early signal. It does not by itself require the full `verify` aggregate.
-- Before declaring readiness, reconcile the contract version, changed paths, exact commit and tree, CI run, deployment identities, and live acceptance evidence. Reject stale or partially matching receipts.
+- Use bounded PRs and the base branch approved for the work. For this series, stack cleanup on the C++ integration branch. Commit ordered buildable steps and bind the final change-scoped evidence to the commit SHA, tree and actual commands. Leave the checkout clean.
+- Request committed-diff review through local `codex review --base <base>` with both refs fetched and the configured review model. Use `codex review --commit <sha>` or `codex review --uncommitted` for those scopes. Deterministic checks and branch protections gate merging. Collect review findings asynchronously after the fact with exact base, head, command, model and original finding text. Ingest only complete, identity-matched results. Preserve the production preview, monitoring and acceptance safeguards.
+- Preserve the repository Actions minute budget. Use change-scoped local gates and the normal automatic C++ branch matrix. Extra dispatches, reruns and enabling disabled workflows require owner authorization. Keep CI free of deployment. The legacy workflow policy remains with the production branch.

@@ -6,31 +6,28 @@
 !.env.*.example
 !.env.*.sample
 !.env.*.template
+
 .data/
-.codex-worktrees/
-.kv-migration/
-.swn
-.swo
-.swp
-logs/
-.sentinel/
-benchmark-runs/
-
-# generated: `deno task types`
-.deno-types.d.ts
-
-# dev tooling (see tools/lint/README.md)
-# No trailing slash: scripts/_bootstrap.sh symlinks tools/lint/node_modules to
-# the main checkout's install in a new worktree, and a trailing slash only
-# matches directories, so the symlink stayed stageable and `git add -A` picked it
-# up as a tracked file containing an absolute path.
-node_modules
-.npm-cache/
-.npm/
-.bun-cache/
 .tmp/
-.cloudflare/
-tools/cloudflare/runtime.generated.d.ts
-
-# test-run evidence fixtures (scripts/file-size-ratchet.ts excludes these too)
+.release/
+.kv-migration/
+.sentinel/
+.codex-worktrees/
 .cleanup-evidence/
+.diagnostics/
+logs/
+*.log
+
+__pycache__/
+
+CMakeUserPresets.json
+CMakeCache.txt
+CMakeFiles/
+cmake-build-*/
+build/
+*.o
+*.a
+uos-gateway-*.tar.gz
+*.swp
+*.swo
+*.swn

@@ -1,0 +1,631 @@
+# Link-list registry read by tools/links.py and tools/run-tests.sh (full description: docs/TESTING.md).
+#
+#   <test path>: <sources...>   the .cpp files after the test file on the unit.sh command line, relative to
+#                               cpp/gateway; brace groups such as src/storage/{kv,native_kv}.cpp are expanded;
+#                               indented lines without a field name continue the list; `(none)` means no
+#                               extra sources; `(header)` keeps the file's own `// Links:` declaration and
+#                               only adds the fields below
+#     env: KEY=VALUE ...        extra environment for the test process (${SCRATCH} is the per-test scratch
+#                               directory; TMPDIR and HOME are always set by run-tests.sh)
+#     skip: <reason>            run-tests.sh reports SKIP with this reason instead of building
+#     note: <text>              why the entry exists
+#
+# An entry that gives a source list overrides the test file's own declaration. src/rt/*.cpp never needs
+# listing (unit.sh links all of it).
+
+# ---------------------------------------------------------------------------------------------------------
+# Tests whose leading comment has no usable link declaration. Lists computed on 2026-11-16 as the minimal
+# set of module objects that resolves the test object's undefined symbols (nm over the cached objects),
+# then confirmed by building through unit.sh.
+
+tests/anthropic_replay_test.cpp: src/provider/anthropic_replay.cpp
+tests/anthropic_response_wire_test.cpp: src/provider/anthropic_response_wire.cpp
+tests/api_keys_test.cpp: src/api_keys.cpp src/utils.cpp
+tests/auth_relay_differential_test.cpp: src/auth/relay.cpp
+tests/auth_relay_test.cpp: src/auth/relay.cpp
+tests/authority_admission_test.cpp: src/authority/admission_state.cpp src/authority/contracts.cpp
+tests/authority_differential_test.cpp: src/authority/contracts.cpp src/authority/admission_state.cpp
+tests/authority_durable_test.cpp: src/authority/contracts.cpp src/authority/authority_rpc.cpp src/authority/durable_store.cpp
+    src/authority/admission_state.cpp
+tests/authority_publication_test.cpp: src/authority/credential_publication.cpp src/authority/contracts.cpp src/authority/admission_state.cpp
+tests/authority_settlement_test.cpp: src/authority/contracts.cpp src/authority/delivery_outbox.cpp src/authority/admission_state.cpp
+tests/legacy/bigint_library_test.cpp: (none)
+tests/bounded_response_body_test.cpp: src/bounded_response_body.cpp
+tests/catalog_types_differential_test.cpp: src/catalog/types.cpp
+tests/cerebras_rate_limits_differential_test.cpp: src/provider/cerebras_rate_limits.cpp
+tests/claude_code_usage_schema_test.cpp: src/provider/claude_code_usage_schema.cpp src/utils.cpp
+tests/codex_banked_reset_provider_differential_test.cpp: src/codex/banked_reset_provider.cpp
+tests/codex_banked_reset_provider_test.cpp: src/codex/banked_reset_provider.cpp
+tests/codex_external_auth_differential_test.cpp: src/codex/external_auth.cpp src/utils.cpp
+tests/codex_external_native_auth_test.cpp: (header)
+    note: expanded header includes auth-repair and its auth/routing/runtime dependencies
+tests/codex_manual_reset_state_differential_test.cpp: src/codex/manual_reset_state.cpp src/utils.cpp
+tests/codex_manual_reset_state_test.cpp: (header)
+    note: expanded header includes the stored-validator and full reset-state integration closure
+tests/codex_models_branch_coverage_test.cpp: src/models/codex_models.cpp src/utils.cpp src/defaults.cpp
+tests/codex_models_differential_test.cpp: src/models/codex_models.cpp src/utils.cpp src/defaults.cpp
+tests/codex_quota_differential_test.cpp: src/codex/quota.cpp
+tests/codex_routing_state_differential_test.cpp: src/authority/native_codex_contracts.cpp src/codex/routing_state.cpp src/utils.cpp
+tests/codex_supervisor_brief_test.cpp: (header)
+    note: expanded header includes supervisor-brief integration and the prior redaction fixture
+tests/codex_supervisor_config_differential_test.cpp: src/codex/supervisor_config.cpp
+tests/codex_supervisor_secret_test.cpp: src/codex/supervisor_secret.cpp
+tests/config_differential_test.cpp: src/config.cpp src/release.cpp
+tests/release_identity_test.cpp: src/config.cpp src/release.cpp
+tests/defaults_test.cpp: src/defaults.cpp
+tests/harmony_tools_backend_differential_test.cpp: src/harmony/tools/backend.cpp
+tests/harmony_tools_fakes_differential_test.cpp: src/harmony/tools/fakes.cpp src/harmony/tools/result.cpp src/harmony/tools/backend.cpp
+tests/harmony_tools_result_differential_test.cpp: src/harmony/tools/result.cpp
+tests/harmony_tools_router_test.cpp: (header)
+    note: expanded header owns router/backend/fakes/result/schemas; the earlier registry list omitted router/schema code
+tests/inference_deadline_differential_test.cpp: src/inference_deadline.cpp
+tests/inference_deadline_test.cpp: src/inference_deadline.cpp
+tests/jev_compaction_differential_test.cpp: src/lib/jev_compaction/state.cpp src/lib/jev_compaction/request.cpp src/lib/jev_compaction/codex_items.cpp
+    src/lib/jev_compaction/compact.cpp src/lib/jev_compaction/types.cpp src/lib/jev_compaction/client.cpp
+tests/jev_compaction_test.cpp: (header)
+    note: w07c7 completed gateway compaction cases; use its full owner-maintained source closure
+tests/key_compatibility_test.cpp: src/storage/key_compatibility.cpp
+tests/kv_conversion_cursors_differential_test.cpp: src/kv_conversion/cursors.cpp
+tests/kv_conversion_native_schema_differential_test.cpp: src/kv_conversion/native_schema.cpp
+tests/kv_conversion_typed_value_differential_test.cpp: src/kv_conversion/typed_value.cpp
+tests/live_routes_differential_test.cpp: src/live/routes.cpp
+tests/model_metadata_test.cpp: (header)
+    note: w07c4 completed catalog endpoint cases; use its owner-maintained full source closure
+tests/models_metadata_differential_test.cpp: src/models/metadata.cpp src/models/openrouter_models.cpp src/defaults.cpp src/utils.cpp
+    src/recent_model_context.cpp
+tests/native_api_key_differential_test.cpp: src/authority/native_api_key.cpp src/authority/native_contracts.cpp src/types.cpp src/utils.cpp
+tests/native_capture_operator_test.cpp: src/kv_conversion/typed_value.cpp
+tests/native_codex429_conformance_test.cpp: src/authority/native_codex_capacity.cpp src/authority/native_codex_contracts.cpp
+    src/authority/native_codex_429.cpp src/bounded_response_body.cpp src/utils.cpp
+tests/native_codex_429_differential_test.cpp: src/authority/native_codex_429.cpp src/authority/native_codex_contracts.cpp
+    src/authority/native_codex_capacity.cpp src/bounded_response_body.cpp src/utils.cpp
+tests/native_codex_capacity_test.cpp: src/authority/native_codex_capacity.cpp src/authority/native_codex_contracts.cpp src/utils.cpp
+tests/native_codex_conformance_test.cpp: src/authority/native_codex_capacity.cpp src/authority/native_codex_contracts.cpp
+    src/authority/native_codex_mutations.cpp src/authority/native_codex.cpp
+    src/authority/native_codex_evaluation.cpp src/utils.cpp
+tests/native_codex_evaluation_differential_test.cpp: src/authority/native_codex.cpp src/authority/native_codex_contracts.cpp
+    src/authority/native_codex_evaluation.cpp src/authority/native_codex_capacity.cpp src/utils.cpp
+tests/native_codex_mutations_differential_test.cpp: src/authority/native_codex_mutations.cpp src/authority/native_codex_capacity.cpp
+    src/authority/native_codex_contracts.cpp src/utils.cpp
+tests/native_contracts_differential_test.cpp: src/authority/native_contracts.cpp
+tests/native_kernel_contracts_differential_test.cpp: src/authority/native_kernel_contracts.cpp
+tests/native_kernel_differential_test.cpp: src/authority/native_kernel.cpp src/authority/native_kernel_contracts.cpp src/utils.cpp
+tests/native_paid_conformance_test.cpp: tests/helpers/native_paid_conformance_vectors.cpp src/authority/native_paid.cpp src/utils.cpp
+tests/native_paid_contracts_differential_test.cpp: src/authority/native_paid_contracts.cpp src/types.cpp
+tests/native_paid_differential_test.cpp: src/authority/native_paid.cpp src/authority/native_paid_contracts.cpp src/types.cpp
+    tests/helpers/native_paid_conformance_vectors.cpp src/utils.cpp
+tests/native_paid_policy_differential_test.cpp: src/authority/native_paid_policy.cpp src/utils.cpp src/types.cpp
+tests/openai_schema_differential_test.cpp: src/openai_schema.cpp
+tests/openai_spec_drift_test.cpp: src/openai_schema.cpp
+tests/openrouter_models_test.cpp: src/models/openrouter_models.cpp src/utils.cpp
+tests/openrouter_web_tools_test.cpp: (header)
+    note: w08c1-c1 completed handler assertions; use its full real source closure.
+tests/optional_telemetry_queue_differential_test.cpp: src/optional_telemetry_queue.cpp
+tests/oss_inference_admission_test.cpp: src/inference_admission.cpp
+tests/oss_terminal_parity_test.cpp: (header)
+    note: expanded header owns the full terminal-parity provider and DeepSeek stream closure
+tests/paid_fallback_ledger_stats_differential_test.cpp: src/paid_fallback/ledger_stats.cpp
+tests/permissions_linux_test.cpp: src/runtime/permissions_linux.cpp
+tests/prompt_cache_capabilities_test.cpp: src/models/codex_models.cpp src/utils.cpp src/defaults.cpp
+tests/prompt_cache_telemetry_gate_differential_test.cpp: src/cache/telemetry_gate.cpp src/utils.cpp src/release.cpp src/kv.cpp src/storage/kv.cpp
+    src/storage/sqlite_readonly.cpp src/storage/native_kv.cpp
+tests/prompt_cache_telemetry_gate_test.cpp: (header)
+    note: w09c3 completes terminal logging cases; inherit its full real source closure.
+tests/provider_removed_provider_circuit_differential_test.cpp: src/provider/removed_provider_circuit.cpp
+tests/recent_model_context_differential_test.cpp: src/recent_model_context.cpp
+tests/recent_model_context_test.cpp: src/recent_model_context.cpp src/models/codex_models.cpp src/utils.cpp src/defaults.cpp
+tests/reliability_differential_test.cpp: src/harmony/reliability/loops.cpp src/harmony/reliability/verify.cpp src/harmony/reliability/state.cpp
+    src/harmony/reliability/hash.cpp
+tests/reliability_failure_differential_test.cpp: src/harmony/reliability/state.cpp src/harmony/reliability/hash.cpp src/harmony/reliability/loops.cpp
+    src/harmony/reliability/verify.cpp src/harmony/reliability/failure.cpp
+tests/reliability_hash_test.cpp: src/harmony/reliability/hash.cpp
+tests/reliability_loops_test.cpp: src/harmony/reliability/loops.cpp src/harmony/reliability/hash.cpp
+tests/reliability_retry_differential_test.cpp: src/harmony/reliability/retry.cpp src/harmony/reliability/hash.cpp src/harmony/reliability/loops.cpp
+tests/reliability_retry_test.cpp: src/harmony/reliability/retry.cpp src/harmony/reliability/hash.cpp src/harmony/reliability/loops.cpp
+tests/reliability_state_test.cpp: src/harmony/reliability/state.cpp src/harmony/reliability/hash.cpp src/harmony/reliability/loops.cpp
+    src/harmony/reliability/verify.cpp
+tests/reliability_verify_test.cpp: src/harmony/reliability/verify.cpp
+tests/removed_provider_differential_test.cpp: src/paid_fallback/removed_provider.cpp
+tests/removed_provider_telemetry_differential_test.cpp: src/provider/removed_provider_telemetry.cpp
+tests/request_differential_test.cpp: src/request.cpp
+tests/runtime_config_test.cpp: (header)
+    note: C6 completed model-loader tests; use the owner-maintained full link closure.
+tests/runtime_http_body_test.cpp: src/runtime/http_body.cpp
+tests/runtime_http_early_sse_differential_test.cpp: src/runtime/http_early_sse.cpp
+tests/runtime_http_tasks_test.cpp: src/runtime/http_tasks.cpp
+tests/runtime_matrix_compaction_header_test.cpp: (header)
+    note: w07c7 completed gateway compaction header cases; use its full owner-maintained source closure
+tests/runtime_native_startup_test.cpp: (header)
+tests/runtime_websocket_test.cpp: src/runtime/websocket.cpp
+tests/sentinel_incident_index_test.cpp: (header)
+    note: expanded header owns the current replay-capture/replay-store closure; the earlier registry list was stale
+tests/sentinel_incident_outbox_differential_test.cpp: src/sentinel/incident_outbox.cpp src/utils.cpp src/kv.cpp src/storage/kv.cpp src/storage/sqlite_readonly.cpp
+    src/storage/native_kv.cpp
+tests/sentinel_replay_limits_differential_test.cpp: src/sentinel/replay_limits.cpp
+tests/sentinel_replay_limits_test.cpp: (header)
+    note: expanded header includes replay-store persistence/retention cases
+tests/sentinel_upstream_capture_differential_test.cpp: src/sentinel/upstream_capture.cpp
+tests/sentinel_upstream_capture_test.cpp: (header)
+    note: expanded header includes replay-capture persistence and replay-store dependencies
+tests/sentinel_upstream_providers_test.cpp: (header)
+    note: expanded header includes the real provider/dispatch integration
+tests/smoke_test.cpp: (none)
+tests/storage_native_kv_differential_test.cpp: src/storage/native_kv.cpp
+tests/storage_value_compatibility_test.cpp: (none)
+tests/supervisor_log_test.cpp: src/codex/supervisor_log.cpp
+tests/types_differential_test.cpp: src/types.cpp
+tests/utils_test.cpp: src/utils.cpp
+tests/worker_boundary_test.cpp: src/authority/contracts.cpp src/worker/entrypoint.cpp src/authority/delivery_outbox.cpp
+    src/authority/admission_state.cpp src/worker/transport.cpp
+
+# ---------------------------------------------------------------------------------------------------------
+# Corrections: the test's own declaration is stale or incomplete (sweep of 2026-11-16).
+
+tests/codex_catalog_test.cpp: (header)
+    note: catalog-a completed the real catalog closure, including defaults.cpp and DiffKv
+tests/catalog_store_differential_test.cpp: src/catalog/{store,types}.cpp src/models/{codex_models,openrouter_models}.cpp
+    src/recent_model_context.cpp src/utils.cpp src/defaults.cpp
+    note: preserve the prior seven-source store-only closure instead of inheriting the expanded catalog integration list
+
+# Temporary live owner claims; remove each skip after the named owner releases the path.
+tests/paid_fallback_index_local_development_key_differential_test.cpp: (header)
+tests/claude_usage_meters_test.cpp: (header)
+tests/provider_capacity_rollups_test.cpp: (header)
+tests/admin_error_log_test.cpp: (header)
+tests/sentinel_replay_bootstrap_retry_test.cpp: (header)
+tests/sentinel_replay_coverage_test.cpp: (header)
+tests/sentinel_replay_deletion_budget_test.cpp: (header)
+tests/sentinel_replay_differential_test.cpp: (header)
+tests/sentinel_replay_envelope_coverage_test.cpp: (header)
+tests/sentinel_replay_export_test.cpp: (header)
+tests/sentinel_replay_read_coverage_test.cpp: (header)
+tests/sentinel_replay_read_differential_test.cpp: (header)
+tests/sentinel_replay_retention_metadata_differential_test.cpp: (header)
+tests/sentinel_replay_retention_metadata_test.cpp: (header)
+tests/sentinel_replay_retention_test.cpp: (header)
+tests/sentinel_replay_staging_test.cpp: (header)
+tests/codex_reset_settings_migration_test.cpp: (header)
+tests/deepseek_responses_differential_test.cpp: (header)
+tests/provider_capacity_history_events_differential_test.cpp: (header)
+tests/auth_responses_branch_coverage_test.cpp: (header)
+tests/admin_api_keys_coverage_test.cpp: src/admin/api_keys.cpp src/api_keys.cpp src/sentinel/incident_outbox.cpp
+    src/authority/native_api_key_policy.cpp tests/helpers/admin_auth_harness.cpp src/admin/api_key_audit.cpp
+    src/paid_fallback/ledger_state.cpp src/authority/native_api_key_audit.cpp src/authority/native_paid_policy.cpp
+    src/authority/native_paid.cpp src/authority/native_paid_contracts.cpp src/paid_fallback/ledger_backfill.cpp
+    src/types.cpp src/utils.cpp src/paid_fallback/ledger_settlement.cpp src/authority/native_api_key.cpp
+    src/api_key_policy.cpp src/admin/sentinel_incident.cpp src/kv.cpp src/storage/kv.cpp src/request.cpp
+    src/paid_fallback/index.cpp src/models/codex_models_fetch.cpp src/codex/dispatch.cpp
+    src/authority/native_codex_contracts.cpp src/runtime_config.cpp src/http.cpp src/config.cpp
+    src/paid_fallback/ledger_admission.cpp src/defaults.cpp src/provider/surplus.cpp
+    src/models/codex_models_availability.cpp src/models/codex_models.cpp src/storage/sqlite_readonly.cpp
+    src/codex/auth_refresh.cpp src/storage/native_kv.cpp src/provider/anthropic_chat_responses.cpp
+    src/provider/metered.cpp src/codex/auth.cpp src/codex/native_auth.cpp src/provider/surplus_claude_request.cpp
+    src/paid_fallback/ledger_stats.cpp src/provider/health.cpp src/codex/external_auth.cpp
+    src/provider/capacity_events.cpp src/provider/anthropic_replay.cpp
+    src/provider/anthropic_response_wire.cpp src/codex/capacity_routing.cpp src/release.cpp
+    src/authority/native_codex_capacity.cpp src/auth/relay.cpp src/provider/capacity.cpp
+    src/provider/anthropic_chat_stream.cpp src/provider/capacity_rollups.cpp src/provider/capacity_contract.cpp
+    src/provider/capacity_parse.cpp src/provider/claude_capacity_rollups.cpp src/bounded_response_body.cpp
+    src/responses_stream.cpp src/provider/claude_capacity_history.cpp src/provider/claude_code_accounts.cpp
+    src/codex/routing_state.cpp src/authority/native_codex_evaluation.cpp src/codex/banked_reset.cpp
+    src/codex/routing_mutations.cpp src/provider/claude_code_credentials.cpp src/codex/native_auth_transport.cpp
+    src/provider/claude_code_quota.cpp src/provider/cerebras_rate_limits.cpp src/cache/prompt_analytics_read.cpp
+    src/cache/prompt_analytics_core.cpp src/provider/surplus_claude_chat_request.cpp src/provider/capacity_analytics.cpp
+    src/provider/capacity_history.cpp src/authority/native_codex_mutations.cpp src/codex/rate_limit_429.cpp
+    src/provider/anthropic_responses.cpp src/authority/native_codex_429.cpp src/codex/experiment.cpp
+    src/runtime/websocket.cpp src/provider/claude_code_usage_schema.cpp src/metered_quota.cpp
+    src/codex/banked_reset_provider.cpp src/codex/reset_settings.cpp src/codex/account_routing.cpp
+    src/codex/routing_evaluation.cpp src/codex/routing_serial.cpp src/authority/native_codex.cpp
+    src/provider/selection.cpp src/codex/overage_settings.cpp src/admin/api_key_mutations.cpp src/analytics.cpp
+    src/auth/local_development_key.cpp src/kv_conversion/profile_json.cpp
+tests/kv_runtime_conversion_test.cpp: (header)
+tests/openapi_runtime_contract_test.cpp: (header)
+tests/oss_stream_lifecycle_test.cpp: (header)
+tests/quota_projection_test.cpp: (header)
+tests/codex_manual_reset_test.cpp: (header)
+tests/admin_codex_reset_test.cpp: (header)
+tests/claude_capacity_analytics_test.cpp: (header)
+tests/claude_usage_retry_test.cpp: (header)
+tests/harmony_render_test.cpp: (header)
+tests/harmony_tools_schemas_test.cpp: (header)
+
+# This test directly exercises rollups; quota_projection now imports unrelated cluster implementations.
+tests/paid_fallback_rollups_differential_test.cpp: src/authority/native_paid.cpp src/authority/native_paid_contracts.cpp src/kv.cpp src/paid_fallback/rollups.cpp src/storage/kv.cpp src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp src/utils.cpp
+    note: symbol closure avoids the stale inherited api_keys/ledger_stats exclusions and unrelated quota-projection cluster
+
+# Verified consumers of the completed admin_auth_harness cache/profile resets.
+tests/admin_api_key_audit_test.cpp: (header)
+    note: exact passing w08c2 argv preserves static registrations and adds profile_json for admin_auth_harness
+tests/admin_models_catalog_test.cpp: (header)
+    note: exact passing w08c2 argv preserves static registrations and adds profile_json for admin_auth_harness
+tests/admin_codex_coverage_test.cpp: src/admin/codex.cpp src/http.cpp src/provider/presentation.cpp src/request.cpp
+    src/cache/prompt_analytics_read.cpp src/cache/scope_experiment_targets.cpp
+    tests/helpers/prompt_cache_scope_experiment_harness.cpp tests/helpers/codex_diff_kv.cpp
+    src/cache/prompt_analytics_core.cpp src/debug_routing.cpp src/cache/scope_experiment_model.cpp
+    src/deepseek/waterfall.cpp src/codex/auth.cpp src/config.cpp src/provider/selection.cpp
+    src/codex/account_routing.cpp src/codex/routing_state.cpp src/models/catalog.cpp src/auth/relay.cpp
+    src/models/metadata.cpp src/authority/native_codex_mutations.cpp src/input_normalization.cpp src/runtime_config.cpp
+    src/codex/experiment.cpp src/codex/dispatch.cpp src/types.cpp src/authority/native_codex.cpp
+    src/provider/cerebras.cpp src/authority/native_codex_capacity.cpp src/catalog/types.cpp src/utils.cpp
+    src/request_policy.cpp src/provider/capacity_events.cpp src/codex/routing_evaluation.cpp src/models/codex_models.cpp
+    src/authority/native_codex_contracts.cpp src/provider/lithos_models.cpp src/provider/metered.cpp
+    src/provider/claude_code_models.cpp src/provider/surplus.cpp src/cache/telemetry_gate.cpp
+    src/recent_model_context.cpp src/codex/routing_mutations.cpp src/codex/routing_serial.cpp
+    src/authority/native_codex_evaluation.cpp src/codex/external_auth.cpp src/catalog/store.cpp
+    src/provider/surplus_claude_request.cpp src/codex/capacity_routing.cpp src/kv.cpp src/deepseek/index.cpp
+    src/catalog/index.cpp src/models/openrouter_models.cpp src/bounded_response_body.cpp src/provider/lithos.cpp
+    src/cache/scope_targets.cpp src/provider/claude_code.cpp src/codex/overage_settings.cpp
+    src/provider/claude_code_accounts.cpp src/provider/capacity_parse.cpp src/catalog/models.cpp
+    src/responses_stream.cpp src/models/codex_models_whitelist.cpp tests/helpers/admin_auth_harness.cpp src/defaults.cpp
+    src/provider/cerebras_rate_limits.cpp src/provider/anthropic_replay.cpp src/provider/claude_code_credentials.cpp
+    src/codex/auth_refresh.cpp src/provider/openrouter.cpp src/cache/scope_experiment.cpp
+    src/models/codex_models_fetch.cpp src/provider/capacity.cpp src/provider/capacity_rollups.cpp
+    src/provider/claude_capacity_rollups.cpp src/provider/claude_code_quota.cpp src/provider/capacity_history.cpp
+    src/provider/lithos_rate_limits.cpp src/admin/api_keys.cpp src/models/codex_models_availability.cpp
+    src/codex/banked_reset.cpp src/openai_telemetry.cpp src/api_key_policy.cpp src/provider/health.cpp
+    src/provider/capacity_contract.cpp src/api_keys.cpp src/provider/claude_code_usage_schema.cpp src/release.cpp
+    src/authority/native_api_key_policy.cpp src/authority/native_api_key.cpp
+    src/provider/surplus_claude_chat_request.cpp src/admin/api_key_audit.cpp src/codex/native_auth.cpp
+    src/provider/claude_capacity_history.cpp src/codex/reset_settings.cpp src/paid_fallback/ledger_state.cpp
+    src/authority/native_api_key_audit.cpp src/authority/native_paid_contracts.cpp
+    src/provider/anthropic_chat_responses.cpp src/codex/banked_reset_pool.cpp src/provider/capacity_analytics.cpp
+    src/metered_quota.cpp src/codex/rate_limit_429.cpp src/paid_fallback/ledger_stats.cpp src/paid_fallback/index.cpp
+    src/codex/banked_reset_claim.cpp src/storage/kv.cpp src/paid_fallback/ledger_admission.cpp
+    src/authority/native_paid.cpp src/provider/anthropic_responses.cpp src/authority/native_paid_policy.cpp
+    src/paid_fallback/ledger_backfill.cpp src/provider/anthropic_response_wire.cpp src/responses_failover_stream.cpp
+    src/catalog/promotion.cpp src/storage/sqlite_readonly.cpp src/codex/banked_reset_submission.cpp
+    src/paid_fallback/ledger_settlement.cpp src/authority/native_codex_429.cpp
+    src/provider/removed_provider_telemetry.cpp src/codex/banked_reset_provider.cpp src/codex/native_auth_transport.cpp
+    src/provider/anthropic_chat_stream.cpp src/storage/native_kv.cpp src/codex/responses_error.cpp
+    src/runtime/websocket.cpp src/kv_conversion/profile_json.cpp
+tests/admin_codex_scope_experiment_test.cpp: src/admin/codex.cpp src/http.cpp src/provider/presentation.cpp
+    src/request.cpp src/cache/prompt_analytics_read.cpp src/cache/scope_experiment_targets.cpp
+    tests/helpers/prompt_cache_scope_experiment_harness.cpp tests/helpers/codex_diff_kv.cpp
+    src/cache/prompt_analytics_core.cpp src/debug_routing.cpp src/cache/scope_experiment_model.cpp
+    src/deepseek/waterfall.cpp src/codex/auth.cpp src/config.cpp src/provider/selection.cpp
+    src/codex/account_routing.cpp src/codex/routing_state.cpp src/models/catalog.cpp src/auth/relay.cpp
+    src/models/metadata.cpp src/authority/native_codex_mutations.cpp src/input_normalization.cpp src/runtime_config.cpp
+    src/codex/experiment.cpp src/codex/dispatch.cpp src/types.cpp src/authority/native_codex.cpp
+    src/provider/cerebras.cpp src/authority/native_codex_capacity.cpp src/catalog/types.cpp src/utils.cpp
+    src/request_policy.cpp src/provider/capacity_events.cpp src/codex/routing_evaluation.cpp src/models/codex_models.cpp
+    src/authority/native_codex_contracts.cpp src/provider/lithos_models.cpp src/provider/metered.cpp
+    src/provider/claude_code_models.cpp src/provider/surplus.cpp src/cache/telemetry_gate.cpp
+    src/recent_model_context.cpp src/codex/routing_mutations.cpp src/codex/routing_serial.cpp
+    src/authority/native_codex_evaluation.cpp src/codex/external_auth.cpp src/catalog/store.cpp
+    src/provider/surplus_claude_request.cpp src/codex/capacity_routing.cpp src/kv.cpp src/deepseek/index.cpp
+    src/catalog/index.cpp src/models/openrouter_models.cpp src/bounded_response_body.cpp src/provider/lithos.cpp
+    src/cache/scope_targets.cpp src/provider/claude_code.cpp src/codex/overage_settings.cpp
+    src/provider/claude_code_accounts.cpp src/provider/capacity_parse.cpp src/catalog/models.cpp
+    src/responses_stream.cpp src/models/codex_models_whitelist.cpp tests/helpers/admin_auth_harness.cpp src/defaults.cpp
+    src/provider/cerebras_rate_limits.cpp src/provider/anthropic_replay.cpp src/provider/claude_code_credentials.cpp
+    src/codex/auth_refresh.cpp src/provider/openrouter.cpp src/cache/scope_experiment.cpp
+    src/models/codex_models_fetch.cpp src/provider/capacity.cpp src/provider/capacity_rollups.cpp
+    src/provider/claude_capacity_rollups.cpp src/provider/claude_code_quota.cpp src/provider/capacity_history.cpp
+    src/provider/lithos_rate_limits.cpp src/admin/api_keys.cpp src/models/codex_models_availability.cpp
+    src/codex/banked_reset.cpp src/openai_telemetry.cpp src/api_key_policy.cpp src/provider/health.cpp
+    src/provider/capacity_contract.cpp src/api_keys.cpp src/provider/claude_code_usage_schema.cpp
+    src/authority/native_api_key_policy.cpp src/authority/native_api_key.cpp
+    src/provider/surplus_claude_chat_request.cpp src/admin/api_key_audit.cpp src/codex/native_auth.cpp
+    src/provider/claude_capacity_history.cpp src/codex/reset_settings.cpp src/paid_fallback/ledger_state.cpp
+    src/authority/native_api_key_audit.cpp src/authority/native_paid_contracts.cpp
+    src/provider/anthropic_chat_responses.cpp src/codex/banked_reset_pool.cpp src/provider/capacity_analytics.cpp
+    src/metered_quota.cpp src/codex/rate_limit_429.cpp src/paid_fallback/ledger_stats.cpp src/paid_fallback/index.cpp
+    src/codex/banked_reset_claim.cpp src/storage/kv.cpp src/paid_fallback/ledger_admission.cpp
+    src/authority/native_paid.cpp src/provider/anthropic_responses.cpp src/authority/native_paid_policy.cpp
+    src/paid_fallback/ledger_backfill.cpp src/provider/anthropic_response_wire.cpp src/responses_failover_stream.cpp
+    src/catalog/promotion.cpp src/storage/sqlite_readonly.cpp src/codex/banked_reset_submission.cpp
+    src/paid_fallback/ledger_settlement.cpp src/authority/native_codex_429.cpp
+    src/provider/removed_provider_telemetry.cpp src/codex/banked_reset_provider.cpp src/codex/native_auth_transport.cpp
+    src/provider/anthropic_chat_stream.cpp src/storage/native_kv.cpp src/codex/responses_error.cpp
+    src/runtime/websocket.cpp src/kv_conversion/profile_json.cpp
+tests/claude_code_models_test.cpp: src/health.cpp src/provider/claude_code_access.cpp src/admin/codex.cpp src/http.cpp
+    src/provider/presentation.cpp src/request.cpp src/cache/prompt_analytics_read.cpp
+    src/cache/scope_experiment_targets.cpp tests/helpers/prompt_cache_scope_experiment_harness.cpp
+    tests/helpers/codex_diff_kv.cpp src/cache/prompt_analytics_core.cpp src/debug_routing.cpp
+    src/cache/scope_experiment_model.cpp src/deepseek/waterfall.cpp src/codex/auth.cpp src/config.cpp
+    src/provider/selection.cpp src/codex/account_routing.cpp src/codex/routing_state.cpp src/models/catalog.cpp
+    src/auth/relay.cpp src/models/metadata.cpp src/authority/native_codex_mutations.cpp src/input_normalization.cpp
+    src/runtime_config.cpp src/codex/experiment.cpp src/codex/dispatch.cpp src/types.cpp src/authority/native_codex.cpp
+    src/provider/cerebras.cpp src/authority/native_codex_capacity.cpp src/catalog/types.cpp src/utils.cpp
+    src/request_policy.cpp src/provider/capacity_events.cpp src/codex/routing_evaluation.cpp src/models/codex_models.cpp
+    src/authority/native_codex_contracts.cpp src/provider/lithos_models.cpp src/provider/metered.cpp
+    src/provider/claude_code_models.cpp src/provider/surplus.cpp src/cache/telemetry_gate.cpp
+    src/recent_model_context.cpp src/codex/routing_mutations.cpp src/codex/routing_serial.cpp
+    src/authority/native_codex_evaluation.cpp src/codex/external_auth.cpp src/catalog/store.cpp
+    src/provider/surplus_claude_request.cpp src/codex/capacity_routing.cpp src/kv.cpp src/deepseek/index.cpp
+    src/catalog/index.cpp src/models/openrouter_models.cpp src/bounded_response_body.cpp src/provider/lithos.cpp
+    src/cache/scope_targets.cpp src/provider/claude_code.cpp src/codex/overage_settings.cpp
+    src/provider/claude_code_accounts.cpp src/provider/capacity_parse.cpp src/catalog/models.cpp
+    src/responses_stream.cpp src/models/codex_models_whitelist.cpp tests/helpers/admin_auth_harness.cpp src/defaults.cpp
+    src/provider/cerebras_rate_limits.cpp src/provider/anthropic_replay.cpp src/provider/claude_code_credentials.cpp
+    src/codex/auth_refresh.cpp src/provider/openrouter.cpp src/cache/scope_experiment.cpp
+    src/models/codex_models_fetch.cpp src/provider/capacity.cpp src/provider/capacity_rollups.cpp
+    src/provider/claude_capacity_rollups.cpp src/provider/claude_code_quota.cpp src/provider/capacity_history.cpp
+    src/provider/lithos_rate_limits.cpp src/admin/api_keys.cpp src/models/codex_models_availability.cpp
+    src/codex/banked_reset.cpp src/openai_telemetry.cpp src/api_key_policy.cpp src/provider/health.cpp
+    src/provider/capacity_contract.cpp src/api_keys.cpp src/provider/claude_code_usage_schema.cpp src/release.cpp
+    src/authority/native_api_key_policy.cpp src/authority/native_api_key.cpp
+    src/provider/surplus_claude_chat_request.cpp src/admin/api_key_audit.cpp src/codex/native_auth.cpp
+    src/provider/claude_capacity_history.cpp src/codex/reset_settings.cpp src/paid_fallback/ledger_state.cpp
+    src/authority/native_api_key_audit.cpp src/authority/native_paid_contracts.cpp
+    src/provider/anthropic_chat_responses.cpp src/codex/banked_reset_pool.cpp src/provider/capacity_analytics.cpp
+    src/metered_quota.cpp src/codex/rate_limit_429.cpp src/paid_fallback/ledger_stats.cpp src/paid_fallback/index.cpp
+    src/codex/banked_reset_claim.cpp src/storage/kv.cpp src/paid_fallback/ledger_admission.cpp
+    src/authority/native_paid.cpp src/provider/anthropic_responses.cpp src/authority/native_paid_policy.cpp
+    src/paid_fallback/ledger_backfill.cpp src/provider/anthropic_response_wire.cpp src/responses_failover_stream.cpp
+    src/catalog/promotion.cpp src/storage/sqlite_readonly.cpp src/codex/banked_reset_submission.cpp
+    src/paid_fallback/ledger_settlement.cpp src/authority/native_codex_429.cpp
+    src/provider/removed_provider_telemetry.cpp src/codex/banked_reset_provider.cpp src/codex/native_auth_transport.cpp
+    src/provider/anthropic_chat_stream.cpp src/storage/native_kv.cpp src/codex/responses_error.cpp
+    src/runtime/websocket.cpp src/admin/claude_code.cpp src/kv_conversion/profile_json.cpp
+tests/local_development_key_test.cpp: src/authority/native_api_key_audit.cpp src/admin/api_key_audit.cpp src/kv.cpp
+    tests/helpers/admin_auth_harness.cpp src/utils.cpp src/admin/api_keys.cpp src/types.cpp src/api_keys.cpp
+    src/authority/native_api_key_policy.cpp src/authority/native_api_key.cpp src/api_key_policy.cpp src/storage/kv.cpp
+    src/paid_fallback/ledger_state.cpp src/request.cpp src/paid_fallback/index.cpp src/models/codex_models_fetch.cpp
+    src/codex/dispatch.cpp src/authority/native_codex_contracts.cpp src/authority/native_paid_policy.cpp
+    src/runtime_config.cpp src/defaults.cpp src/http.cpp src/authority/native_paid.cpp src/config.cpp
+    src/paid_fallback/ledger_admission.cpp src/provider/surplus.cpp src/storage/sqlite_readonly.cpp
+    src/models/codex_models.cpp src/provider/health.cpp src/authority/native_paid_contracts.cpp
+    src/provider/capacity_events.cpp src/paid_fallback/ledger_backfill.cpp src/auth/relay.cpp
+    src/paid_fallback/ledger_settlement.cpp src/provider/metered.cpp src/provider/capacity.cpp
+    src/provider/claude_capacity_rollups.cpp src/provider/claude_capacity_history.cpp
+    src/provider/claude_code_accounts.cpp src/provider/capacity_rollups.cpp src/codex/auth.cpp
+    src/codex/routing_mutations.cpp src/provider/claude_code_quota.cpp src/provider/capacity_history.cpp
+    src/authority/native_codex_capacity.cpp src/provider/anthropic_responses.cpp
+    src/authority/native_codex_mutations.cpp src/provider/claude_code_credentials.cpp src/paid_fallback/ledger_stats.cpp
+    src/codex/capacity_routing.cpp src/responses_stream.cpp src/codex/experiment.cpp
+    src/models/codex_models_availability.cpp src/provider/surplus_claude_request.cpp src/codex/auth_refresh.cpp
+    src/codex/routing_state.cpp src/provider/capacity_contract.cpp src/storage/native_kv.cpp
+    src/provider/anthropic_chat_responses.cpp src/codex/external_auth.cpp src/provider/claude_code_usage_schema.cpp
+    src/provider/capacity_parse.cpp src/metered_quota.cpp src/provider/anthropic_replay.cpp
+    src/provider/anthropic_response_wire.cpp src/release.cpp src/codex/rate_limit_429.cpp
+    src/authority/native_codex_429.cpp src/provider/anthropic_chat_stream.cpp src/bounded_response_body.cpp
+    src/authority/native_codex_evaluation.cpp src/codex/banked_reset.cpp src/provider/cerebras_rate_limits.cpp
+    src/cache/prompt_analytics_read.cpp src/cache/prompt_analytics_core.cpp src/codex/account_routing.cpp
+    src/provider/surplus_claude_chat_request.cpp src/provider/capacity_analytics.cpp src/codex/routing_evaluation.cpp
+    src/codex/native_auth.cpp src/codex/routing_serial.cpp src/authority/native_codex.cpp src/provider/selection.cpp
+    src/codex/banked_reset_provider.cpp src/codex/reset_settings.cpp src/codex/overage_settings.cpp
+    src/codex/native_auth_transport.cpp src/runtime/websocket.cpp src/admin/api_key_mutations.cpp src/analytics.cpp
+    src/auth/local_development_key.cpp src/paid_fallback/rollups.cpp src/auth/index.cpp src/auth/passport.cpp
+    src/auth/passport_sessions.cpp src/kernel/attestation.cpp src/auth/passkeys.cpp src/kernel/policy_queue.cpp
+    src/auth/local_admin.cpp src/kernel/quota_reservations.cpp src/kernel/quota_v2.cpp src/authority/native_kernel.cpp
+    src/authority/native_kernel_contracts.cpp src/kv_conversion/profile_json.cpp
+tests/passport_differential_test.cpp: tests/helpers/admin_auth_harness.cpp src/auth/passport.cpp
+    src/auth/passport_sessions.cpp src/http.cpp src/kv.cpp src/utils.cpp src/config.cpp src/release.cpp
+    src/auth/relay.cpp src/provider/cerebras_rate_limits.cpp src/storage/key_compatibility.cpp src/storage/kv.cpp
+ src/storage/native_kv.cpp src/storage/sqlite_readonly.cpp
+    src/storage/value_compatibility.cpp src/codex/auth.cpp src/codex/external_auth.cpp
+    src/kv_conversion/profile_json.cpp src/runtime_config.cpp src/codex/native_auth.cpp src/defaults.cpp
+    src/codex/capacity_routing.cpp src/authority/native_codex_capacity.cpp src/codex/routing_mutations.cpp
+    src/authority/native_codex_mutations.cpp src/authority/native_codex_contracts.cpp src/types.cpp
+    src/provider/health.cpp src/models/codex_models.cpp src/codex/rate_limit_429.cpp src/authority/native_codex_429.cpp
+    src/provider/claude_code_accounts.cpp src/provider/claude_code_credentials.cpp src/codex/routing_state.cpp
+    src/authority/native_codex_evaluation.cpp src/codex/native_auth_transport.cpp src/bounded_response_body.cpp
+    src/runtime/websocket.cpp
+
+# Approved post-run completed-harness route dependencies; original static sources retained.
+tests/admin_index_harness_test.cpp: tests/helpers/kv_budget_harness.cpp src/config.cpp src/paid_fallback/index.cpp
+    src/paid_fallback/ledger_backfill.cpp src/authority/native_paid.cpp src/authority/native_paid_contracts.cpp
+    tests/helpers/admin_auth_harness.cpp src/kv.cpp src/authority/native_paid_policy.cpp
+    src/paid_fallback/ledger_state.cpp src/provider/capacity_events.cpp src/storage/kv.cpp
+    src/paid_fallback/ledger_settlement.cpp src/paid_fallback/ledger_admission.cpp src/codex/banked_reset.cpp
+    src/utils.cpp src/storage/native_kv.cpp src/api_keys.cpp src/types.cpp src/authority/native_api_key_policy.cpp
+ src/storage/sqlite_readonly.cpp src/api_key_policy.cpp src/provider/metered.cpp
+    src/provider/capacity_contract.cpp src/runtime_config.cpp src/authority/native_contracts.cpp
+    src/authority/native_api_key.cpp src/codex/auth.cpp src/provider/anthropic_responses.cpp src/models/codex_models.cpp
+    src/codex/capacity_routing.cpp src/provider/surplus.cpp src/authority/native_codex_capacity.cpp
+    src/kv_conversion/profile_json.cpp src/defaults.cpp src/codex/external_auth.cpp src/codex/routing_mutations.cpp
+    src/models/codex_models_fetch.cpp src/provider/surplus_claude_request.cpp src/paid_fallback/ledger_stats.cpp
+    src/authority/native_codex_contracts.cpp src/authority/native_codex_mutations.cpp src/http.cpp
+    src/codex/routing_state.cpp src/codex/reset_settings.cpp src/codex/dispatch.cpp src/codex/auth_refresh.cpp
+    src/provider/anthropic_replay.cpp src/responses_stream.cpp src/bounded_response_body.cpp src/release.cpp
+    src/codex/native_auth.cpp src/codex/native_auth_transport.cpp src/provider/cerebras_rate_limits.cpp
+    src/models/codex_models_availability.cpp src/provider/capacity.cpp src/provider/capacity_history.cpp
+    src/provider/claude_code_accounts.cpp src/codex/experiment.cpp src/provider/capacity_rollups.cpp
+    src/provider/claude_code_quota.cpp src/provider/capacity_parse.cpp src/provider/anthropic_response_wire.cpp
+    src/provider/claude_capacity_history.cpp src/provider/health.cpp src/provider/claude_code_credentials.cpp
+    src/runtime/websocket.cpp src/provider/claude_capacity_rollups.cpp src/codex/rate_limit_429.cpp
+    src/provider/capacity_analytics.cpp src/codex/banked_reset_provider.cpp src/authority/native_codex_429.cpp
+    src/provider/anthropic_chat_responses.cpp src/provider/surplus_claude_chat_request.cpp
+    src/authority/native_codex_evaluation.cpp src/metered_quota.cpp src/codex/account_routing.cpp
+    src/codex/routing_evaluation.cpp src/cache/prompt_analytics_read.cpp src/provider/anthropic_chat_stream.cpp
+    src/cache/prompt_analytics_core.cpp src/codex/routing_serial.cpp src/auth/relay.cpp
+    src/provider/claude_code_usage_schema.cpp src/provider/selection.cpp src/codex/overage_settings.cpp
+    src/authority/native_codex.cpp src/agent_messages.cpp src/models/catalog.cpp src/request_policy.cpp
+    src/models/openrouter_models.cpp src/input_normalization.cpp src/catalog/index.cpp src/catalog/models.cpp
+    src/models/codex_models_whitelist.cpp src/catalog/store.cpp src/catalog/types.cpp src/models/metadata.cpp
+    src/deepseek/index.cpp src/provider/claude_code_models.cpp src/provider/lithos.cpp src/auth/index.cpp
+    src/kernel/quota_reservations.cpp src/kernel/policy_queue.cpp src/kernel/quota_v2.cpp src/provider/claude_code.cpp
+    src/auth/local_development_key.cpp src/authority/native_kernel.cpp src/recent_model_context.cpp
+    src/deepseek/waterfall.cpp src/provider/openrouter.cpp src/provider/cerebras.cpp src/auth/passport.cpp
+    src/auth/passkeys.cpp src/authority/native_kernel_contracts.cpp src/analytics.cpp src/kernel/attestation.cpp
+    src/request.cpp src/auth/passport_sessions.cpp src/openai_telemetry.cpp src/provider/removed_provider_telemetry.cpp
+    src/auth/local_admin.cpp src/provider/lithos_rate_limits.cpp src/responses_failover_stream.cpp
+    src/codex/responses_error.cpp
+    note: preserve every original static-registration source and add read-only symbol-proven completed handler closure
+
+tests/lithos_wiring_test.cpp: src/catalog/index.cpp src/catalog/models.cpp src/catalog/store.cpp src/catalog/types.cpp
+    src/provider/gemini.cpp src/admin/gemini_quota.cpp
+    src/responses_failover_stream.cpp src/provider/stream_relay.cpp src/chat/stream_translation.cpp
+    src/openai_telemetry.cpp src/upstream_wire.cpp src/deepseek/index.cpp src/provider/lithos.cpp
+    src/provider/cerebras_rate_limits.cpp src/utils.cpp src/provider/removed_provider_telemetry.cpp
+    src/codex/responses_error.cpp src/deepseek/stream.cpp src/deepseek/responses.cpp src/responses_stream.cpp
+    src/config.cpp src/bounded_response_body.cpp src/deepseek/responses_stream.cpp src/provider/lithos_rate_limits.cpp
+    src/deepseek/responses_payload.cpp src/http.cpp src/provider/cerebras.cpp src/release.cpp src/auth/relay.cpp
+    src/request_policy.cpp src/provider/claude_code_models.cpp src/provider/surplus.cpp src/models/codex_models.cpp
+    src/provider/surplus_claude_request.cpp src/provider/anthropic_chat_responses.cpp src/kv.cpp
+    src/provider/claude_code_accounts.cpp src/provider/selection.cpp src/provider/claude_code_credentials.cpp
+    src/defaults.cpp src/models/codex_models_fetch.cpp src/provider/claude_code.cpp
+    src/provider/anthropic_response_wire.cpp src/types.cpp src/models/codex_models_availability.cpp src/storage/kv.cpp
+    src/storage/sqlite_readonly.cpp src/codex/dispatch.cpp src/provider/claude_code_quota.cpp
+    src/provider/anthropic_responses.cpp src/codex/auth.cpp src/provider/capacity_events.cpp
+    src/provider/claude_code_usage_schema.cpp src/codex/external_auth.cpp src/provider/anthropic_chat_stream.cpp
+    src/provider/metered.cpp src/provider/surplus_claude_chat_request.cpp src/provider/anthropic_replay.cpp
+    src/codex/native_auth.cpp src/provider/capacity_contract.cpp src/codex/routing_mutations.cpp
+    src/codex/banked_reset.cpp src/authority/native_codex_mutations.cpp src/codex/capacity_routing.cpp
+    src/authority/native_codex_capacity.cpp src/codex/auth_refresh.cpp src/codex/reset_settings.cpp
+    src/runtime_config.cpp src/authority/native_codex_contracts.cpp src/codex/banked_reset_provider.cpp
+ src/storage/native_kv.cpp src/provider/capacity.cpp src/cache/prompt_analytics_read.cpp
+    src/provider/health.cpp src/cache/prompt_analytics_core.cpp src/codex/native_auth_transport.cpp
+    src/provider/capacity_history.cpp src/provider/claude_capacity_history.cpp src/codex/experiment.cpp
+    src/provider/capacity_parse.cpp src/provider/claude_capacity_rollups.cpp src/paid_fallback/ledger_stats.cpp
+    src/provider/capacity_analytics.cpp src/provider/capacity_rollups.cpp src/codex/account_routing.cpp
+    src/codex/routing_serial.cpp src/codex/routing_evaluation.cpp src/authority/native_codex_evaluation.cpp
+    src/codex/routing_state.cpp src/authority/native_codex.cpp src/codex/overage_settings.cpp src/metered_quota.cpp
+    src/codex/rate_limit_429.cpp src/runtime/websocket.cpp src/authority/native_codex_429.cpp
+    src/lib/jev_compaction/codex_items.cpp src/lib/jev_compaction/compact.cpp src/lib/jev_compaction/request.cpp
+    src/lib/jev_compaction/state.cpp src/api_key_policy.cpp src/api_keys.cpp src/authority/native_api_key_policy.cpp
+    src/authority/native_api_key.cpp src/authority/native_paid_policy.cpp src/authority/native_paid.cpp
+    src/cache/prompt_analytics_queue.cpp src/cache/prompt_analytics.cpp src/cache/telemetry_gate.cpp
+    src/codex/banked_reset_claim.cpp src/codex/banked_reset_pool.cpp src/codex/banked_reset_submission.cpp
+    src/codex/index.cpp src/codex/responses_operations.cpp src/codex/responses_runners.cpp src/codex/responses_state.cpp
+    src/debug_routing.cpp src/deepseek/chat_projection.cpp src/deepseek/context_admission_failure.cpp
+    src/deepseek/flash_aliases.cpp src/deepseek/forwarded_payload_policy.cpp src/deepseek/handlers.cpp
+    src/deepseek/waterfall_handler.cpp src/deepseek/waterfall.cpp src/inference_deadline.cpp src/input_normalization.cpp
+    src/models/metadata.cpp src/models/openrouter_models.cpp src/openai_schema.cpp src/openai.cpp
+    src/optional_telemetry_queue.cpp src/paid_fallback/claude_code_route.cpp src/paid_fallback/health.cpp
+    src/paid_fallback/index.cpp src/paid_fallback/ledger_admission.cpp src/paid_fallback/ledger_backfill.cpp
+    src/paid_fallback/ledger_settlement.cpp src/paid_fallback/ledger_state.cpp src/paid_fallback/removed_provider.cpp
+    src/paid_fallback/rollups.cpp src/paid_fallback/routing.cpp src/provider/cerebras_handlers.cpp
+    src/provider/cerebras_responses.cpp src/provider/claude_code_access.cpp src/provider/lithos_handlers.cpp
+    src/provider/lithos_models.cpp src/provider/lithos_streams.cpp src/provider/openrouter_handlers.cpp
+    src/provider/openrouter_request_controls.cpp src/provider/openrouter_streams.cpp
+    src/provider/openrouter_web_tools.cpp src/provider/openrouter.cpp src/provider/presentation.cpp
+    src/provider/removed_provider_circuit.cpp src/recent_model_context.cpp src/request.cpp src/responses_attempts.cpp
+    src/responses_buffered.cpp src/responses_handler.cpp src/responses_native_headers.cpp src/responses_request.cpp
+    src/runtime/http_body.cpp src/runtime/http_early_sse.cpp src/runtime/http_tasks.cpp src/runtime/http_upgrade.cpp
+    src/runtime/http.cpp src/sentinel/upstream_capture.cpp src/storage/key_compatibility.cpp
+    src/storage/value_compatibility.cpp src/authority/native_paid_contracts.cpp src/lib/jev_compaction/types.cpp
+    src/chat/envelope.cpp src/chat/completions.cpp tests/helpers/openai_compat_harness.cpp src/models/catalog.cpp
+    src/models/codex_models_whitelist.cpp src/auth/index.cpp src/kernel/attestation.cpp src/auth/passkeys.cpp
+    src/kernel/quota_reservations.cpp src/auth/local_admin.cpp src/authority/native_kernel.cpp src/auth/passport.cpp
+    src/auth/passport_sessions.cpp src/kernel/quota_v2.cpp src/kernel/policy_queue.cpp
+    src/authority/native_kernel_contracts.cpp src/agent_messages.cpp src/auth/local_development_key.cpp
+    src/analytics.cpp
+    note: retain all prior static sources and add symbol-proven real route-table dependencies from completed openai_compat_harness
+
+tests/openai_compat_part11_test.cpp: src/kernel/attestation.cpp src/responses_failover_stream.cpp
+    src/provider/gemini.cpp src/admin/gemini_quota.cpp
+    src/provider/stream_relay.cpp src/chat/stream_translation.cpp src/openai_telemetry.cpp src/upstream_wire.cpp
+    src/deepseek/index.cpp src/provider/lithos.cpp src/provider/cerebras_rate_limits.cpp src/utils.cpp
+    src/provider/removed_provider_telemetry.cpp src/codex/responses_error.cpp src/deepseek/stream.cpp
+    src/deepseek/responses.cpp src/responses_stream.cpp src/config.cpp src/bounded_response_body.cpp
+    src/deepseek/responses_stream.cpp src/provider/lithos_rate_limits.cpp src/deepseek/responses_payload.cpp
+    src/http.cpp src/provider/cerebras.cpp src/release.cpp src/auth/relay.cpp src/request_policy.cpp
+    src/provider/claude_code_models.cpp src/provider/surplus.cpp src/models/codex_models.cpp
+    src/provider/surplus_claude_request.cpp src/provider/anthropic_chat_responses.cpp src/kv.cpp
+    src/provider/claude_code_accounts.cpp src/provider/selection.cpp src/provider/claude_code_credentials.cpp
+    src/defaults.cpp src/models/codex_models_fetch.cpp src/provider/claude_code.cpp
+    src/provider/anthropic_response_wire.cpp src/types.cpp src/models/codex_models_availability.cpp src/storage/kv.cpp
+    src/storage/sqlite_readonly.cpp src/codex/dispatch.cpp src/provider/claude_code_quota.cpp
+    src/provider/anthropic_responses.cpp src/codex/auth.cpp src/provider/capacity_events.cpp
+    src/provider/claude_code_usage_schema.cpp src/codex/external_auth.cpp src/provider/anthropic_chat_stream.cpp
+    src/provider/metered.cpp src/provider/surplus_claude_chat_request.cpp src/provider/anthropic_replay.cpp
+    src/codex/native_auth.cpp src/provider/capacity_contract.cpp src/codex/routing_mutations.cpp
+    src/codex/banked_reset.cpp src/authority/native_codex_mutations.cpp src/codex/capacity_routing.cpp
+    src/authority/native_codex_capacity.cpp src/codex/auth_refresh.cpp src/codex/reset_settings.cpp
+    src/runtime_config.cpp src/authority/native_codex_contracts.cpp src/codex/banked_reset_provider.cpp
+ src/storage/native_kv.cpp src/provider/capacity.cpp src/cache/prompt_analytics_read.cpp
+    src/provider/health.cpp src/cache/prompt_analytics_core.cpp src/codex/native_auth_transport.cpp
+    src/provider/capacity_history.cpp src/provider/claude_capacity_history.cpp src/codex/experiment.cpp
+    src/provider/capacity_parse.cpp src/provider/claude_capacity_rollups.cpp src/paid_fallback/ledger_stats.cpp
+    src/provider/capacity_analytics.cpp src/provider/capacity_rollups.cpp src/codex/account_routing.cpp
+    src/codex/routing_serial.cpp src/codex/routing_evaluation.cpp src/authority/native_codex_evaluation.cpp
+    src/codex/routing_state.cpp src/authority/native_codex.cpp src/codex/overage_settings.cpp src/metered_quota.cpp
+    src/codex/rate_limit_429.cpp src/runtime/websocket.cpp src/authority/native_codex_429.cpp
+    src/lib/jev_compaction/codex_items.cpp src/lib/jev_compaction/compact.cpp src/lib/jev_compaction/request.cpp
+    src/lib/jev_compaction/state.cpp src/api_key_policy.cpp src/api_keys.cpp src/authority/native_api_key_policy.cpp
+    src/authority/native_api_key.cpp src/authority/native_paid_policy.cpp src/authority/native_paid.cpp
+    src/cache/prompt_analytics_queue.cpp src/cache/prompt_analytics.cpp src/cache/telemetry_gate.cpp
+    src/codex/banked_reset_claim.cpp src/codex/banked_reset_pool.cpp src/codex/banked_reset_submission.cpp
+    src/codex/index.cpp src/codex/responses_operations.cpp src/codex/responses_runners.cpp src/codex/responses_state.cpp
+    src/debug_routing.cpp src/deepseek/chat_projection.cpp src/deepseek/context_admission_failure.cpp
+    src/deepseek/flash_aliases.cpp src/deepseek/forwarded_payload_policy.cpp src/deepseek/handlers.cpp
+    src/deepseek/waterfall_handler.cpp src/deepseek/waterfall.cpp src/inference_deadline.cpp src/input_normalization.cpp
+    src/models/metadata.cpp src/models/openrouter_models.cpp src/openai_schema.cpp src/openai.cpp
+    src/optional_telemetry_queue.cpp src/paid_fallback/claude_code_route.cpp src/paid_fallback/health.cpp
+    src/paid_fallback/index.cpp src/paid_fallback/ledger_admission.cpp src/paid_fallback/ledger_backfill.cpp
+    src/paid_fallback/ledger_settlement.cpp src/paid_fallback/ledger_state.cpp src/paid_fallback/removed_provider.cpp
+    src/paid_fallback/rollups.cpp src/paid_fallback/routing.cpp src/provider/cerebras_handlers.cpp
+    src/provider/cerebras_responses.cpp src/provider/claude_code_access.cpp src/provider/lithos_handlers.cpp
+    src/provider/lithos_models.cpp src/provider/lithos_streams.cpp src/provider/openrouter_handlers.cpp
+    src/provider/openrouter_request_controls.cpp src/provider/openrouter_streams.cpp
+    src/provider/openrouter_web_tools.cpp src/provider/openrouter.cpp src/provider/presentation.cpp
+    src/provider/removed_provider_circuit.cpp src/recent_model_context.cpp src/request.cpp src/responses_attempts.cpp
+    src/responses_buffered.cpp src/responses_handler.cpp src/responses_native_headers.cpp src/responses_request.cpp
+    src/runtime/http_body.cpp src/runtime/http_early_sse.cpp src/runtime/http_tasks.cpp src/runtime/http_upgrade.cpp
+    src/runtime/http.cpp src/sentinel/upstream_capture.cpp src/storage/key_compatibility.cpp
+    src/storage/value_compatibility.cpp src/authority/native_paid_contracts.cpp src/lib/jev_compaction/types.cpp
+    src/chat/envelope.cpp src/chat/completions.cpp tests/helpers/openai_compat_harness.cpp src/handler/terminal_log.cpp
+    src/sentinel/replay_store.cpp src/sentinel/replay_envelope.cpp src/sentinel/replay_observation.cpp
+    src/sentinel/incident_outbox.cpp src/sentinel/replay_read.cpp src/sentinel/replay_model.cpp
+    src/sentinel/replay_retention_schema.cpp src/admin/error_log.cpp src/sentinel/replay_retention.cpp
+    src/sentinel/replay_limits.cpp src/handler/http.cpp tests/helpers/counting_kv.cpp
+    src/sentinel/replay_retention_bootstrap.cpp src/codex/quota.cpp src/sentinel/replay_retention_metadata.cpp
+    src/models/catalog.cpp src/models/codex_models_whitelist.cpp src/catalog/index.cpp src/catalog/store.cpp
+    src/catalog/models.cpp src/catalog/types.cpp src/auth/index.cpp src/auth/passkeys.cpp src/auth/local_admin.cpp
+    src/agent_messages.cpp src/auth/passport.cpp src/auth/local_development_key.cpp src/auth/passport_sessions.cpp
+    src/kernel/quota_reservations.cpp src/analytics.cpp src/kernel/quota_v2.cpp src/authority/native_kernel.cpp
+    src/kernel/policy_queue.cpp src/authority/native_kernel_contracts.cpp
+    note: retain all original static sources and add symbol-proven expanded openai_compat_harness route dependencies
+tests/public_provider_cache_controls_test.cpp: src/responses_failover_stream.cpp src/provider/stream_relay.cpp
+    src/provider/gemini.cpp src/admin/gemini_quota.cpp
+    src/chat/stream_translation.cpp src/openai_telemetry.cpp src/upstream_wire.cpp src/deepseek/index.cpp
+    src/provider/lithos.cpp src/provider/cerebras_rate_limits.cpp src/utils.cpp
+    src/provider/removed_provider_telemetry.cpp src/codex/responses_error.cpp src/deepseek/stream.cpp
+    src/deepseek/responses.cpp src/responses_stream.cpp src/config.cpp src/bounded_response_body.cpp
+    src/deepseek/responses_stream.cpp src/provider/lithos_rate_limits.cpp src/deepseek/responses_payload.cpp
+    src/http.cpp src/provider/cerebras.cpp src/release.cpp src/auth/relay.cpp src/request_policy.cpp
+    src/provider/claude_code_models.cpp src/provider/surplus.cpp src/models/codex_models.cpp
+    src/provider/surplus_claude_request.cpp src/provider/anthropic_chat_responses.cpp src/kv.cpp
+    src/provider/claude_code_accounts.cpp src/provider/selection.cpp src/provider/claude_code_credentials.cpp
+    src/defaults.cpp src/models/codex_models_fetch.cpp src/provider/claude_code.cpp
+    src/provider/anthropic_response_wire.cpp src/types.cpp src/models/codex_models_availability.cpp src/storage/kv.cpp
+    src/storage/sqlite_readonly.cpp src/codex/dispatch.cpp src/provider/claude_code_quota.cpp
+    src/provider/anthropic_responses.cpp src/codex/auth.cpp src/provider/capacity_events.cpp
+    src/provider/claude_code_usage_schema.cpp src/codex/external_auth.cpp src/provider/anthropic_chat_stream.cpp
+    src/provider/metered.cpp src/provider/surplus_claude_chat_request.cpp src/provider/anthropic_replay.cpp
+    src/codex/native_auth.cpp src/provider/capacity_contract.cpp src/codex/routing_mutations.cpp
+    src/codex/banked_reset.cpp src/authority/native_codex_mutations.cpp src/codex/capacity_routing.cpp
+    src/authority/native_codex_capacity.cpp src/codex/auth_refresh.cpp src/codex/reset_settings.cpp
+    src/runtime_config.cpp src/authority/native_codex_contracts.cpp src/codex/banked_reset_provider.cpp
+ src/storage/native_kv.cpp src/provider/capacity.cpp src/cache/prompt_analytics_read.cpp
+    src/provider/health.cpp src/cache/prompt_analytics_core.cpp src/codex/native_auth_transport.cpp
+    src/provider/capacity_history.cpp src/provider/claude_capacity_history.cpp src/codex/experiment.cpp
+    src/provider/capacity_parse.cpp src/provider/claude_capacity_rollups.cpp src/paid_fallback/ledger_stats.cpp
+    src/provider/capacity_analytics.cpp src/provider/capacity_rollups.cpp src/codex/account_routing.cpp
+    src/codex/routing_serial.cpp src/codex/routing_evaluation.cpp src/authority/native_codex_evaluation.cpp
+    src/codex/routing_state.cpp src/authority/native_codex.cpp src/codex/overage_settings.cpp src/metered_quota.cpp
+    src/codex/rate_limit_429.cpp src/runtime/websocket.cpp src/authority/native_codex_429.cpp
+    src/lib/jev_compaction/codex_items.cpp src/lib/jev_compaction/compact.cpp src/lib/jev_compaction/request.cpp
+    src/lib/jev_compaction/state.cpp src/api_key_policy.cpp src/api_keys.cpp src/authority/native_api_key_policy.cpp
+    src/authority/native_api_key.cpp src/authority/native_paid_policy.cpp src/authority/native_paid.cpp
+    src/cache/prompt_analytics_queue.cpp src/cache/prompt_analytics.cpp src/cache/telemetry_gate.cpp
+    src/codex/banked_reset_claim.cpp src/codex/banked_reset_pool.cpp src/codex/banked_reset_submission.cpp
+    src/codex/index.cpp src/codex/responses_operations.cpp src/codex/responses_runners.cpp src/codex/responses_state.cpp
+    src/debug_routing.cpp src/deepseek/chat_projection.cpp src/deepseek/context_admission_failure.cpp
+    src/deepseek/flash_aliases.cpp src/deepseek/forwarded_payload_policy.cpp src/deepseek/handlers.cpp
+    src/deepseek/waterfall_handler.cpp src/deepseek/waterfall.cpp src/inference_deadline.cpp src/input_normalization.cpp
+    src/models/metadata.cpp src/models/openrouter_models.cpp src/openai_schema.cpp src/openai.cpp
+    src/optional_telemetry_queue.cpp src/paid_fallback/claude_code_route.cpp src/paid_fallback/health.cpp
+    src/paid_fallback/index.cpp src/paid_fallback/ledger_admission.cpp src/paid_fallback/ledger_backfill.cpp
+    src/paid_fallback/ledger_settlement.cpp src/paid_fallback/ledger_state.cpp src/paid_fallback/removed_provider.cpp
+    src/paid_fallback/rollups.cpp src/paid_fallback/routing.cpp src/provider/cerebras_handlers.cpp
+    src/provider/cerebras_responses.cpp src/provider/claude_code_access.cpp src/provider/lithos_handlers.cpp
+    src/provider/lithos_models.cpp src/provider/lithos_streams.cpp src/provider/openrouter_handlers.cpp
+    src/provider/openrouter_request_controls.cpp src/provider/openrouter_streams.cpp
+    src/provider/openrouter_web_tools.cpp src/provider/openrouter.cpp src/provider/presentation.cpp
+    src/provider/removed_provider_circuit.cpp src/recent_model_context.cpp src/request.cpp src/responses_attempts.cpp
+    src/responses_buffered.cpp src/responses_handler.cpp src/responses_native_headers.cpp src/responses_request.cpp
+    src/runtime/http_body.cpp src/runtime/http_early_sse.cpp src/runtime/http_tasks.cpp src/runtime/http_upgrade.cpp
+    src/runtime/http.cpp src/sentinel/upstream_capture.cpp src/storage/key_compatibility.cpp
+    src/storage/value_compatibility.cpp src/authority/native_paid_contracts.cpp src/lib/jev_compaction/types.cpp
+    src/chat/envelope.cpp src/chat/completions.cpp tests/helpers/openai_compat_harness.cpp src/models/catalog.cpp
+    src/models/codex_models_whitelist.cpp src/auth/index.cpp src/auth/passport.cpp src/kernel/attestation.cpp
+    src/catalog/index.cpp src/catalog/models.cpp src/catalog/store.cpp src/agent_messages.cpp src/catalog/types.cpp
+    src/auth/passkeys.cpp src/kernel/quota_reservations.cpp src/auth/passport_sessions.cpp
+    src/authority/native_kernel_contracts.cpp src/kernel/quota_v2.cpp src/authority/native_kernel.cpp
+    src/kernel/policy_queue.cpp src/auth/local_admin.cpp src/auth/local_development_key.cpp src/analytics.cpp
+    note: preserve every original static source and add symbol-proven completed compatibility route closure
+
+tests/provider_kv_fanout_lifetime_test.cpp: (header)

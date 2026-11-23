@@ -1,0 +1,57 @@
+#pragma once
+// Port of src/admin/index.ts.
+#include "uos/admin/api_key_audit.hpp"
+#include "uos/admin/api_key_mutations.hpp"
+#include "uos/admin/api_keys.hpp"
+#include "uos/admin/claude_code.hpp"
+#include "uos/admin/codex.hpp"
+#include "uos/admin/defaults.hpp"
+#include "uos/admin/kernel.hpp"
+
+namespace uos::admin::index {
+  using codex::handleAdminCodexAuth;
+  using codex::handleAdminCodexBankedResetShadowDecisions;
+  using codex::handleAdminCodexCacheScopeExperiment;
+  using codex::handleAdminCodexCacheScopeExperimentTelemetryBaseline;
+  using codex::handleAdminCodexModelsGet;
+  using codex::handleAdminCodexModelsSet;
+  using codex::handleAdminCodexModelsWhitelistGet;
+  using codex::handleAdminCodexModelsWhitelistSet;
+  using codex::handleAdminCodexPromptsPurge;
+  using codex::handleAdminCodexRecheck;
+  using codex::handleAdminDebugRouting;
+  using codex::handleAdminModelsCatalogGet;
+  using codex::handleAdminModelsRefresh;
+  using codex::handleAdminPromptCacheAnalytics;
+  using codex::handleAdminProviderSelectionGet;
+  using codex::handleAdminProviderSelectionSet;
+  using claude_code::handleAdminClaudeCodeAccess;
+  using claude_code::handleAdminClaudeCodeAccountActive;
+  using claude_code::handleAdminClaudeCodeAuthDelete;
+  using claude_code::handleAdminClaudeCodeAuthGet;
+  using claude_code::handleAdminClaudeCodeAuthSet;
+  using claude_code::handleAdminClaudeCodeQuotaClear;
+  using claude_code::handleAdminClaudeCodeQuotaRefresh;
+  using defaults::handleAdminDefaults;
+  using defaults::handleAdminKvMigrationImport;
+  using defaults::handleAdminKvMigrationValidate;
+  using api_keys::handleAdminApiKeysCreate;
+  using api_keys::handleAdminApiKeysList;
+  using api_keys::handleAdminApiKeysPaidFallbacks;
+  using api_key_audit::handleAdminApiKeyChanges;
+  using api_key_mutations::handleAdminApiKeysDelete;
+  using api_key_mutations::handleAdminApiKeysRevoke;
+  using api_key_mutations::handleAdminApiKeysUnrevoke;
+  using api_key_mutations::handleAdminApiKeysUpdate;
+  using kernel::handleAdminCodexResetSettings;
+  using kernel::handleAdminCodexOverageUsage;
+  using kernel::handleAdminKernelPolicyQueueList;
+  using kernel::handleAdminKernelPubKeysCreate;
+  using kernel::handleAdminKernelPubKeysDelete;
+  using kernel::handleAdminKernelPubKeysList;
+  using kernel::handleAdminKernelUsageDelete;
+  using kernel::handleAdminKernelUsageGet;
+  using kernel::handleAdminKernelUsageSet;
+  using kernel::handleAdminProvidersQuotaProjection;
+  using kernel::handleAdminProvidersQuotaProjectionBackfill;
+}

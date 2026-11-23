@@ -1,0 +1,107 @@
+name: C++ gateway ARM64 packages
+run-name: C++ gateway ARM64 packages ${{ github.ref_name }} (${{ github.sha }})
+
+on:
+  workflow_dispatch:
+  push:
+    tags: [cpp-gateway-v*]
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux ARM64 package
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install ccache
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ccache
+      - name: Build the Bookworm package
+        shell: bash
+        run: |
+          release="$RUNNER_TEMP/cpp-gateway-linux"
+          scratch=$(mktemp -d "$RUNNER_TEMP/cpp-gateway-build.XXXXXX")
+          trap 'rm -rf -- "$scratch"' EXIT
+          mkdir "$release" "$scratch/home" "$scratch/tmp"
+          # Published Linux archives always compile from scratch. This job has no cache restore.
+          env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$scratch/home" TMPDIR="$scratch/tmp" \
+            PORTABLE_REBUILD=1 UOS_CI_COMPILER_LAUNCHER= \
+            bash cpp/gateway/packaging/portable/build.sh "$release/uos-gateway-linux-arm64.tar.gz"
+          (cd "$release" && sha256sum uos-gateway-linux-arm64.tar.gz > SHA256SUMS)
+      - name: Prove Debian 12 and 13 compatibility
+        shell: bash
+        run: |
+          release="$RUNNER_TEMP/cpp-gateway-linux"
+          scratch=$(mktemp -d "$RUNNER_TEMP/cpp-gateway-proof.XXXXXX")
+          trap 'rm -rf -- "$scratch"' EXIT
+          mkdir "$scratch/home" "$scratch/tmp"
+          env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$scratch/home" TMPDIR="$scratch/tmp" \
+            bash cpp/gateway/packaging/portable/verify.sh "$release/uos-gateway-linux-arm64.tar.gz" "$release/evidence" \
+            2>&1 | tee "$release/proof.log"
+      - name: Upload Linux package and proof log
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: uos-gateway-linux-arm64
+          path: |
+            ${{ runner.temp }}/cpp-gateway-linux/uos-gateway-linux-arm64.tar.gz
+            ${{ runner.temp }}/cpp-gateway-linux/SHA256SUMS
+            ${{ runner.temp }}/cpp-gateway-linux/proof.log
+          if-no-files-found: error
+          compression-level: 0
+      - name: Save Linux proof diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: uos-gateway-linux-arm64-proof-failure
+          path: |
+            ${{ runner.temp }}/cpp-gateway-linux/evidence/
+            ${{ runner.temp }}/cpp-gateway-linux/proof.log
+          if-no-files-found: ignore
+
+  macos:
+    name: macOS ARM64 package
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install dependencies for the Apple Silicon build
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_ANALYTICS: "1"
+        run: |
+          test "$(uname -m)" = arm64
+          brew install boost openssl@3 sqlite zlib icu4c@78 brotli zstd python pkgconf
+      - name: Build, test and package for Apple Silicon
+        shell: bash
+        run: |
+          release="$RUNNER_TEMP/cpp-gateway-macos"
+          scratch=$(mktemp -d "$RUNNER_TEMP/cpp-gateway-macos.XXXXXX")
+          trap 'rm -rf -- "$scratch"' EXIT
+          mkdir "$release" "$scratch/build-home" "$scratch/build-tmp"
+          env -i PATH=/opt/homebrew/bin:/usr/bin:/bin HOME="$scratch/build-home" TMPDIR="$scratch/build-tmp" \
+            python3 -B cpp/gateway/packaging/macos/build.py "$release/uos-gateway-macos-arm64.tar.gz"
+          (cd "$release" && shasum -a 256 uos-gateway-macos-arm64.tar.gz > SHA256SUMS)
+          mkdir "$scratch/unpacked" "$scratch/home" "$scratch/tmp"
+          tar --no-same-owner --no-same-permissions -xzf "$release/uos-gateway-macos-arm64.tar.gz" -C "$scratch/unpacked"
+          expected="uos-gateway $(git rev-parse HEAD)"
+          version=$(cd "$scratch/unpacked" && env -i PATH=/usr/bin:/bin HOME="$scratch/home" TMPDIR="$scratch/tmp" \
+            /usr/bin/sandbox-exec -p '(version 1)(allow default)(deny network*)' ./bin/uos-gateway --version)
+          test "$version" = "$expected"
+          printf '%s\n' "$version"
+      - name: Upload macOS package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: uos-gateway-macos-arm64
+          path: |
+            ${{ runner.temp }}/cpp-gateway-macos/uos-gateway-macos-arm64.tar.gz
+            ${{ runner.temp }}/cpp-gateway-macos/SHA256SUMS
+          if-no-files-found: error
+          compression-level: 0

@@ -1,27 +1,5 @@
-#!/bin/sh
-set -eu
-repo_root=$(git rev-parse --show-toplevel)
-cd "$repo_root"
-prettier_files=""
-lint_files=""
-for file in $(git diff --cached --name-only --diff-filter=ACMR); do
-  case "$file" in
-    *.ts|*.tsx|*.mjs|*.js|*.jsx|*.json|*.jsonc|*.md|*.css|*.html|*.yml|*.yaml) prettier_files="$prettier_files $file" ;;
-  esac
-  case "$file" in *.ts|*.tsx|*.js|*.jsx) lint_files="$lint_files $file" ;; esac
-done
-if [ -n "$prettier_files" ]; then
-  if [ ! -x tools/lint/node_modules/.bin/prettier ]; then
-    echo "pre-commit: Prettier is not installed; run 'cd tools/lint && bun install --frozen-lockfile', then 'sh scripts/format.sh --check'." >&2
-    exit 1
-  fi
-  bun --no-env-file tools/lint/node_modules/.bin/prettier --write $prettier_files
-  git add -- $prettier_files
-fi
-if [ -n "$lint_files" ]; then
-  # Validate staged source without an unbounded automatic lint rewrite.
-  sh scripts/lint.sh $lint_files
-fi
-# Root checking includes the tests as well as every runtime and CLI entry point.
-sh scripts/format.sh --check serve.ts src tests scripts docs
-bun --no-env-file run check
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+git diff --cached --check

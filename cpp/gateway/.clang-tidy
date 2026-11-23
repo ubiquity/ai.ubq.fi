@@ -1,0 +1,146 @@
+---
+# Routine profile; tools/tidy.sh --audit replays the complete 245-check discovery configuration.
+# The report and baseline retain all disabled findings, including the confirmed kernel P1.
+# CERT aliases of bugprone/performance/concurrency checks and pure naming/style checks are omitted.
+InheritParentConfig: false
+# bugprone-bitwise-pointer-cast: POSIX dlsym representation bridge on the recorded ABI.
+# bugprone-branch-clone: Typed constexpr codecs and intentional source branches share bodies.
+# bugprone-derived-method-shadowing-base-method: Fixture APIs intentionally extend nonvirtual source methods.
+# bugprone-easily-swappable-parameters: Same-type parameters preserve the TypeScript module APIs.
+# bugprone-empty-catch: Best-effort catches preserve the TypeScript fallback behavior.
+# bugprone-exception-copy-constructor-throws: Named JS error objects may allocate only on copy exhaustion.
+# bugprone-exception-escape: Guarded variants and wrapped bad_alloc dominate; keep full traces with --audit.
+# bugprone-float-loop-counter: Bounded integer-valued doubles preserve JavaScript Number behavior.
+# bugprone-forward-declaration-namespace: Opaque definitions in other TUs collide with unrelated fixture names.
+# bugprone-implicit-widening-of-multiplication-result: Fixed capacities and validated capture-index bounds fit before widening.
+# bugprone-integer-division: Positive-file timestamp assertion deliberately checks integer truncation.
+# bugprone-macro-parentheses: AWAIT macro arguments include declaration identifiers, not just expressions.
+# bugprone-misplaced-widening-cast: Bounded WebSocket loop indexes fit before their explicit widening.
+# bugprone-multi-level-implicit-pointer-conversion: memcpy intentionally receives addresses of pointer representations.
+# bugprone-optional-value-conversion: Checked optional round trips are simplifications, not unchecked reads.
+# bugprone-random-generator-seed: Fixed property-test seeds are deliberate and not security entropy.
+# bugprone-reserved-identifier: Reserved spelling is naming debt outside the hazard gate.
+# bugprone-return-const-ref-from-parameter: Internal selector/projection callers retain or immediately copy values.
+# bugprone-signed-bitwise: Unsigned byte operations and positive literal shift counts are intentional.
+# bugprone-std-exception-baseclass: GeneratorReturn is a deliberately caught private control-flow token.
+# bugprone-string-constructor: Oversized and explicit-length strings are deliberate test vectors.
+# bugprone-suspicious-include: Standalone smoke tests intentionally include private implementation helpers.
+# bugprone-suspicious-missing-comma: Adjacent literals deliberately continue one prompt paragraph.
+# bugprone-suspicious-stringview-data-usage: Regex matcher receives an explicit separately stored length.
+# bugprone-switch-missing-default-case: Fixture operation DSL has a closed recorded alphabet.
+# bugprone-throwing-static-initialization: Fixed registries/keys allocate before main; no request data is used.
+# bugprone-unchecked-optional-access: Helper predicates and Promise/stream discriminants need caller proofs.
+# bugprone-unhandled-self-assignment: OrderedIterator attaches before detaching, including self-assignment.
+# bugprone-unused-local-non-trivial-variable: Unused fixture locals are cleanup debt outside the hazard gate.
+# bugprone-unused-return-value: Asio error_code outputs are handled or intentionally best effort.
+# bugprone-use-after-move: JSON loop-state reinitialization/one-time insertion is not modeled.
+# cert-err09-cpp: Named errors preserve metadata/native failure state; no slicing found.
+# cert-err33-c: Fixture/logging/formatting return-value assumptions are reported for review.
+# clang-analyzer-core.CallAndMessage: External null-rejecting helpers and coroutine SDK paths are opaque.
+# clang-analyzer-core.NonNullParamChecker: Traces incorrectly assume isRecord(nullptr) succeeds.
+# clang-analyzer-core.NullDereference: Boost.JSON iterator bounds are not preserved in reported traces.
+# clang-analyzer-core.uninitialized.Assign: Deque/variant movement loses an initialized fixture bool in the trace.
+# clang-analyzer-cplusplus.NewDeleteLeaks: std::function/shared listener ownership is not modeled.
+# clang-analyzer-cplusplus.StringChecker: Fixture native environment setup needs a successful setenv precondition.
+# clang-analyzer-security.ArrayBound: WebSocket state values are constrained to 0..3 by lifecycle code.
+# clang-analyzer-security.FloatLoopCounter: Same bounded JavaScript-number loops as bugprone-float-loop-counter.
+# clang-analyzer-unix.StdCLibraryFunctions: Fixture descriptor-exhaustion handling is a hardening candidate.
+# concurrency-mt-unsafe: Private DIR handles and single-loop getenv/loader calls need caller context.
+# cppcoreguidelines-avoid-capturing-lambda-coroutines: Runtime owners need review; --audit retains every site and the P1.
+# cppcoreguidelines-avoid-reference-coroutine-parameters: Structured awaits and borrowed store APIs need caller proofs.
+# performance-avoid-endl: Stream flushing style is outside the hot-copy audit.
+# performance-enum-size: Enum storage is a representation suggestion outside this audit.
+# performance-expensive-value-or: Retained as measured-copy candidates in the broad audit report.
+# performance-faster-string-find: Single-character overload choices are small optimization suggestions.
+# performance-inefficient-string-concatenation: Unmeasured concatenation debt is documented by the broad audit.
+# performance-inefficient-vector-operation: Known-size reservation suggestions need workload measurement.
+# performance-move-const-arg: Trivial moves and required Boost.JSON string conversion dominate.
+# performance-no-automatic-move: Const-local copy opportunities are reported without a latency claim.
+# performance-prefer-single-char-overloads: Alias of faster-string-find; single-character overloads are benign here.
+# performance-string-view-conversions: Synchronous view-conversion opportunities are reported separately.
+# performance-unnecessary-copy-initialization: Ownership copies and unmeasured local copies need manual separation.
+# performance-unnecessary-value-param: Owning callbacks/state must survive reentrancy and asynchronous use.
+# performance-use-std-move: Last-use copy candidates are tracked in the broad audit report.
+Checks: >-
+  -*,
+  bugprone-*,
+  performance-*,
+  concurrency-*,
+  clang-analyzer-core.*,
+  clang-analyzer-cplusplus.*,
+  clang-analyzer-optin.cplusplus.*,
+  clang-analyzer-security.*,
+  clang-analyzer-unix.*,
+  cert-dcl50-cpp,
+  cert-dcl54-cpp,
+  cert-err52-cpp,
+  cert-fio38-c,
+  cert-msc50-cpp,
+  -bugprone-bitwise-pointer-cast,
+  -bugprone-branch-clone,
+  -bugprone-derived-method-shadowing-base-method,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-empty-catch,
+  -bugprone-exception-copy-constructor-throws,
+  -bugprone-exception-escape,
+  -bugprone-float-loop-counter,
+  -bugprone-forward-declaration-namespace,
+  -bugprone-implicit-widening-of-multiplication-result,
+  -bugprone-integer-division,
+  -bugprone-macro-parentheses,
+  -bugprone-misplaced-widening-cast,
+  -bugprone-multi-level-implicit-pointer-conversion,
+  -bugprone-optional-value-conversion,
+  -bugprone-random-generator-seed,
+  -bugprone-reserved-identifier,
+  -bugprone-return-const-ref-from-parameter,
+  -bugprone-signed-bitwise,
+  -bugprone-std-exception-baseclass,
+  -bugprone-string-constructor,
+  -bugprone-suspicious-include,
+  -bugprone-suspicious-missing-comma,
+  -bugprone-suspicious-stringview-data-usage,
+  -bugprone-switch-missing-default-case,
+  -bugprone-throwing-static-initialization,
+  -bugprone-unchecked-optional-access,
+  -bugprone-unhandled-self-assignment,
+  -bugprone-unused-local-non-trivial-variable,
+  -bugprone-unused-return-value,
+  -bugprone-use-after-move,
+  -cert-err09-cpp,
+  -cert-err33-c,
+  -clang-analyzer-core.CallAndMessage,
+  -clang-analyzer-core.NonNullParamChecker,
+  -clang-analyzer-core.NullDereference,
+  -clang-analyzer-core.uninitialized.Assign,
+  -clang-analyzer-cplusplus.NewDeleteLeaks,
+  -clang-analyzer-cplusplus.StringChecker,
+  -clang-analyzer-security.ArrayBound,
+  -clang-analyzer-security.FloatLoopCounter,
+  -clang-analyzer-unix.StdCLibraryFunctions,
+  -concurrency-mt-unsafe,
+  -cppcoreguidelines-avoid-capturing-lambda-coroutines,
+  -cppcoreguidelines-avoid-reference-coroutine-parameters,
+  -performance-avoid-endl,
+  -performance-enum-size,
+  -performance-expensive-value-or,
+  -performance-faster-string-find,
+  -performance-inefficient-string-concatenation,
+  -performance-inefficient-vector-operation,
+  -performance-move-const-arg,
+  -performance-no-automatic-move,
+  -performance-prefer-single-char-overloads,
+  -performance-string-view-conversions,
+  -performance-unnecessary-copy-initialization,
+  -performance-unnecessary-value-param,
+  -performance-use-std-move
+WarningsAsErrors: ""
+HeaderFilterRegex: "(^|/)cpp/gateway/(include|src|tests)/"
+SystemHeaders: false
+FormatStyle: none
+CheckOptions:
+  bugprone-dangling-handle.HandleClasses: "std::basic_string_view;std::span"
+  bugprone-narrowing-conversions.WarnOnIntegerNarrowingConversion: "true"
+  bugprone-narrowing-conversions.WarnOnIntegerToFloatingPointNarrowingConversion: "true"
+  bugprone-narrowing-conversions.WarnOnFloatingPointNarrowingConversion: "true"
+  misc-coroutine-hostile-raii.RAIITypesList: "std::lock_guard;std::scoped_lock"

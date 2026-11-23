@@ -1,0 +1,5 @@
+# Synthetic config
+NAME="two words"
+EMPTY=
+REF=${NAME}
+URL=https://example.test/path?a=b # comment
