@@ -127,6 +127,7 @@ namespace {
 
 ASYNC_TEST("Responses inactivity waits release consumed chunks on the running loop") {
   const auto readEvents = []() -> rt::Task<void> {
+    const auto timers = rt::loop().timerCount();
     rt::UnderlyingSource<rt::ByteChunk> source;
     source.start = [](Controller controller) {
       controller.enqueue(bytes("data: {\"type\":\"response.output_text.delta\",\"delta\":\"a\"}\n\n"));
@@ -143,6 +144,7 @@ ASYNC_TEST("Responses inactivity waits release consumed chunks on the running lo
     const auto events = co_await fromAsync(iterator);
     ASSERT_EQ(events.size(), 2u);
     EXPECT(events.back().terminal);
+    EXPECT_EQ(rt::loop().timerCount(), timers);
   };
   auto checking = uos::tests::helpers::expectStableLiveAllocations(readEvents, 32, 20);
   co_await std::move(checking);

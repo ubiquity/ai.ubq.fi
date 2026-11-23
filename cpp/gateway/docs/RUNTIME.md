@@ -60,6 +60,12 @@ Each named entry in `memory.caches` has an `entries` count and a retained
 SQLite reports pager bytes and estimates resident page count from the page
 size. The counters expose sizes and counts. [Real-client measurements](findings/cppgw-memory-2-20261121.md)
 
+`runtime_timers` counts queued timer states and their queue nodes.
+`runtime_pending_promises` counts promises with waiting reactions. Its byte
+estimate includes promise bookkeeping and reaction slots. The two estimates
+exclude data owned by callbacks and derived promise states.
+[Live heap measurements](findings/cppgw-memory-4-live-growth-20261123.md)
+
 ## Input limits
 
 The shared constants in [limits.hpp](../include/uos/rt/limits.hpp) record the target defaults. The enforced limits below apply at the parser, library or transport boundary. Keep smaller existing limits on the same operation and record a larger allowance only for a proven application flow. Map failures to the boundary's established status, close code or exception. Source wiring and executed acceptance are recorded separately below.
@@ -128,7 +134,7 @@ serves immutable assets from `packageRoot`. The linked C++ SQLite store opens th
 `.data/kv.sqlite3` stays in its original custody. SIGTERM or SIGINT drains requests and durable writes, then
 closes telemetry and KV. [Durable KV](rt/kv-durable.md)
 
-The only optional manifest field is `fixture:{syntheticOrigin:"http://127.0.0.1:<assigned-port>"}`. It requires a non-deploy runtime, gateway port 0, a real no-outbound network namespace, private task state and a loopback scripted upstream. `DENO_TIMELINE=production` is permitted inside these fences so the fixture exercises ordinary authentication instead of the source's legacy local-hostname bypass; deployment markers remain forbidden. The fixed DeepSeek completion URL maps to `/chat/completions`, Codex maps to `/codex`, and live WebSocket sideband maps to `/live`. The real transport rejects unmapped initial destinations and forces the existing `redirect:"error"` mode for every fixture fetch, so a scripted-upstream redirect cannot introduce a second destination. Normal transport redirect behavior is unchanged. Provider request schemas and authentication are unchanged. Routing ownership lasts through the full serve lifetime. An initial fixture requires an empty `.data`; after all immutable and OS checks it exclusively writes a mode-0600 binding marker. Reopen requires that exact owner-private marker binding schema, package-manifest hash, stateRoot and syntheticOrigin. Markerless nonempty state is refused. This provides no authority to read production state.
+The only optional manifest field is `fixture:{syntheticOrigin:"http://127.0.0.1:<assigned-port>"}`. It requires a non-deploy runtime, gateway port 0, a real no-outbound network namespace, private task state and a loopback scripted upstream. `DENO_TIMELINE=production` is permitted inside these fences so the fixture exercises ordinary authentication instead of the source's legacy local-hostname bypass; deployment markers remain forbidden. The fixed DeepSeek completion URL maps to `/chat/completions`, the two Lithos URLs map to `/lithos/chat/completions` and `/lithos/models`, Codex maps to `/codex`, and live WebSocket sideband maps to `/live`. The real transport rejects unmapped initial destinations and forces the existing `redirect:"error"` mode for every fixture fetch, so a scripted-upstream redirect cannot introduce a second destination. Normal transport redirect behavior is unchanged. Provider request schemas and authentication are unchanged. Routing ownership lasts through the full serve lifetime. An initial fixture requires an empty `.data`; after all immutable and OS checks it exclusively writes a mode-0600 binding marker. Reopen requires that exact owner-private marker binding schema, package-manifest hash, stateRoot and syntheticOrigin. Markerless nonempty state is refused. This provides no authority to read production state.
 
 ## Environment
 

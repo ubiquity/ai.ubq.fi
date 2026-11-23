@@ -100,6 +100,9 @@ jobs:
           bash "$bench/codex_real/sqlite.sh" bash "$bench/request_path/isolated.sh" --codex-real \
             --package "$memory_build/package" --seed-state "$memory_build/seed-state" \
             --out "$RUNNER_TEMP/codex-burst-memory" --scripted --check-burst
+          timeout 240s bash "$bench/codex_real/sqlite.sh" bash "$bench/request_path/isolated.sh" --codex-real \
+            --package "$memory_build/package" --seed-state "$memory_build/seed-state" \
+            --out "$RUNNER_TEMP/codex-live-memory" --scripted --check-live-growth
       - name: Save compiler cache
         if: matrix.shard == 1 && steps.ccache.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -139,6 +142,10 @@ jobs:
             ${{ runner.temp }}/codex-burst-memory/results.json
             ${{ runner.temp }}/codex-burst-memory/samples.jsonl
             ${{ runner.temp }}/codex-burst-memory/upstream.json
+            ${{ runner.temp }}/codex-live-memory/fixture.json
+            ${{ runner.temp }}/codex-live-memory/results.json
+            ${{ runner.temp }}/codex-live-memory/samples.jsonl
+            ${{ runner.temp }}/codex-live-memory/upstream.json
           if-no-files-found: warn
           retention-days: 14
 

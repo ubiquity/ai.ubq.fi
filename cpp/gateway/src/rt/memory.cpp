@@ -45,7 +45,7 @@ namespace uos::rt::memory {
       "kernel_attestation_ids", "kernel_public_keys", "codex_overage", "codex_supervisor_inventory", "openrouter_models",
       "openlux_models", "surplus_models", "lithos_models", "lithos_rate_windows",
       "claude_models", "claude_credentials", "deepseek_flash_aliases", "codex_learned_model_details",
-      "sentinel_replay_owners"
+      "sentinel_replay_owners", "runtime_timers", "runtime_pending_promises"
     };
 
     Totals& counter(Cache cache) noexcept { return totals[static_cast<std::size_t>(cache)]; }

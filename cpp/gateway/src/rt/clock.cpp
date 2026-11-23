@@ -1,4 +1,5 @@
 #include "uos/rt/clock.hpp"
+#include "uos/rt/memory.hpp"
 #include "uos/rt/number.hpp"
 #include <chrono>
 #include <cmath>
@@ -16,6 +17,8 @@ namespace uos::rt {
       std::size_t active = 0;
       std::size_t referenced = 0;
       std::uint64_t nextOrder = 0;
+      memory::ScopedCache memory{memory::Cache::runtime_timers};
+      void publishMemory() noexcept;
     };
 
     struct TimerState {
@@ -30,6 +33,12 @@ namespace uos::rt {
       bool armed = true;
       bool queued = false;
     };
+
+    void TimerQueue::publishMemory() noexcept {
+      // Account for the timer and the ordered-map node that owns it.
+      constexpr auto entryBytes = sizeof(TimerState) + sizeof(decltype(queued)::value_type) + 4 * sizeof(void*);
+      memory.set(queued.size(), queued.size() * entryBytes);
+    }
   }
 
   namespace {
@@ -79,12 +88,14 @@ namespace uos::rt {
       timer->deadline = deadline;
       timer->order = queue.nextOrder++;
       queue.queued.emplace(std::make_pair(deadline, timer->order), timer);
+      queue.publishMemory();
       timer->queued = true;
     }
 
     void dequeue(detail::TimerQueue& queue, detail::TimerState& timer) {
       if (!timer.queued) return;
       queue.queued.erase(std::make_pair(timer.deadline, timer.order));
+      queue.publishMemory();
       timer.queued = false;
     }
 
@@ -245,6 +256,7 @@ namespace uos::rt {
       if (first->first.first > now) return false;
       std::shared_ptr<TimerState> timer = first->second;
       queue.queued.erase(first);
+      queue.publishMemory();
       timer->queued = false;
       // The callback is moved out while it runs: clearing the timer inside it
       // must not destroy the function being executed.
@@ -271,6 +283,7 @@ namespace uos::rt {
 
     void clearAllTimers(TimerQueue& queue) noexcept {
       auto timers = std::exchange(queue.queued, {});
+      queue.publishMemory();
       queue.active = 0;
       queue.referenced = 0;
       for (auto& entry : timers) {

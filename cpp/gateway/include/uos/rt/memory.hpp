@@ -41,6 +41,8 @@ namespace uos::rt::memory {
     deepseek_flash_aliases,
     codex_learned_model_details,
     sentinel_replay_owners,
+    runtime_timers,
+    runtime_pending_promises,
     count
   };
 

@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from cases import CATALOG_MODEL
 from driver import require
-from fixtures import encode
+from fixtures import BUFFERED, PROVIDER_TOKEN, SSE_TERMINAL, SSE_TEXT, encode
 
 MODEL = CATALOG_MODEL["slug"]
 MARKER = "Programmed reply instructions. "
@@ -24,6 +24,7 @@ TOOL_FILE = "fixture.txt"
 # Use printable, deterministic data, including repeated runs that a text
 # compressor can represent. The marked prefix lets us prove catalog use.
 ALPHABET = string.ascii_letters
+LITHOS_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash"
 
 
 def payload(length, seed, prefix=""):
@@ -127,11 +128,16 @@ class Handler(BaseHTTPRequestHandler):
         if url.path == "/codex/models" and version == self.server.version:
             self.server.catalog_calls.append(version)
             self.reply(200, self.server.catalog)
+        elif url.path == "/lithos/models" and self.server.lithos and self.lithos_auth():
+            self.reply(200, encode({"data": [{"id": LITHOS_MODEL}]}))
         else:
             self.reject("Unexpected upstream GET")
 
     def do_POST(self):
         size = int(self.headers.get("Content-Length", "0"))
+        if self.path == "/lithos/chat/completions" and self.server.lithos:
+            self.lithos_reply(size)
+            return
         if (self.path != "/codex/responses" or not 0 < size <= 2 * 1024 * 1024
                 or self.headers.get("ChatGPT-Account-ID") != self.server.account
                 or self.headers.get("Authorization") != self.server.authorization or self.server.script is None):
@@ -157,12 +163,33 @@ class Handler(BaseHTTPRequestHandler):
                 return
         response_id = f"resp_bench_{next(self.server.response_ids)}"
         self.server.calls.append({"kind": kind, "input_bytes": size, "input_items": len(items), "tool_outputs": len(outputs)})
+        self.sse_reply(b"data: " + encode(event) + b"\n\n" for event in stream(response_id, kind, turn, size))
+
+    def lithos_auth(self):
+        return self.headers.get("Authorization") == "Bearer " + PROVIDER_TOKEN
+
+    def lithos_reply(self, size):
+        if not self.lithos_auth() or not 0 < size <= 2 * 1024 * 1024:
+            self.reject("Unexpected Lithos transport")
+            return
+        request = json.loads(self.rfile.read(size))
+        model = request.get("model")
+        streamed = request.get("stream", False)
+        if model != LITHOS_MODEL or type(streamed) is not bool or not request.get("messages"):
+            self.reject("Unexpected Lithos request shape")
+            return
+        self.server.calls.append({"kind": "stream" if streamed else "buffered", "input_bytes": size})
+        if streamed:
+            self.sse_reply([frame.replace(b'"deepseek-flash"', encode(model)) for frame in (*SSE_TEXT, *SSE_TERMINAL)])
+        else:
+            self.reply(200, BUFFERED.replace(b'"deepseek-flash"', encode(model)))
+
+    def sse_reply(self, frames):
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Transfer-Encoding", "chunked")
         self.end_headers()
-        for event in stream(response_id, kind, turn, size):
-            data = b"data: " + encode(event) + b"\n\n"
+        for data in frames:
             self.wfile.write(f"{len(data):x}\r\n".encode() + data + b"\r\n")
         self.wfile.write(b"0\r\n\r\n")
 
@@ -175,7 +202,7 @@ class ProgrammedServer(ThreadingHTTPServer):
 
 
 @contextmanager
-def upstream(auth, version):
+def upstream(auth, version, *, lithos=False):
     with ProgrammedServer(("127.0.0.1", 0), Handler) as server:
         server.daemon_threads = True
         require(server.server_port not in (7999, 8000), "Mock received a reserved port")
@@ -185,6 +212,7 @@ def upstream(auth, version):
         server.authorization = "Bearer " + auth["tokens"]["access_token"]
         server.tool_text = payload(TOOL_BYTES, 42)
         server.script = None
+        server.lithos = lithos
         server.response_ids = count(1)
         server.calls, server.catalog_calls, server.failures = [], [], []
         worker = Thread(target=server.serve_forever, daemon=True)

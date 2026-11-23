@@ -1,5 +1,6 @@
 #include "uos/rt/async.hpp"
 #include "uos/rt/clock.hpp"
+#include "uos/rt/memory.hpp"
 #include "uos/rt/number.hpp"
 #include <boost/asio/async_result.hpp>
 #include <boost/asio/co_spawn.hpp>
@@ -144,13 +145,25 @@ namespace uos::rt {
     }
   }
 
+  namespace {
+    struct WaitingPromises : detail::WaitingList {
+      std::size_t entries = 0;
+      std::size_t reactionSlots = 0;
+      memory::ScopedCache memory{memory::Cache::runtime_pending_promises};
+
+      void publishMemory() noexcept {
+        memory.set(entries, entries * sizeof(detail::PromiseCore) + reactionSlots * sizeof(detail::Job));
+      }
+    };
+  }
+
   struct Loop::Impl {
     Loop& owner;
     Clock* clock;
     // Optional so the destructor decides when pending handlers are destroyed.
     std::optional<asio::io_context> context;
     std::deque<detail::Job> microtasks;
-    detail::WaitingList waiting;
+    WaitingPromises waiting;
     // Promises rejected without a handler during the current checkpoint.
     std::vector<std::shared_ptr<detail::PromiseCore>> rejections;
     std::shared_ptr<detail::TimerQueue> timers;
@@ -217,22 +230,29 @@ namespace uos::rt {
       return detail::Job([handler = std::move(handler)]() mutable { std::move(handler)(); });
     }
 
-    void linkWaiting(detail::WaitingList& list, detail::PromiseCore& core) {
+    void linkWaiting(WaitingPromises& list, detail::PromiseCore& core) {
       core.waitingList = &list;
       core.previousWaiting = nullptr;
       core.nextWaiting = list.head;
       if (list.head) list.head->previousWaiting = &core;
       list.head = &core;
+      ++list.entries;
+      list.reactionSlots += core.reactions.capacity();
+      list.publishMemory();
     }
 
     void unlinkWaiting(detail::PromiseCore& core) {
       if (!core.waitingList) return;
+      auto& list = static_cast<WaitingPromises&>(*core.waitingList);
       if (core.previousWaiting) core.previousWaiting->nextWaiting = core.nextWaiting;
       else core.waitingList->head = core.nextWaiting;
       if (core.nextWaiting) core.nextWaiting->previousWaiting = core.previousWaiting;
       core.waitingList = nullptr;
       core.previousWaiting = nullptr;
       core.nextWaiting = nullptr;
+      --list.entries;
+      list.reactionSlots -= core.reactions.capacity();
+      list.publishMemory();
     }
 
     // Drops the reactions of every waiting promise; true when there were any.
@@ -417,8 +437,14 @@ namespace uos::rt {
       auto& impl = currentLoop().impl();
       if (impl.shuttingDown) return;
       if (pending()) {
-        if (!waitingList) linkWaiting(impl.waiting, *this);
+        const auto capacity = reactions.capacity();
         reactions.push_back(std::move(reaction));
+        if (!waitingList) linkWaiting(impl.waiting, *this);
+        else if (reactions.capacity() != capacity) {
+          auto& list = static_cast<WaitingPromises&>(*waitingList);
+          list.reactionSlots += reactions.capacity() - capacity;
+          list.publishMemory();
+        }
       } else {
         impl.microtasks.push_back(std::move(reaction));
       }

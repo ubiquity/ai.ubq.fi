@@ -639,31 +639,22 @@ namespace uos::provider::lithos {
         co_return read;
       }
       if (signal->aborted()) rt::rethrow(abortError(*signal));
-      rt::EventListener onAbort = [] {};
-      const rt::Promise<ReadResult> aborted = rt::newPromise<ReadResult>([&onAbort, &signal](const rt::Resolve<ReadResult>&, const rt::Reject& reject) {
-        // The listener lives in the signal, so it reaches the signal weakly.
-        const std::weak_ptr<rt::detail::AbortSignalState> weakSignal = signal->state();
-        onAbort = rt::EventListener([reject, weakSignal] {
-          if (const std::shared_ptr<rt::detail::AbortSignalState> state = weakSignal.lock()) reject(streamAbortReason(rt::AbortSignal(state)));
-        });
-        signal->addEventListener("abort", onAbort, {.once = true});
-        if (signal->aborted()) onAbort();
+      const auto aborted = rt::withResolvers<ReadResult>();
+      // The listener lives in the signal, so it reaches the signal weakly.
+      const std::weak_ptr<rt::detail::AbortSignalState> weakSignal = signal->state();
+      const rt::EventListener onAbort([reject = aborted.reject, weakSignal] {
+        if (const auto state = weakSignal.lock()) reject(streamAbortReason(rt::AbortSignal(state)));
       });
-      std::optional<ReadResult> result;
-      rt::Reason failure;
-      try {
-        const rt::Promise<ReadResult> pending = reader.readPromise();
-        std::vector<rt::Promise<ReadResult>> racers{pending, aborted};
-        const rt::Promise<ReadResult> race = rt::race(std::move(racers));
-        result = co_await race.wait();
-      } catch (...) {
-        failure = std::current_exception();
-      }
-      signal->removeEventListener("abort", onAbort);
-      if (failure) {
-        std::rethrow_exception(failure);
-      }
-      co_return std::move(*result);
+      const auto cleanup = rt::scopeExit([&] {
+        signal->removeEventListener("abort", onAbort);
+        // The disarmed abort promise can no longer win. Release its reaction.
+        aborted.resolve(ReadResult{.done = true, .value = std::nullopt});
+      });
+      signal->addEventListener("abort", onAbort, {.once = true});
+      if (signal->aborted()) onAbort();
+      const auto race = rt::race(reader.readPromise(), aborted.promise);
+      auto result = co_await race.wait();
+      co_return result;
     }
 
     /**

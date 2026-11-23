@@ -1,5 +1,7 @@
 #include "uos/bounded_response_body.hpp"
 
+#include "uos/rt/clock.hpp"
+#include "uos/rt/number.hpp"
 #include "uos/rt/stream.hpp"
 
 #include <algorithm>
@@ -102,7 +104,13 @@ namespace uos::bounded_response_body {
       }
     };
 
-    const rt::AbortSignal deadline = options.signal ? rt::AbortSignal::any({*options.signal, rt::AbortSignal::timeout(timeoutMs)}) : rt::AbortSignal::timeout(timeoutMs);
+    if (!(timeoutMs >= 0) || std::isinf(timeoutMs))
+      throw rt::TypeError("Value " + rt::numberToString(timeoutMs) + " is outside the range [0, 9007199254740991]");
+    const rt::AbortController timeout;
+    auto timer = rt::detail::createExactTimer([timeout] { timeout.abort(rt::timeoutErrorReason()); }, timeoutMs);
+    timer.unref();
+    const auto clearDeadline = rt::scopeExit([&] { rt::clearTimeout(timer); });
+    const rt::AbortSignal deadline = options.signal ? rt::AbortSignal::any({*options.signal, timeout.signal()}) : timeout.signal();
     try {
       for (;;) {
         const ReadResult next = co_await abortableRead(reader, deadline);

@@ -9,6 +9,8 @@
 #include "uos/kv.hpp"
 #include "uos/live/upstream.hpp"
 #include "uos/provider/gemini.hpp"
+#include "uos/provider/lithos.hpp"
+#include "uos/provider/lithos_models.hpp"
 #include "uos/rt/clock.hpp"
 #include "uos/rt/env.hpp"
 #include "uos/rt/fetch.hpp"
@@ -278,6 +280,12 @@ namespace uos::runtime::startup {
         if (destination == deepseek::index::DEEPSEEK_CHAT_COMPLETIONS_URL) {
           rt::Request mapped(origin_ + "/chat/completions", guarded);
           return original_->send(std::move(mapped));
+        }
+        if (destination == provider::lithos::LITHOS_CHAT_COMPLETIONS_URL) {
+          return original_->send(rt::Request(origin_ + "/lithos/chat/completions", guarded));
+        }
+        if (destination == provider::lithos_models::LITHOS_MODELS_URL) {
+          return original_->send(rt::Request(origin_ + "/lithos/models", guarded));
         }
         if (destination.starts_with(origin_ + "/codex/") || destination == origin_ + "/chat/completions") return original_->send(std::move(guarded));
         refuse("fixture refused an unmapped provider destination");

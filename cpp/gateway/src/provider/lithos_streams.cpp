@@ -66,12 +66,14 @@ namespace uos::provider::lithos_streams {
       adapter.responsesProfile = deepseek::responses::LITHOS_RESPONSES_PROFILE;
       return adapter;
     }
-    stream_relay::ProviderStreamAdapter lithosStreamAdapterServing(LithosServedModel servedModel) {
+    stream_relay::ProviderStreamAdapter lithosStreamAdapterServing(LithosServedModel servedModel, std::shared_ptr<const lithos::RequestDeadline> deadline) {
       std::function<std::string()> servedModelAtFrames;
       if (const auto* getter = std::get_if<std::function<std::string()>>(&servedModel)) servedModelAtFrames = *getter;
       else servedModelAtFrames = [model = std::get<std::string>(std::move(servedModel))] { return model; };
       auto adapter = lithosStreamAdapter();
-      adapter.frames = [servedModelAtFrames](rt::Response upstream, std::string model, stream_relay::ProviderStreamFrameOptions options) -> stream_relay::ProviderStreamIterator {
+      adapter.frames = [servedModelAtFrames, deadline = std::move(deadline)](rt::Response upstream, std::string model, stream_relay::ProviderStreamFrameOptions options) -> stream_relay::ProviderStreamIterator {
+        // The relay owns the request deadline until it releases the upstream.
+        (void)deadline;
         lithos::IterateLithosChatCompletionStreamOptions settings; settings.signal = options.signal; settings.servedModel = servedModelAtFrames();
         return lithosChatStreamFrames(upstream, std::move(model), settings);
       };
@@ -109,8 +111,9 @@ namespace uos::provider::lithos_streams {
   }
   rt::Response streamLithosChatCompletion(stream_relay::ProviderStreamSource upstream, std::optional<std::string> providerRequestId,
     const telemetry::UsageContext* usageContext, rt::AbortSignal downstreamSignal, rt::AbortSignal requestSignal,
-    std::string upstreamModel, LithosServedModel servedModel, stream_relay::CancelPending cancelPending) {
-    return withLithosSseKeepalive(stream_relay::relayChatCompletionStream(lithosStreamAdapterServing(std::move(servedModel)), std::move(upstream),
+    std::string upstreamModel, LithosServedModel servedModel, stream_relay::CancelPending cancelPending,
+    std::shared_ptr<const lithos::RequestDeadline> deadline) {
+    return withLithosSseKeepalive(stream_relay::relayChatCompletionStream(lithosStreamAdapterServing(std::move(servedModel), std::move(deadline)), std::move(upstream),
       std::move(providerRequestId), usageContext, std::move(downstreamSignal), std::move(requestSignal), std::move(upstreamModel), std::move(cancelPending)));
   }
   rt::Response streamLithosResponses(stream_relay::ProviderStreamSource upstream, std::string requestedModel, std::string responseId,
@@ -118,10 +121,10 @@ namespace uos::provider::lithos_streams {
     rt::OrderedMap<std::string, deepseek::responses::OriginalToolName> toolNames, rt::OrderedSet<std::string> customToolNames,
     std::optional<std::string> providerRequestId, const telemetry::UsageContext* usageContext,
     rt::AbortSignal downstreamSignal, rt::AbortSignal requestSignal, std::string upstreamModel,
-    LithosServedModel servedModel, stream_relay::CancelPending cancelPending) {
+    LithosServedModel servedModel, stream_relay::CancelPending cancelPending, std::shared_ptr<const lithos::RequestDeadline> deadline) {
     const stream_relay::RelayResponsesStreamOptions options{std::move(upstream), std::move(requestedModel), std::move(responseId), createdAtSeconds,
       std::move(echo), std::move(toolNames), std::move(customToolNames), std::move(providerRequestId), usageContext, std::move(downstreamSignal),
       std::move(requestSignal), std::move(upstreamModel), std::move(cancelPending)};
-    return withLithosSseKeepalive(stream_relay::relayResponsesStream(lithosStreamAdapterServing(std::move(servedModel)), options));
+    return withLithosSseKeepalive(stream_relay::relayResponsesStream(lithosStreamAdapterServing(std::move(servedModel), std::move(deadline)), options));
   }
 }

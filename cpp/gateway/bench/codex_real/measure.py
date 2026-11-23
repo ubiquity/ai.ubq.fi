@@ -24,7 +24,8 @@ from cases import synthetic_auth
 from burst import CONNECTIONS, TURN_BATCHES, percentile_ms, run_round, source_text
 from sessions import Codex, Scripted, check_auth, codex_version, native_codex
 from driver import connection, control, require
-from fixtures import ADMIN_TOKEN, API_TOKEN, encode
+from fixtures import ADMIN_TOKEN, API_TOKEN, PROVIDER_TOKEN, encode
+import live_growth
 from programmed import MODEL, TOOL_ROUNDS, upstream
 from run import LISTEN, TERMINAL_PREFIX, command_for, cpu, digest, identities_for, process, sparse, stop, verify_namespace, wait_port
 from sampler import allocator_info, gateway_pid, sample, trim, trim_probe
@@ -75,7 +76,7 @@ def inventory(database):
     return {"rows": total, "value_bytes": values, "database_bytes": database.stat().st_size, "families": families}
 
 
-def fetch_catalog(port, version, expected_cache):
+def fetch_catalog(port, version, expected_cache, *, lithos=False):
     with closing(connection(port)) as conn:
         conn.request("GET", "/v1/models?client_version=" + version, headers=Scripted(port, version, "").headers())
         response = conn.getresponse()
@@ -84,11 +85,15 @@ def fetch_catalog(port, version, expected_cache):
                 f"Expected {expected_cache} versioned catalog, received HTTP {response.status} with cache state "
                 f"{response.getheader('x-uos-cache')}")
     rows = json.loads(data)["models"]
-    require(len(rows) == 15 and rows[0]["slug"] == MODEL, "Expected 15 exact-version models")
+    require((len(rows) == 15 if not lithos else len(rows) > 15) and rows[0]["slug"] == MODEL,
+            "Expected the exact-version models and any configured Lithos additions")
+    if lithos:
+        require(any(row["slug"] == live_growth.FLASH for row in rows[15:]), "Catalog omitted the public Flash model")
+    original = rows[:15]
     return {"models": len(rows), "bytes": len(data), "etag": response.getheader("etag"),
-            "model_messages_bytes": sum(len(encode(row["model_messages"])) for row in rows),
-            "model_messages_distinct": len({encode(row["model_messages"]) for row in rows}),
-            "base_instructions_bytes": sum(len(row["base_instructions"]) for row in rows)}
+            "model_messages_bytes": sum(len(encode(row["model_messages"])) for row in original),
+            "model_messages_distinct": len({encode(row["model_messages"]) for row in original}),
+            "base_instructions_bytes": sum(len(row["base_instructions"]) for row in original)}
 
 
 def seed(args, state, command, environment, mock, auth):
@@ -105,7 +110,7 @@ def seed(args, state, command, environment, mock, auth):
     subprocess.run([args.seed_state, database], cwd=state, env=env, check=True, timeout=240)
     with process(command, state, env, str(args.out / "seed-catalog.log")) as (child, log):
         port = wait_port(child, log, LISTEN)
-        exact = fetch_catalog(port, mock.version, "hit")
+        exact = fetch_catalog(port, mock.version, "hit", lithos=mock.lithos)
         with closing(connection(port)) as conn:
             conn.request("GET", "/v1/models", headers={"Authorization": "Bearer " + API_TOKEN})
             response = conn.getresponse()
@@ -118,7 +123,7 @@ def seed(args, state, command, environment, mock, auth):
     return inventory(database), exact, {"models": len(public["data"]), "bytes": len(response_body)}
 
 
-def terminals(log, reader, count, pending, *, failure=False, check_memory=False):
+def terminals(log, reader, count, pending, *, failure=False, check_memory=False, provider="chatgpt_codex"):
     deadline = time.monotonic() + 10
     while len(pending) < count:
         line = reader.readline()
@@ -130,8 +135,8 @@ def terminals(log, reader, count, pending, *, failure=False, check_memory=False)
             continue
         record = json.loads(line[len(TERMINAL_PREFIX):])
         identifier = record["request_id"]
-        require(identifier not in pending and record["delivery_outcome"] == "delivered" and record["provider"] == "chatgpt_codex",
-                "Terminal must have a unique ID, subscription provider and physical delivery evidence")
+        require(identifier not in pending and record["delivery_outcome"] == "delivered" and record["provider"] == provider,
+                f"Terminal must have a unique ID, provider {provider} and physical delivery evidence")
         if failure:
             require(record["stream_terminal_type"] == "response.failed", "Replay control did not produce a semantic failure")
         else:
@@ -153,7 +158,7 @@ def check_telemetry(memory):
             "A cache gauge has an invalid entry count or byte size")
 
 
-def measure(args, state, command, environment, mock):
+def measure(args, state, command, environment, mock, catalog):
     with ExitStack() as stack:
         probe, inherited = None, None
         if args.heaptrack:
@@ -176,8 +181,8 @@ def measure(args, state, command, environment, mock):
         release = health["release"]
         profile = json.loads((args.package / "build-profile.json").read_text())
         require(release["git_sha"] == profile["git_commit"], "Health release differs from the sealed build profile")
-        if args.burst:
-            require(health["confinement"] == "landlock", "Burst requires the default Landlock and seccomp policy")
+        if args.burst or args.live_growth:
+            require(health["confinement"] == "landlock", "Memory check requires the default Landlock and seccomp policy")
         codex = Codex(args.codex, mock.version, state, port, mock.tool_text) if args.codex else None
         client = codex or Scripted(port, mock.version, mock.tool_text)
         samples = []
@@ -187,12 +192,14 @@ def measure(args, state, command, environment, mock):
         if args.burst:
             pool = stack.enter_context(ThreadPoolExecutor(max_workers=CONNECTIONS))
             source = source_text()
+        if args.live_growth:
+            pool = stack.enter_context(ThreadPoolExecutor(max_workers=live_growth.CONNECTIONS))
 
         with (args.out / "samples.jsonl").open("w", buffering=1) as samples_log, log.open() as reader:
             def record(index, kind, memory=None):
                 if memory is None and "memory" in health:
                     memory = control(port, "/health")["memory"]
-                if args.check or args.burst:
+                if args.check or args.burst or args.live_growth:
                     check_telemetry(memory)
                 values = sample(pid)
                 row = {"session": index, "kind": kind, "requests_served": len(pending), "elapsed_s": round(time.monotonic() - started, 3),
@@ -201,40 +208,52 @@ def measure(args, state, command, environment, mock):
                     row["gateway_memory"] = memory
                 samples.append(row)
                 print(json.dumps(row), file=samples_log)
-                if index in (0, 1, 10, 20, 100, 500) or kind in ("idle", "trim"):
+                if args.live_growth:
+                    print(f"{kind} {index}: {memory['allocator_in_use_bytes']} allocator bytes in use", flush=True)
+                elif index in (0, 1, 10, 20, 100, 500) or kind in ("idle", "trim"):
                     print(f"{kind} {index}: {values['RssAnon']} KiB anonymous, {values['VmHWM']} KiB peak, "
                           f"{len(pending)} inference requests", flush=True)
             record(0, "start", health.get("memory"))
             if args.burst:
                 cpu_before = cpu(pid)
-            for index in range(1, args.sessions + 1):
-                kind = MIX[(index - 1) % len(MIX)] if args.traffic == "mix" else args.traffic
-                if args.burst:
-                    kind = "long" if index % 4 == 0 else "short"
-                start = len(mock.calls)
-                mock.script = kind, start
-                if args.burst:
-                    timings, seconds = run_round(pool, port, mock.version, index, kind, source)
-                    latencies.extend(timings)
-                    traffic_seconds += seconds
-                    count = start + CONNECTIONS * TURN_BATCHES
-                    require(len(mock.calls) == count and not mock.failures, "Burst had unexpected mock calls or validation failures")
-                    terminals(log, reader, count, pending, check_memory=True)
-                elif kind == "auth":
-                    check_auth(port, mock.version)
-                elif kind == "catalog":
-                    Scripted(port, mock.version, mock.tool_text).catalog()
-                elif kind != "idle":
-                    client.run(index, kind)
-                    count = TOOL_ROUNDS + 1 if kind == "tools" else 1
-                    require(len(mock.calls) == start + count and not mock.failures,
-                            f"{kind} session had unexpected mock calls or validation failures")
-                    terminals(log, reader, start + count, pending, failure=kind == "replay", check_memory=args.check)
-                mock.script = None
-                record(index, kind)
-            if args.burst:
+            if args.live_growth:
+                traffic = live_growth.TRAFFIC if args.live_growth == "all" else (args.live_growth,)
+                for kind, count, expected in live_growth.batches(pool, port, mock.version, args.sessions, traffic, catalog):
+                    require(len(mock.calls) == expected and not mock.failures, "Unexpected Lithos dispatches in the batch")
+                    terminals(log, reader, expected, pending, check_memory=True, provider="lithos")
+                    # Give socket teardown and durable callbacks a turn before sampling.
+                    time.sleep(0.05)
+                    record(count, kind)
+            else:
+                for index in range(1, args.sessions + 1):
+                    kind = MIX[(index - 1) % len(MIX)] if args.traffic == "mix" else args.traffic
+                    if args.burst:
+                        kind = "long" if index % 4 == 0 else "short"
+                    start = len(mock.calls)
+                    mock.script = kind, start
+                    if args.burst:
+                        timings, seconds = run_round(pool, port, mock.version, index, kind, source)
+                        latencies.extend(timings)
+                        traffic_seconds += seconds
+                        count = start + CONNECTIONS * TURN_BATCHES
+                        require(len(mock.calls) == count and not mock.failures, "Burst had unexpected mock calls or validation failures")
+                        terminals(log, reader, count, pending, check_memory=True)
+                    elif kind == "auth":
+                        check_auth(port, mock.version)
+                    elif kind == "catalog":
+                        Scripted(port, mock.version, mock.tool_text).catalog()
+                    elif kind != "idle":
+                        client.run(index, kind)
+                        count = TOOL_ROUNDS + 1 if kind == "tools" else 1
+                        require(len(mock.calls) == start + count and not mock.failures,
+                                f"{kind} session had unexpected mock calls or validation failures")
+                        terminals(log, reader, start + count, pending, failure=kind == "replay", check_memory=args.check)
+                    mock.script = None
+                    record(index, kind)
+            if args.burst or args.live_growth:
                 time.sleep(3)
                 record(args.sessions, "idle")
+            if args.burst:
                 user_s, system_s = (right - left for left, right in zip(cpu_before, cpu(pid), strict=True))
             if probe:
                 (args.out / "malloc-info.xml").write_text(allocator_info(probe))
@@ -278,9 +297,11 @@ def main():
     parser.add_argument("--version", help="Exact catalog version, normally taken from the installed CLI")
     parser.add_argument("--sessions", type=int)
     parser.add_argument("--burst", action="store_true", help="Run each round on eight mixed-size scripted connections")
+    parser.add_argument("--live-growth", choices=("all", *live_growth.TRAFFIC), help="Measure the live heap after each request batch")
     checks = parser.add_mutually_exclusive_group()
     checks.add_argument("--check", action="store_true", help="Enforce anonymous and peak resident budgets for 20 sessions")
     checks.add_argument("--check-burst", action="store_true", help="Enforce retained heap budgets after 20 concurrent rounds")
+    checks.add_argument("--check-live-growth", action="store_true", help="Bound live allocator growth over 300 requests per route")
     parser.add_argument("--traffic", choices=("mix", "auth", "catalog", "idle", "replay"), default="mix")
     parser.add_argument("--disable-replay", action="store_true")
     profiling = parser.add_mutually_exclusive_group()
@@ -294,6 +315,12 @@ def main():
         require(args.sessions in (None, CHECK_SESSIONS) and not (args.trim or args.disable_replay),
                 "The burst budget uses the fixed 20-round mix without allocator probes")
         args.burst = True
+    if args.check_live_growth:
+        require(args.live_growth in (None, "all") and args.sessions in (None, live_growth.CHECK_REQUESTS)
+                and not (args.trim or args.heaptrack or args.disable_replay), "The live budget uses the fixed 300-request workload")
+        args.live_growth, args.sessions = "all", live_growth.CHECK_REQUESTS
+    require(not args.live_growth or (args.scripted and args.traffic == "mix" and not (args.burst or args.check)),
+            "Live heap growth uses the scripted Lithos and models workload")
     if args.sessions is None:
         args.sessions = CHECK_SESSIONS if args.check or args.check_burst else 1
     require(1 <= args.sessions <= 500, "Unsupported session count")
@@ -321,11 +348,13 @@ def main():
         args.version = args.version or VERSION
     require(re.fullmatch(r"[0-9]+[.][0-9]+[.][0-9]+", args.version), "Expected an exact Codex version")
     auth = synthetic_auth()
-    with tempfile.TemporaryDirectory(prefix="state-", dir=args.out) as temporary, upstream(auth, args.version) as mock:
+    with tempfile.TemporaryDirectory(prefix="state-", dir=args.out) as temporary, upstream(auth, args.version, lithos=bool(args.live_growth)) as mock:
         state = Path(temporary)
         (state / ".data").mkdir()
         command = command_for(args, state, mock.server_port, identities)
         env = {"DENO_TIMELINE": "production", "DENO_DEPLOY_TOKEN": ADMIN_TOKEN}
+        if args.live_growth:
+            env["LITHOSAI_API_KEY"] = PROVIDER_TOKEN
         database, catalog, public = seed(args, state, command, env, mock, auth)
         (args.out / "fixture.json").write_text(json.dumps({"database": database, "catalog": catalog, "public": public}, indent=2) + "\n")
         print(f"Seeded {database['rows']} rows, {database['database_bytes']} database bytes, {catalog['bytes']} catalog bytes", flush=True)
@@ -335,7 +364,7 @@ def main():
             env["SENTINEL_REPLAY_KEY"] = REPLAY_KEY
         baseline_fetches = list(mock.catalog_calls)
         try:
-            result = measure(args, state, command, {**sparse(measured), **env}, mock)
+            result = measure(args, state, command, {**sparse(measured), **env}, mock, catalog)
         finally:
             (args.out / "upstream.json").write_text(json.dumps({"catalog_versions": mock.catalog_calls, "calls": mock.calls,
                                                                 "failures": mock.failures}, indent=2) + "\n")
@@ -364,7 +393,8 @@ def main():
         receipt = {"host": platform.platform(), "network_namespace": namespace, "package": identities, "database": database,
                    "seed_state_sha256": digest(args.seed_state), "codex_sha256": digest(args.codex) if args.codex else None,
                    "catalog": catalog, "public_models": public, "version": args.version, "traffic": args.traffic,
-                   "sessions": args.sessions, "burst": args.burst, "upstream_calls": dict(Counter(call["kind"] for call in mock.calls)),
+                   "sessions": args.sessions, "burst": args.burst, "live_growth": args.live_growth,
+                   "upstream_calls": dict(Counter(call["kind"] for call in mock.calls)),
                    "upstream_request_bytes": [min(sizes), max(sizes)] if sizes else None,
                    "heaptrack": args.heaptrack, "replay_enabled": not args.disable_replay, **result}
         if args.check:
@@ -385,6 +415,8 @@ def main():
                                  "after_idle_anonymous_bytes": anonymous, "after_idle_allocator_in_use_bytes": live,
                                  "after_idle_anonymous_excess_bytes": max(0, anonymous - live),
                                  "anonymous_excess_budget_bytes": BURST_ANONYMOUS_EXCESS_BUDGET_BYTES}
+        if args.check_live_growth:
+            receipt["budget"] = live_growth.growth_budget(result["samples_kib"])
         path = args.out / "results.json"
         path.write_text(json.dumps(receipt, indent=2) + "\n")
         print(path, flush=True)
@@ -402,6 +434,10 @@ def main():
             require(budget["peak_sampled_allocator_free_bytes"] <= BURST_FREE_BUDGET_BYTES and
                     budget["after_idle_anonymous_excess_bytes"] <= BURST_ANONYMOUS_EXCESS_BUDGET_BYTES,
                     "The gateway retained too much heap after the request burst")
+        if args.check_live_growth:
+            budget = receipt["budget"]
+            print(f"Live allocator growth {budget['total_growth_bytes']} / {budget['budget_bytes']} bytes", flush=True)
+            require(budget["total_growth_bytes"] <= budget["budget_bytes"], "The gateway exceeded its live heap growth budget")
 
 
 if __name__ == "__main__":
