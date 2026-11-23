@@ -19,7 +19,7 @@ BUDGET_BYTES = 1024 * 1024
 FLASH = "ubiquity/deepseek-flash"
 
 
-def batches(pool, port, version, count, traffic):
+def batches(pool, port, version, count, traffic, catalog):
     source = payload(200_000, 437)
     bodies = {
         "buffered": [encode({"model": FLASH, "input": source, "stream": False})],
@@ -48,7 +48,8 @@ def batches(pool, port, version, count, traffic):
                     body = response.read()
                     require(response.status == 200, f"{kind} models request failed")
                     if kind == "versioned":
-                        require(response.getheader("x-uos-cache") in ("hit", "stale") and 380_000 <= len(body) <= 400_000
+                        require(response.getheader("x-uos-cache") in ("hit", "stale") and len(body) == catalog["bytes"]
+                                and response.getheader("etag") == catalog["etag"]
                                 and json.loads(body)["models"][0]["slug"] == MODEL, "Exact-version catalog changed")
                     else:
                         require(json.loads(body)["object"] == "list", "Public models schema changed")

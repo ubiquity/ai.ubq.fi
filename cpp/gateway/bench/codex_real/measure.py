@@ -76,7 +76,7 @@ def inventory(database):
     return {"rows": total, "value_bytes": values, "database_bytes": database.stat().st_size, "families": families}
 
 
-def fetch_catalog(port, version, expected_cache):
+def fetch_catalog(port, version, expected_cache, *, lithos=False):
     with closing(connection(port)) as conn:
         conn.request("GET", "/v1/models?client_version=" + version, headers=Scripted(port, version, "").headers())
         response = conn.getresponse()
@@ -85,11 +85,15 @@ def fetch_catalog(port, version, expected_cache):
                 f"Expected {expected_cache} versioned catalog, received HTTP {response.status} with cache state "
                 f"{response.getheader('x-uos-cache')}")
     rows = json.loads(data)["models"]
-    require(len(rows) == 15 and rows[0]["slug"] == MODEL, "Expected 15 exact-version models")
+    require((len(rows) == 15 if not lithos else len(rows) > 15) and rows[0]["slug"] == MODEL,
+            "Expected the exact-version models and any configured Lithos additions")
+    if lithos:
+        require(any(row["slug"] == live_growth.FLASH for row in rows[15:]), "Catalog omitted the public Flash model")
+    original = rows[:15]
     return {"models": len(rows), "bytes": len(data), "etag": response.getheader("etag"),
-            "model_messages_bytes": sum(len(encode(row["model_messages"])) for row in rows),
-            "model_messages_distinct": len({encode(row["model_messages"]) for row in rows}),
-            "base_instructions_bytes": sum(len(row["base_instructions"]) for row in rows)}
+            "model_messages_bytes": sum(len(encode(row["model_messages"])) for row in original),
+            "model_messages_distinct": len({encode(row["model_messages"]) for row in original}),
+            "base_instructions_bytes": sum(len(row["base_instructions"]) for row in original)}
 
 
 def seed(args, state, command, environment, mock, auth):
@@ -106,7 +110,7 @@ def seed(args, state, command, environment, mock, auth):
     subprocess.run([args.seed_state, database], cwd=state, env=env, check=True, timeout=240)
     with process(command, state, env, str(args.out / "seed-catalog.log")) as (child, log):
         port = wait_port(child, log, LISTEN)
-        exact = fetch_catalog(port, mock.version, "hit")
+        exact = fetch_catalog(port, mock.version, "hit", lithos=mock.lithos)
         with closing(connection(port)) as conn:
             conn.request("GET", "/v1/models", headers={"Authorization": "Bearer " + API_TOKEN})
             response = conn.getresponse()
@@ -154,7 +158,7 @@ def check_telemetry(memory):
             "A cache gauge has an invalid entry count or byte size")
 
 
-def measure(args, state, command, environment, mock):
+def measure(args, state, command, environment, mock, catalog):
     with ExitStack() as stack:
         probe, inherited = None, None
         if args.heaptrack:
@@ -214,7 +218,7 @@ def measure(args, state, command, environment, mock):
                 cpu_before = cpu(pid)
             if args.live_growth:
                 traffic = live_growth.TRAFFIC if args.live_growth == "all" else (args.live_growth,)
-                for kind, count, expected in live_growth.batches(pool, port, mock.version, args.sessions, traffic):
+                for kind, count, expected in live_growth.batches(pool, port, mock.version, args.sessions, traffic, catalog):
                     require(len(mock.calls) == expected and not mock.failures, "Unexpected Lithos dispatches in the batch")
                     terminals(log, reader, expected, pending, check_memory=True, provider="lithos")
                     record(count, kind)
@@ -357,7 +361,7 @@ def main():
             env["SENTINEL_REPLAY_KEY"] = REPLAY_KEY
         baseline_fetches = list(mock.catalog_calls)
         try:
-            result = measure(args, state, command, {**sparse(measured), **env}, mock)
+            result = measure(args, state, command, {**sparse(measured), **env}, mock, catalog)
         finally:
             (args.out / "upstream.json").write_text(json.dumps({"catalog_versions": mock.catalog_calls, "calls": mock.calls,
                                                                 "failures": mock.failures}, indent=2) + "\n")
