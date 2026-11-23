@@ -124,29 +124,34 @@ class Scripted:
             return body
 
     def request(self, items, instructions, *, failure=False):
-        text, output, terminal, seen = [], [], None, None
+        body = encode({"model": MODEL, "instructions": instructions, "input": items, "stream": True,
+                       "store": False, "reasoning": {"effort": "none"}, "include": ["reasoning.encrypted_content"]})
         with closing(connection(self.port)) as conn:
-            body = encode({"model": MODEL, "instructions": instructions, "input": items, "stream": True,
-                           "store": False, "reasoning": {"effort": "none"}, "include": ["reasoning.encrypted_content"]})
-            conn.request("POST", "/v1/responses", body, {**self.headers(), "Content-Type": "application/json"})
-            response = conn.getresponse()
-            require(response.status == 200 and response.getheader("Content-Type", "").startswith("text/event-stream"),
-                    f"Expected SSE, received {response.status}")
-            for line in response:
-                if not line.startswith(b"data: ") or line.startswith(b"data: [DONE]"):
-                    continue
-                event = json.loads(line[6:])
-                if event["type"] == "response.output_text.delta":
-                    text.append(event["delta"])
-                if event["type"] == "response.output_item.done":
-                    output.append(event["item"])
-                if event["type"] in ("response.completed", "response.failed"):
-                    seen = event["type"]
-                    terminal = event["response"]
-            status = "response.failed" if failure else "response.completed"
-            require(seen == status and terminal is not None, "Scripted client lost its terminal")
-            if not failure:
-                require(terminal["usage"]["total_tokens"] > 0, "Scripted client lost token usage")
+            return self.send(conn, body, failure=failure)
+
+    def send(self, conn, body, *, failure=False):
+        text, output, terminal, seen = [], [], None, None
+        conn.request("POST", "/v1/responses", body, {**self.headers(), "Content-Type": "application/json"})
+        response = conn.getresponse()
+        require(response.status == 200 and response.getheader("Content-Type", "").startswith("text/event-stream"),
+                f"Expected SSE, received {response.status}")
+        for line in response:
+            if not line.startswith(b"data: ") or line.startswith(b"data: [DONE]"):
+                continue
+            event = json.loads(line[6:])
+            if event["type"] == "response.output_text.delta":
+                text.append(event["delta"])
+            if event["type"] == "response.output_item.done":
+                output.append(event["item"])
+            if event["type"] in ("response.completed", "response.failed"):
+                require(terminal is None, "Scripted client received an extra terminal")
+                seen = event["type"]
+                terminal = event["response"]
+        status = "response.failed" if failure else "response.completed"
+        require(seen == status and terminal is not None,
+                f"Scripted client expected {status}, received {seen} after {len(text)} deltas and {len(output)} items")
+        if not failure:
+            require(terminal["usage"]["total_tokens"] > 0, "Scripted client lost token usage")
         return "".join(text), output
 
     def run(self, index, kind):

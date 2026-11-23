@@ -9,9 +9,11 @@
 #include "uos/kv.hpp"
 #include "uos/live/upstream.hpp"
 #include "uos/provider/gemini.hpp"
+#include "uos/rt/clock.hpp"
 #include "uos/rt/env.hpp"
 #include "uos/rt/fetch.hpp"
 #include "uos/rt/json.hpp"
+#include "uos/rt/memory.hpp"
 #include "uos/rt/process.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/rt/url.hpp"
@@ -401,6 +403,8 @@ namespace uos::runtime::startup {
         codex::auth::setLeaderAuthReader(codex::auth_import::liveReader(source.string(), store));
         co_await codex::auth::checkLeaderAuth();
       }
+      const auto heapReclamation = rt::memory::startHeapReclamation();
+      const auto stopHeapReclamation = rt::scopeExit([&] { rt::clearInterval(heapReclamation); });
       rt::Task<void> serving = serve::importMetaMain(options);
       closeStore.release();
       co_await std::move(serving);

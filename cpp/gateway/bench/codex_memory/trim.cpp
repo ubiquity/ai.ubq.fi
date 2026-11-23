@@ -1,4 +1,4 @@
-// Fixture-only probe. A private inherited socket requests a trim from an
+// Fixture-only probe. A private inherited socket requests arena info or a trim from an
 // ordinary thread, with no production route, signal handler or allocator hook.
 #include <cstdio>
 #include <cstdlib>
@@ -8,15 +8,22 @@
 #include <unistd.h>
 
 namespace {
-  std::size_t countArenas() {
+  char* arenaInfo(std::size_t& size) {
     char* xml = nullptr;
-    std::size_t size = 0;
     FILE* stream = open_memstream(&xml, &size);
-    if (!stream) return 0;
+    if (!stream) return nullptr;
     const int result = malloc_info(0, stream);
     std::fclose(stream);
+    if (result == 0) return xml;
+    std::free(xml);
+    return nullptr;
+  }
+
+  std::size_t countArenas() {
+    std::size_t size = 0;
+    char* xml = arenaInfo(size);
     std::size_t count = 0;
-    if (result == 0 && xml) {
+    if (xml) {
       for (const char* next = xml; (next = std::strstr(next, "<heap nr=")); ++next) ++count;
     }
     std::free(xml);
@@ -27,6 +34,14 @@ namespace {
     const int fd = *static_cast<int*>(context);
     char request;
     while (::read(fd, &request, 1) == 1) {
+      if (request == 'i') {
+        std::size_t size = 0;
+        char* xml = arenaInfo(size);
+        const auto written = xml ? ::write(fd, xml, size) : -1;
+        std::free(xml);
+        if (written <= 0 || static_cast<std::size_t>(written) != size) break;
+        continue;
+      }
       const auto arenas = countArenas();
       const auto before = mallinfo2();
       const int trimmed = malloc_trim(0);

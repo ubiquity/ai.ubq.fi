@@ -1,4 +1,5 @@
 #include "uos/rt/memory.hpp"
+#include "uos/rt/clock.hpp"
 
 #include <boost/json/array.hpp>
 
@@ -13,11 +14,18 @@
 
 #if defined(__linux__)
 #include <fcntl.h>
+#include <sys/prctl.h>
 #include <unistd.h>
 #endif
 
 #if defined(__GLIBC__)
 #include <malloc.h>
+#endif
+
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define UOS_MEMORY_ADDRESS_SANITIZED 1
+#endif
 #endif
 
 namespace uos::rt::memory {
@@ -100,6 +108,20 @@ namespace uos::rt::memory {
     boost::json::value valueOrNull(std::optional<std::uint64_t> value) {
       return value ? boost::json::value(*value) : boost::json::value(nullptr);
     }
+
+#if defined(__GLIBC__) && !defined(__SANITIZE_ADDRESS__) && !defined(UOS_MEMORY_ADDRESS_SANITIZED)
+    struct HeapSample {
+      std::optional<std::uint64_t> anonymous;
+      std::size_t inUse;
+      std::size_t free;
+      bool operator==(const HeapSample&) const = default;
+    };
+
+    HeapSample sampleHeap() noexcept {
+      const auto allocator = ::mallinfo2();
+      return {readMemory(false).anonymous, allocator.uordblks + allocator.hblkhd, allocator.fordblks};
+    }
+#endif
   }
 
   void setCache(Cache cache, std::size_t entries, std::size_t bytes) noexcept {
@@ -175,5 +197,31 @@ namespace uos::rt::memory {
     }
     result.emplace("caches", std::move(caches));
     return result;
+  }
+
+  Timeout startHeapReclamation() {
+#if defined(__GLIBC__) && !defined(__SANITIZE_ADDRESS__) && !defined(UOS_MEMORY_ADDRESS_SANITIZED)
+    constexpr std::size_t minimumFree = 8 * 1024 * 1024;
+    constexpr std::size_t residentHeadroom = 5 * 1024 * 1024;
+    constexpr std::size_t urgentHeadroom = 24 * 1024 * 1024;
+    // Keep the kernel from rebuilding huge pages across discarded heap holes.
+    (void)::prctl(PR_SET_THP_DISABLE, 1L, 0L, 0L, 0L);
+    // Glibc can discard pages inside free blocks while keeping the blocks in
+    // the arena. Check RSS as well so those blocks do not trigger repeated trims.
+    auto timer = setInterval([previous = std::optional<HeapSample>{}, lastTrim = std::optional<HeapSample>{}]() mutable {
+      const auto current = sampleHeap();
+      const bool stable = current == std::exchange(previous, current);
+      const bool urgent = current.anonymous && *current.anonymous > current.inUse + urgentHeadroom;
+      // Give transient buffers time to finish turning over during ordinary load.
+      if ((!stable && !urgent) || current.free < minimumFree || current == lastTrim ||
+          (current.anonymous && *current.anonymous <= current.inUse + residentHeadroom)) return;
+      (void)::malloc_trim(0);
+      lastTrim = sampleHeap();
+    }, 1000);
+    timer.unref();
+    return timer;
+#else
+    return {};
+#endif
   }
 }

@@ -60,6 +60,18 @@ The scripted path uses the same state, reply types, tool history and limits
 on images without the CLI. Select it locally by replacing `--codex <path>`
 with `--scripted`. [CI workflow](../../../../.github/workflows/cpp-gateway-ci.yml)
 
+For the concurrent retention check, use a new output directory and pass
+`--scripted --check-burst`. Release shard 1 runs this check as well. It fetches
+the exact-version catalog on eight connections per round and delivers 640
+mixed-size streaming turns across 20 rounds. The check caps sampled glibc
+free arena capacity at 24 MiB and idle anonymous RSS above live allocator
+bytes at 9 MiB. Both gates use byte counts.
+
+Use `--scripted --burst --sessions 60` for the longer comparison. The receipt
+includes throughput, p50 and p95 request latency and gateway user and system
+CPU. The optional `--trim` control adds a separate final trim checkpoint and
+saves glibc's arena XML for attribution. [Allocator measurements](../../docs/findings/cppgw-memory-3-allocator-20261122.md)
+
 For phase totals, pass the recorded `heaptrack.zst` to
 `python3 -B cpp/gateway/bench/codex_real/profile.py <trace>`. It uses
 `zstdcat` and groups live allocation bytes by the first matching frame on
