@@ -1,12 +1,14 @@
 # Ubiquity gateway
 
-This branch contains the native C++20 gateway for OpenAI-compatible Chat Completions, Responses, and the gateway's model, auth and operator routes. Linux ARM64 is the serving target. The tree includes C++ tests, native build and packaging scripts, and browser assets served from `static/`. The macOS ARM64 package supports native development and an offline version check. [Native gateway guide](cpp/gateway/README.md)
+The native C++20 gateway lives on `development` and `main`. It serves OpenAI-compatible Chat Completions, Responses, and the gateway's model, auth and operator routes. Linux ARM64 is the serving target. The tree includes C++ tests, native build and packaging scripts, and browser assets served from `static/`. The macOS ARM64 package supports native development and an offline version check. [Native gateway guide](cpp/gateway/README.md)
 
 - [Build and CI](cpp/gateway/docs/CI.md)
 - [Release packages](cpp/gateway/docs/RELEASES.md)
 - [Runtime and operator guide](cpp/gateway/docs/RUNTIME.md)
 - [Arch Linux ARM cutover checklist](cpp/gateway/docs/CUTOVER.md)
 - [Paired conformance](cpp/gateway/docs/CONFORMANCE.md)
+
+The final TypeScript gateway snapshots are available at [`typescript-final-development`](https://github.com/ubiquity/ai.ubq.fi/tree/typescript-final-development) and [`typescript-final-main`](https://github.com/ubiquity/ai.ubq.fi/tree/typescript-final-main).
 
 The paired comparison with the TypeScript gateway lives at [commit `ca045a83ebaab6c50c20567d1a825638abac0891`](https://github.com/ubiquity/ai.ubq.fi/tree/ca045a83ebaab6c50c20567d1a825638abac0891/cpp/gateway/conformance).
 

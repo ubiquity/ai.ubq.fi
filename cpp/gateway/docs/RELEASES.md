@@ -6,8 +6,8 @@ or newer and seccomp thread synchronization, with Landlock ABI 8 or newer by def
 
 ## Build and download in GitHub Actions
 
-1. In the repository, open **Actions → C++ gateway ARM64 packages → Run workflow**. Select the branch you intend to
-   build. The workflow must be available on the default branch for manual runs. To build a tagged commit instead, push a
+1. Open **Actions → C++ gateway ARM64 packages → Run workflow** and select the branch you intend to
+   build. The workflow is available on `development`, the default branch. To build a tagged commit, push a
    tag beginning with `cpp-gateway-v`, for example `cpp-gateway-v0.1.0`, pointing to a commit containing the workflow.
 2. Open the run and check the commit shown at the top. Wait for your platform's job to succeed. The Linux job checks
    the package in Debian 12 and 13 containers. The macOS job runs the runtime tests and checks the extracted gateway's
