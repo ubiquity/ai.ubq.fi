@@ -253,6 +253,36 @@ ASYNC_TEST("invalid or ineligible live inventory cannot consume") {
   }
 }
 
+ASYNC_TEST("a terminal empty inventory rejection leaves a sibling credit eligible") {
+  Isolation isolation;
+  Fixture fixture;
+  const auto first = candidate({.accountId = "test-account-a", .routingGeneration = 7});
+  const auto second = candidate({.accountId = "test-account-b", .routingGeneration = 8});
+  DONE(seedFences(fixture.kv, first));
+  DONE(seedFences(fixture.kv, second));
+  fixture.provider->inventory = sanitizedProviderFixtures().inventory_empty;
+  const auto deps = dependencies(fixture.kv, fixture.provider, fixture.clock, h::config({.mode = "live", .maxPerAccountPerDay = 1}));
+  AWAIT(rejected, attemptCodexBankedReset(first, deps));
+  ASSERT(rejected.record);
+  EXPECT_EQ(stateOf(rejected), "rejected");
+  EXPECT_EQ(rejected.reason, "inventory_empty");
+  EXPECT(!rejected.record->submitted_at_ms);
+  EXPECT(!rejected.record->provider_receipt_id);
+
+  const auto secondProvider = std::make_shared<FakeCodexUsageResetProvider>();
+  secondProvider->inventory = inventory("credit-b", fixture.clock->nowMs + 40'000);
+  AWAIT(outcome, evaluateCodexBankedResetPool(fullPool(first, fixture.provider, second, secondProvider), deps));
+  EXPECT_EQ(outcome.kind, "verified");
+  ASSERT(outcome.selected);
+  EXPECT_EQ(outcome.selected->slot, 1);
+  EXPECT_EQ(fixture.provider->inventoryInputs.size(), 1u);
+  EXPECT(fixture.provider->redeemInputs.empty());
+  ASSERT_EQ(secondProvider->redeemInputs.size(), 1u);
+  EXPECT_EQ(secondProvider->redeemInputs.front().creditId, "credit-b");
+  AWAIT(unchanged, fixture.kv->get(codexResetRedemptionKey(rejected.record->account_id_hash, rejected.record->quota_generation)));
+  EXPECT(rt::deepEqual(unchanged.value.toJson(), json::value_from(*rejected.record)));
+}
+
 ASYNC_TEST("concurrent live evaluations with different first choices consume one cohort credit") {
   Isolation isolation;
   Fixture fixture;

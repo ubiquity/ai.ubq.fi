@@ -21,6 +21,7 @@
 // Port of tests/codex-overage-fallback.test.ts: all 8 original cases and assertions.
 #include "tests/helpers/codex_auth_cache_harness.hpp"
 #include "uos/codex/overage_settings.hpp"
+#include "uos/provider/selection.hpp"
 #include "uos/utils.hpp"
 #include "uos/rt/console.hpp"
 #include "uos/rt/date.hpp"
@@ -30,6 +31,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <utility>
 #include <variant>
 
 #define AWAIT(name, expression) rt::Promise name##Pending((expression)); auto name = co_await name##Pending.wait()
@@ -43,6 +45,7 @@ namespace {
   namespace rs = uos::codex::routing_state;
   namespace os = uos::codex::overage_settings;
   namespace br = uos::codex::banked_reset;
+  namespace selection = uos::provider::selection;
   using namespace h;
   using uos::codex::index::fetchCodexResponses;
   struct UpstreamCall {
@@ -59,6 +62,7 @@ namespace {
     bool includeSibling = false;
     bool siblingSubmitUnknown = false;
     bool firstDayCapped = false;
+    bool expandSelectionDuringInventory = false;
     std::function<rt::Response()> firstInventory;
     bool parallel = false;
     std::function<rt::Response()> inferenceResponse;
@@ -69,6 +73,12 @@ namespace {
   };
   rt::Response jsonResponse(const json::value& body) { return rt::Response::json(body); }
   rt::Response emptyInventory() { return jsonResponse(json::object{{"available_count", 0}, {"credits", json::array{}}}); }
+  rt::Task<rt::Response> enableAllSubscriptionsThenReturnEmptyInventory() {
+    std::vector<std::string> ids{"codex"};
+    const auto saved = co_await selection::storeProviderSelection(kv, std::move(ids));
+    ASSERT(saved);
+    co_return emptyInventory();
+  }
   rt::Response availableInventory() {
     return jsonResponse(json::object{{"available_count", 1}, {"credits", json::array{json::object{{"id", "credit-account-one"}, {"status", "available"}, {"reset_type", "codex_rate_limits"}, {"expires_at", nullptr}}}}});
   }
@@ -80,9 +90,18 @@ namespace {
   rt::Task<BlockedRun> runBlockedSequence(std::vector<std::string> requestIds, std::function<rt::Response()> inventoryResponse, RunOptions options) {
     HarnessScope scope; uos::config::config.codexBaseUrl = "https://upstream-reset.test/backend-api/codex";
     kv->auth = options.includeSibling ? pool(auth("one"), auth("two")) : pool(auth("one")); os::resetOverageUsageCacheForTest();
-    auto cleanup = rt::scopeExit([] { os::resetOverageUsageCacheForTest(); });
+    auto cleanup = rt::scopeExit([] {
+      os::resetOverageUsageCacheForTest();
+      selection::resetProviderSelectionCacheForTest();
+    });
     std::vector<UpstreamCall> calls; WAIT(seedStableBankedResetBlock("account-one"));
     if (options.includeSibling) WAIT(seedStableBankedResetBlock("account-two"));
+    if (options.expandSelectionDuringInventory) {
+      AWAIT(hash, selection::codexSubscriptionHash("account-one"));
+      std::vector ids{selection::codexSubscriptionSelectionId(hash)};
+      AWAIT(saved, selection::storeProviderSelection(kv, std::move(ids)));
+      ASSERT(saved);
+    }
     if (options.firstDayCapped) {
       AWAIT(accountHash, uos::utils::sha256Hex("account-one"));
       const auto day = br::utcDay(fixedStartMs);
@@ -119,18 +138,26 @@ namespace {
         AWAIT(committed, kv->set(key, value)); (void) committed;
       }
     }
-    rt::GlobalFetchOverride fetch(rt::Fetch([&](rt::RequestInfo info, rt::RequestInit init) {
+    bool selectionExpanded = false;
+    rt::GlobalFetchOverride fetch(rt::Fetch([&](rt::RequestInfo info, rt::RequestInit init) -> rt::Task<rt::Response> {
       const auto url = requestUrl(info); const auto account = init.headers.value_or(rt::Headers{}).get("chatgpt-account-id").value_or("");
       if (rt::endsWith(url, "/backend-api/codex/responses")) {
         calls.push_back({"inference", account});
-        return options.inferenceResponse ? options.inferenceResponse() : jsonResponse(json::object{{"id", "response-" + account}});
+        return rt::fulfilledTask(options.inferenceResponse ? options.inferenceResponse() : jsonResponse(json::object{{"id", "response-" + account}}));
       }
       if (rt::endsWith(url, "/backend-api/wham/rate-limit-reset-credits")) {
         calls.push_back({"inventory", account});
-        if (options.includeSibling && account == "account-one") return options.firstInventory ? options.firstInventory() : emptyInventory();
-        return inventoryResponse();
+        if (options.includeSibling && account == "account-one") {
+          if (options.expandSelectionDuringInventory && !std::exchange(selectionExpanded, true))
+            return enableAllSubscriptionsThenReturnEmptyInventory();
+          return rt::fulfilledTask(options.firstInventory ? options.firstInventory() : emptyInventory());
+        }
+        return rt::fulfilledTask(inventoryResponse());
       }
-      if (rt::endsWith(url, "/backend-api/wham/rate-limit-reset-credits/consume")) { calls.push_back({"consume", account}); return jsonResponse(json::object{{"code", "reset"}, {"windows_reset", 1}}); }
+      if (rt::endsWith(url, "/backend-api/wham/rate-limit-reset-credits/consume")) {
+        calls.push_back({"consume", account});
+        return rt::fulfilledTask(jsonResponse(json::object{{"code", "reset"}, {"windows_reset", 1}}));
+      }
       throw rt::JsError("unexpected request " + init.method.value_or("GET") + " " + url);
     }));
     rt::console::Capture capture({rt::console::Method::info});
@@ -273,5 +300,20 @@ ASYNC_TEST("a transient upstream overage failure cannot authorize paid fallback"
   AWAIT(body, run.responses.front().text());
   EXPECT_EQ(body, "subscription upstream unavailable");
   EXPECT_EQ(accountsOf(run, "inference"), (std::vector<std::string>{"account-one"}));
+  EXPECT(!logged(run, "codex_overage_served"));
+}
+
+ASYNC_TEST("a sibling selected during inventory gets its reset before overage") {
+  RunOptions options;
+  options.allowOverage = true;
+  options.includeSibling = true;
+  options.expandSelectionDuringInventory = true;
+  const std::vector<std::string> ids{"overage-newly-selected-sibling"};
+  AWAIT(run, runBlockedSequence(ids, availableInventory, options));
+  ASSERT(!run.calls.empty());
+  EXPECT_EQ(run.calls.front(), (UpstreamCall{"inventory", "account-one"}));
+  EXPECT_EQ(statuses(run), (std::vector<double>{200}));
+  EXPECT_EQ(accountsOf(run, "consume"), (std::vector<std::string>{"account-two"}));
+  EXPECT_EQ(accountsOf(run, "inference"), (std::vector<std::string>{"account-two"}));
   EXPECT(!logged(run, "codex_overage_served"));
 }

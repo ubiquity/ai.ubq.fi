@@ -23,7 +23,9 @@ namespace uos::codex::capacity_routing {
     try {
       if (!kv) co_return std::nullopt;
       const auto hash = co_await utils::sha256Hex(std::move(accountId));
-      if (!(co_await overage_settings::readOverageUsage(kv, hash))) co_return false;
+      // A read-only quota check is safe with overage off. Only an explicitly
+      // consenting account that also disables automatic resets may skip it.
+      if (!(co_await overage_settings::readOverageUsage(kv, hash))) co_return true;
       const auto reset = co_await reset_settings::readCodexResetUsage(kv, hash);
       if (reset.allowed) co_return true;
       if (reset.entries.size() == 1 && reset.entries.front().value.isObject()) {

@@ -73,10 +73,18 @@ namespace uos::codex::responses_state {
     std::string capacityJson;
   };
 
+  struct OverageCohortMember {
+    double slot;
+    std::string credentialVersion;
+    std::optional<double> quotaResetAtMs;
+    friend bool operator==(const OverageCohortMember&, const OverageCohortMember&) = default;
+  };
+
   struct PendingOverageFallback {
     std::string reason;
     routing_state::CodexBlockedRoutingAccount routing;
     routing_state::CodexActiveAccountSnapshot activeSnapshot;
+    std::vector<OverageCohortMember> cohort;
   };
 
   struct EvaluatedBlockedReset {

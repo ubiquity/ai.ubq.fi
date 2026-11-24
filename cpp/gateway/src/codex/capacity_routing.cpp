@@ -2,6 +2,7 @@
 
 #include "uos/authority/native_codex_evaluation.hpp"
 #include "uos/codex/banked_reset.hpp"
+#include "uos/codex/banked_reset_claim.hpp"
 #include "uos/kv.hpp"
 #include "uos/provider/capacity_contract.hpp"
 #include "uos/rt/clock.hpp"
@@ -435,10 +436,12 @@ namespace uos::codex::capacity_routing {
     bool resetWasNeverSubmitted(const rt::KvEntryMaybe<>& entry, const std::string& accountHash, const std::string& generation) {
       if (entry.value.isNull()) return true;
       const json::value record = entry.value.toJson();
+      if (rt::getNumber(record, "v") != 1 || rt::getString(record, "account_id_hash") != accountHash ||
+          rt::getString(record, "quota_generation") != generation) return false;
       const auto* submitted = rt::get(record, "submitted_at_ms");
-      return rt::getNumber(record, "v") == 1 && rt::getString(record, "account_id_hash") == accountHash &&
-             rt::getString(record, "quota_generation") == generation && rt::getString(record, "state") == "claimed" &&
-             submitted != nullptr && submitted->is_null();
+      if (rt::getString(record, "state") == "claimed") return submitted != nullptr && submitted->is_null();
+      const auto parsed = banked_reset::parseCodexResetRedemptionRecord(record);
+      return parsed && banked_reset_claim::isUnsubmittedInventoryRejection(*parsed);
     }
 
     rt::Task<bool> checkPreviousResetWindows(std::shared_ptr<rt::Kv> kv, rt::AtomicOperation& operation,

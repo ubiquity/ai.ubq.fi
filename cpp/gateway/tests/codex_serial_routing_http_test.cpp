@@ -38,6 +38,7 @@
 #include "uos/codex/auth.hpp"
 #include "uos/codex/capacity_routing.hpp"
 #include "uos/codex/dispatch.hpp"
+#include "uos/codex/experiment.hpp"
 #include "uos/codex/overage_settings.hpp"
 #include "uos/codex/reset_settings.hpp"
 #include "uos/config.hpp"
@@ -70,7 +71,8 @@ rt::Task<json::object> routingSlot(uos::types::CodexAuthState auth,double usedPe
 struct UpstreamCall{std::optional<std::string> accountId,sessionId,conversationId,promptCacheKey;int status;std::string sentinel;};
 struct GatewayCall{int status;bool completed;std::string text;};
 enum class WeeklyReset { available, empty, disabled, unknown, usageRestoresDeadline, usageFindsHeadroom, usageInconclusive, usageWrongAccount,
-                         usageContradictsHeadroom, usageError, usageSibling };
+                         usageContradictsHeadroom, usageError, usageSibling, usageMissingSecondary, usageMissingNamedSecondary, usageOverageOff,
+                         usageWrongWindowLength, usageActiveInconclusive, usageActiveRestoresDeadline };
 const std::string RESET_PATH = "/backend-api/wham/rate-limit-reset-credits";
 const std::string USAGE_PATH = "/backend-api/wham/usage";
 struct Fixture{
@@ -98,10 +100,11 @@ struct Fixture{
   rt::Task<void> set(rt::KvKey key,json::value value){const rt::KvValue stored(value);auto writing=kv->set(key,stored);co_await std::move(writing);}
   rt::Task<void> seedWeeklyCapacity() {
     const json::object pool{{"accounts", json::array{json::value_from(accountA)}}, {"updated_at_ms", now}};
-    const bool sibling = weeklyReset == WeeklyReset::usageSibling;
+    const bool sibling = weeklyReset == WeeklyReset::usageSibling || weeklyReset == WeeklyReset::usageActiveInconclusive ||
+                         weeklyReset == WeeklyReset::usageActiveRestoresDeadline;
     if (!sibling) co_await set(uos::codex::auth::CODEX_AUTH_POOL_KV_KEY, pool);
     const auto hash = co_await uos::utils::sha256Hex(ACCOUNT_A);
-    co_await uos::codex::overage_settings::writeOverageUsage(kv, hash, true);
+    co_await uos::codex::overage_settings::writeOverageUsage(kv, hash, weeklyReset != WeeklyReset::usageOverageOff);
     uos::codex::overage_settings::resetOverageUsageCacheForTest();
     if (weeklyReset == WeeklyReset::disabled) {
       const json::object setting{{"enabled", false}};
@@ -114,6 +117,10 @@ struct Fixture{
                   state::CodexCapacityRoutingWindow{604'800, 100, now + 6 * 86'400'000}},
     };
     if (*weeklyReset >= WeeklyReset::usageRestoresDeadline) weekly.windows.secondary->reset_at_ms = std::nullopt;
+    if (weeklyReset == WeeklyReset::usageMissingNamedSecondary) {
+      weekly.additional_rate_limits.push_back({MODEL, std::nullopt, weekly.windows});
+      weekly.windows.secondary->used_percent = 35;
+    }
     std::vector observations{weekly};
     if (sibling) {
       weekly.slot = 1;
@@ -141,17 +148,25 @@ struct Fixture{
         EXPECT_EQ(request.method(), "GET");
         EXPECT_EQ(request.headers().get("authorization"), "Bearer " + accountA.access_token);
         if (weeklyReset == WeeklyReset::usageError) co_return rt::Response("usage unavailable", rt::ResponseInit{.status = 503});
-        const bool positive = weeklyReset == WeeklyReset::usageFindsHeadroom;
+        const bool missingSecondary = weeklyReset == WeeklyReset::usageMissingSecondary || weeklyReset == WeeklyReset::usageMissingNamedSecondary;
+        const bool positive = weeklyReset == WeeklyReset::usageFindsHeadroom || weeklyReset == WeeklyReset::usageWrongWindowLength || missingSecondary;
         const bool headroom = positive || weeklyReset == WeeklyReset::usageContradictsHeadroom;
-        json::object secondary{{"used_percent", headroom ? 25 : 100}, {"limit_window_seconds", 604'800}};
-        if (weeklyReset == WeeklyReset::usageRestoresDeadline || positive || weeklyReset == WeeklyReset::usageWrongAccount) {
+        json::object secondary{{"used_percent", headroom ? 25 : 100},
+                               {"limit_window_seconds", weeklyReset == WeeklyReset::usageWrongWindowLength ? 18'000 : 604'800}};
+        if (weeklyReset == WeeklyReset::usageRestoresDeadline || weeklyReset == WeeklyReset::usageActiveRestoresDeadline || positive ||
+            weeklyReset == WeeklyReset::usageWrongAccount) {
           secondary["reset_at"] = rt::Math::trunc((now + 6 * 86'400'000) / 1'000);
         }
         const json::object primary{{"used_percent", 24}, {"limit_window_seconds", 18'000}, {"reset_at", rt::Math::trunc((now + 3'600'000) / 1'000)}};
         const auto responseAccount = weeklyReset == WeeklyReset::usageWrongAccount ? ACCOUNT_B : account;
-        co_return rt::Response::json(json::object{{"account_id", responseAccount}, {"rate_limit", json::object{
-          {"allowed", positive}, {"limit_reached", !positive}, {"primary_window", primary}, {"secondary_window", secondary},
-        }}});
+        json::object rateLimit{{"allowed", positive}, {"limit_reached", !positive}, {"primary_window", primary}};
+        if (!missingSecondary) rateLimit["secondary_window"] = secondary;
+        json::object usage{{"account_id", responseAccount}, {"rate_limit", rateLimit}};
+        if (weeklyReset == WeeklyReset::usageMissingNamedSecondary) {
+          const json::object named{{"limit_name", MODEL}, {"rate_limit", rateLimit}};
+          usage["additional_rate_limits"] = json::array{named};
+        }
+        co_return rt::Response::json(usage);
       }
       if (weeklyReset && (path == RESET_PATH || path == RESET_PATH + "/consume")) {
         const bool inventory = path == RESET_PATH;
@@ -223,6 +238,31 @@ rt::Task<void> expectWeeklyResetCalls(WeeklyReset scenario, int expectedStatus, 
   uos::codex::overage_settings::resetOverageUsageCacheForTest();
   if (failure) std::rethrow_exception(failure);
 }
+
+rt::Task<void> expectActiveWeeklySibling(WeeklyReset scenario, int expectedStatus, std::vector<std::string> expectedCalls, double expectedActive) {
+  Fixture fixture;
+  rt::Reason failure;
+  try {
+    co_await fixture.start();
+    const auto initial = co_await fixture.callGateway(std::nullopt);
+    EXPECT_EQ(initial.status, 200);
+    fixture.servedBy(ACCOUNT_A);
+    fixture.weeklyReset = scenario;
+    co_await fixture.seedWeeklyCapacity();
+    const auto next = co_await fixture.callGateway(std::nullopt);
+    EXPECT_EQ(next.status, expectedStatus);
+    EXPECT_EQ(fixture.weeklyCalls, expectedCalls);
+    const auto row = co_await fixture.kv->get(routing::CODEX_ACTIVE_ACCOUNT_SELECTION_KV_KEY);
+    const auto active = routing::parseCodexActiveAccountSelection(row.value.toJson());
+    ASSERT(active);
+    EXPECT_EQ(active->slot, expectedActive);
+  } catch (...) {
+    failure = std::current_exception();
+  }
+  co_await fixture.stop();
+  uos::codex::overage_settings::resetOverageUsageCacheForTest();
+  if (failure) std::rethrow_exception(failure);
+}
 }
 
 ASYNC_TEST("a capacity-only weekly reset precedes enabled overage over loopback HTTP") {
@@ -266,6 +306,60 @@ ASYNC_TEST("unverified usage cannot consume a reset or dispatch inference over l
 ASYNC_TEST("included sibling capacity precedes a read-only usage probe over loopback HTTP") {
   const std::vector calls{"inference " + ACCOUNT_B};
   co_await expectWeeklyResetCalls(WeeklyReset::usageSibling, 200, calls);
+}
+
+ASYNC_TEST("usage that omits the exhausted weekly secondary cannot authorize inference over loopback HTTP") {
+  const std::vector calls{"usage " + ACCOUNT_A};
+  co_await expectWeeklyResetCalls(WeeklyReset::usageMissingSecondary, 429, calls);
+}
+
+ASYNC_TEST("usage that omits the exhausted named secondary cannot authorize inference over loopback HTTP") {
+  const std::vector calls{"usage " + ACCOUNT_A};
+  co_await expectWeeklyResetCalls(WeeklyReset::usageMissingNamedSecondary, 429, calls);
+}
+
+ASYNC_TEST("ambiguous exhaustion with overage off cannot authorize inference over loopback HTTP") {
+  const std::vector calls{"usage " + ACCOUNT_A};
+  co_await expectWeeklyResetCalls(WeeklyReset::usageOverageOff, 429, calls);
+}
+
+ASYNC_TEST("a shorter replacement window cannot establish recovered weekly quota over loopback HTTP") {
+  const std::vector calls{"usage " + ACCOUNT_A};
+  co_await expectWeeklyResetCalls(WeeklyReset::usageWrongWindowLength, 429, calls);
+}
+
+ASYNC_TEST("an active account yields to fresh sibling capacity only after usage confirms current exhaustion") {
+  const std::vector unresolved{"usage " + ACCOUNT_A};
+  co_await expectActiveWeeklySibling(WeeklyReset::usageActiveInconclusive, 429, unresolved, 0);
+  const std::vector exhausted{"usage " + ACCOUNT_A, "inference " + ACCOUNT_B};
+  co_await expectActiveWeeklySibling(WeeklyReset::usageActiveRestoresDeadline, 200, exhausted, 1);
+}
+
+ASYNC_TEST("the slot-pinned cache experiment refuses unverified quota before its upstream call") {
+  namespace experiment = uos::codex::experiment;
+  Fixture fixture;
+  fixture.weeklyReset = WeeklyReset::usageSibling;
+  rt::Reason failure;
+  try {
+    co_await fixture.start();
+    const auto session = co_await experiment::beginCodexCacheScopeExperiment();
+    const experiment::FetchCodexResponsesForCacheScopeExperimentOptions options{session, 1, "unverified-quota"};
+    const json::value payload = json::object{{"model", MODEL}, {"input", "slot-pinned"}};
+    bool refused = false;
+    try {
+      const auto response = co_await experiment::fetchCodexResponsesForCacheScopeExperiment(payload, options);
+      (void)response;
+    } catch (const experiment::CodexCacheScopeExperimentError&) {
+      refused = true;
+    }
+    EXPECT(refused);
+    EXPECT(fixture.weeklyCalls.empty());
+  } catch (...) {
+    failure = std::current_exception();
+  }
+  co_await fixture.stop();
+  uos::codex::overage_settings::resetOverageUsageCacheForTest();
+  if (failure) std::rethrow_exception(failure);
 }
 ASYNC_TEST("serial Codex routing keeps one active account across cache keys, idle time, exhaustion, and recovery over real loopback HTTP"){
   Fixture fixture;rt::Reason failure;try{auto starting=fixture.start();co_await std::move(starting);const std::string keyOne="serial-routing-http-key-one",keyTwo="serial-routing-http-key-two";

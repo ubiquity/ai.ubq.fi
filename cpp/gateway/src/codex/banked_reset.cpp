@@ -1,6 +1,8 @@
 // Port of src/codex/banked-reset.ts.
 #include "uos/codex/banked_reset.hpp"
 
+#include "banked_reset_record_fields.hpp"
+
 #include "uos/codex/reset_settings.hpp"
 #include "uos/rt/console.hpp"
 #include "uos/rt/date.hpp"
@@ -16,7 +18,6 @@ namespace uos::codex::banked_reset {
   namespace {
     using ::uos::types::CodexResetGlobalDailyRecord;
     using ::uos::types::CodexResetRedemptionRecord;
-    using ::uos::types::CodexResetRedemptionState;
     using ::uos::types::CodexResetShadowDecisionRecord;
   }
 
@@ -83,138 +84,12 @@ namespace uos::codex::banked_reset {
       },
   };
 
-  bool isSafeMs(const json::value& value) { return isSafeMs(&value); }
-  bool isSafeMs(const json::value* value) { return value != nullptr && rt::isNumber(*value) && isSafeMs(rt::toNumber(*value)); }
-  bool isSafeMs(double value) { return rt::Number::isSafeInteger(value) && value >= 0; }
-
-  bool isSafeNonnegativeInteger(const json::value& value) { return isSafeNonnegativeInteger(&value); }
-  bool isSafeNonnegativeInteger(const json::value* value) {
-    return value != nullptr && rt::isNumber(*value) && isSafeNonnegativeInteger(rt::toNumber(*value));
-  }
-  bool isSafeNonnegativeInteger(double value) { return rt::Number::isSafeInteger(value) && value >= 0; }
-
-  bool isNonEmptyText(const json::value& value, double max) { return isNonEmptyText(&value, max); }
-  bool isNonEmptyText(const json::value* value, double max) {
-    return value != nullptr && value->is_string() && isNonEmptyText(std::string_view(value->get_string()), max);
-  }
-  bool isNonEmptyText(std::string_view value, double max) {
-    const auto length = static_cast<double>(rt::length(value));
-    return length > 0 && length <= max;
-  }
-
   namespace {
-    // `value === "claimed" || ... || value === "rejected"`, as the narrowed state.
-    std::optional<CodexResetRedemptionState> isState(const json::value* value) {
-      if (value == nullptr || !value->is_string()) return std::nullopt;
-      return ::uos::types::parseCodexResetRedemptionState(std::string_view(value->get_string()));
-    }
-
-    /**
-     * A state is only durable when it agrees with the timestamps and error fields
-     * that state allows. `isState` has already narrowed `state` to the five durable
-     * states, so the default branch is unreachable; it assigns to a `never`-typed
-     * local so a future state cannot be accepted without a compile error here.
-     */
-    bool redemptionRecordStateIsConsistent(CodexResetRedemptionState state, const std::optional<std::string>& providerReceiptId,
-                                           std::optional<double> submittedAtMs, std::optional<double> verifiedAtMs,
-                                           const std::optional<std::string>& lastErrorCode) {
-      switch (state) {
-        case CodexResetRedemptionState::claimed:
-          return !providerReceiptId && !submittedAtMs && !verifiedAtMs && !lastErrorCode;
-        case CodexResetRedemptionState::submitted:
-          return submittedAtMs && !verifiedAtMs && !lastErrorCode;
-        case CodexResetRedemptionState::unknown:
-          return submittedAtMs && !verifiedAtMs && lastErrorCode;
-        case CodexResetRedemptionState::verified:
-          return submittedAtMs && verifiedAtMs && !lastErrorCode;
-        case CodexResetRedemptionState::rejected:
-          return !verifiedAtMs && lastErrorCode;
-      }
-      json::value unreachableState = json::value_from(state);
-      throw rt::JsError("unhandled codex reset redemption state: " + rt::jsonStringify(unreachableState));
-    }
-
-    /** Ordering that every accepted record must satisfy, independent of its state. */
-    bool redemptionRecordTimestampsAreOrdered(double createdAtMs, double updatedAtMs, std::optional<double> submittedAtMs, std::optional<double> verifiedAtMs) {
-      return updatedAtMs >= createdAtMs && (!submittedAtMs || *submittedAtMs >= createdAtMs) && (!submittedAtMs || updatedAtMs >= *submittedAtMs) &&
-             (!verifiedAtMs || (submittedAtMs && *verifiedAtMs >= *submittedAtMs)) && (!verifiedAtMs || updatedAtMs >= *verifiedAtMs);
-    }
-
-    // `value === null` on a member that may be absent.
-    bool isNull(const json::value* value) { return value != nullptr && value->is_null(); }
-
-    // A member already proven to be a string or null.
-    std::optional<std::string> textOrNull(const json::value* value) {
-      if (isNull(value)) return std::nullopt;
-      return std::string(value->get_string());
-    }
-
-    // A member already proven to be a number or null.
-    std::optional<double> numberOrNull(const json::value* value) {
-      if (isNull(value)) return std::nullopt;
-      return rt::toNumber(*value);
-    }
-
-    std::string text(const json::value* value) { return std::string(value->get_string()); }
-
-    /**
-     * Field-by-field validation of one stored record. The predicate form keeps the
-     * narrowing at the call site, so the parser only assembles an object it has
-     * already proven field by field, in the same order as before.
-     */
-    bool hasValidRedemptionRecordFields(const json::object& value) {
-      if (!isNonEmptyText(rt::get(value, "account_id_hash")) || !isNonEmptyText(rt::get(value, "credential_version")) ||
-          !isNonEmptyText(rt::get(value, "quota_generation")) || !isNonEmptyText(rt::get(value, "idempotency_key_hash")) ||
-          !isState(rt::get(value, "state")) || !isNonEmptyText(rt::get(value, "owner_token")) ||
-          !isSafeNonnegativeInteger(rt::get(value, "routing_generation")) || !isSafeNonnegativeInteger(rt::get(value, "fence")) ||
-          !isSafeMs(rt::get(value, "lease_expires_at_ms")) || !isSafeMs(rt::get(value, "created_at_ms")) || !isSafeMs(rt::get(value, "updated_at_ms")))
-        return false;
-      const json::value* providerReceiptId = rt::get(value, "provider_receipt_id");
-      const json::value* submittedAtMs = rt::get(value, "submitted_at_ms");
-      const json::value* verifiedAtMs = rt::get(value, "verified_at_ms");
-      const json::value* lastErrorCode = rt::get(value, "last_error_code");
-      if (!isNull(providerReceiptId) && !isNonEmptyText(providerReceiptId)) return false;
-      if (!isNull(submittedAtMs) && !isSafeMs(submittedAtMs)) return false;
-      if (!isNull(verifiedAtMs) && !isSafeMs(verifiedAtMs)) return false;
-      if (!isNull(lastErrorCode) && !isNonEmptyText(lastErrorCode, 128)) return false;
-      if (!redemptionRecordTimestampsAreOrdered(rt::toNumber(*rt::get(value, "created_at_ms")), rt::toNumber(*rt::get(value, "updated_at_ms")),
-                                                numberOrNull(submittedAtMs), numberOrNull(verifiedAtMs)))
-        return false;
-      return redemptionRecordStateIsConsistent(*isState(rt::get(value, "state")), textOrNull(providerReceiptId), numberOrNull(submittedAtMs),
-                                               numberOrNull(verifiedAtMs), textOrNull(lastErrorCode));
-    }
-
-    // `value.v !== 1`
-    bool versionIsNotOne(const json::value& value) {
-      const json::value* version = rt::get(value, "v");
-      return version == nullptr || !rt::isNumber(*version) || rt::toNumber(*version) != 1;
-    }
-  }
-
-  std::optional<CodexResetRedemptionRecord> parseCodexResetRedemptionRecord(const json::value& value) { return parseCodexResetRedemptionRecord(&value); }
-
-  std::optional<CodexResetRedemptionRecord> parseCodexResetRedemptionRecord(const json::value* value) {
-    if (!utils::isRecord(value) || versionIsNotOne(*value)) return std::nullopt;
-    const json::object& fields = value->get_object();
-    if (!hasValidRedemptionRecordFields(fields)) return std::nullopt;
-    return CodexResetRedemptionRecord{
-      .v = 1,
-      .account_id_hash = text(rt::get(fields, "account_id_hash")),
-      .credential_version = text(rt::get(fields, "credential_version")),
-      .quota_generation = text(rt::get(fields, "quota_generation")),
-      .routing_generation = rt::toNumber(*rt::get(fields, "routing_generation")),
-      .idempotency_key_hash = text(rt::get(fields, "idempotency_key_hash")),
-      .state = *isState(rt::get(fields, "state")),
-      .owner_token = text(rt::get(fields, "owner_token")),
-      .fence = rt::toNumber(*rt::get(fields, "fence")),
-      .lease_expires_at_ms = rt::toNumber(*rt::get(fields, "lease_expires_at_ms")),
-      .provider_receipt_id = textOrNull(rt::get(fields, "provider_receipt_id")),
-      .created_at_ms = rt::toNumber(*rt::get(fields, "created_at_ms")),
-      .updated_at_ms = rt::toNumber(*rt::get(fields, "updated_at_ms")),
-      .submitted_at_ms = numberOrNull(rt::get(fields, "submitted_at_ms")),
-      .verified_at_ms = numberOrNull(rt::get(fields, "verified_at_ms")),
-      .last_error_code = textOrNull(rt::get(fields, "last_error_code")),
-    };
+    using record_fields::isNull;
+    using record_fields::numberOrNull;
+    using record_fields::text;
+    using record_fields::textOrNull;
+    using record_fields::versionIsNotOne;
   }
 
   std::optional<CodexResetGlobalDailyRecord> parseAccountDayRecord(const json::value& value, const std::string& day) {

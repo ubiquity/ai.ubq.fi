@@ -146,9 +146,16 @@ namespace uos::authority::native_codex_evaluation {
     const CodexRoutingSlot slot = slotMatchesCodexRoutingAccount(storedSlot, account) ? storedSlot : neutralSlot(account.credentialVersion, account.accountIdHash);
     const CodexQuotaClass requestedQuotaClass = quotaClass(modelView(model));
     const CodexRoutingSlot classAwareSlot = withLegacyQuotaClassMap(slot);
-    const std::optional<CodexQuotaClassBlock> requestedClassBlock = quotaBlockForClass(classAwareSlot, requestedQuotaClass, modelView(model));
+    auto requestedClassBlock = quotaBlockForClass(classAwareSlot, requestedQuotaClass, modelView(model));
     const CodexCapacityRoutingObservation* observation = observationsByAccount.get(account.accountIdHash);
-    const CapacityDecision capacity = resolveCodexCapacityDecision(slot, classAwareSlot, requestedQuotaClass, observation, model, now);
+    CapacityDecision capacity = resolveCodexCapacityDecision(slot, classAwareSlot, requestedQuotaClass, observation, model, now);
+    if (hasModelScopedQuotaBlock(classAwareSlot, modelView(model))) {
+      if (const auto* fresh = freshCapacityObservation(observation, now)) {
+        if (const auto recovered = recoverQuotaScopesFromCapacity(classAwareSlot, *fresh, modelView(model)))
+          requestedClassBlock = quotaBlockForClass(*recovered, requestedQuotaClass, modelView(model));
+        if (requestedClassBlock && requestedClassBlock->blocked_until_ms > now) capacity.capacityOverride = false;
+      }
+    }
     CodexRoutedAccount routedAccount = account;
     routedAccount.quotaHeadroom = capacity.quotaHeadroom;
     routedAccount.routingGeneration = slot.generation;

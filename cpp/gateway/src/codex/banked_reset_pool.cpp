@@ -369,7 +369,7 @@ namespace uos::codex::banked_reset_pool {
 
     struct LivePoolWindow {
       double slot;
-      bool hasExpiredClaim;
+      std::optional<std::string> unavailableReason;
       banked_reset::CodexBankedResetFence fence;
     };
 
@@ -387,15 +387,19 @@ namespace uos::codex::banked_reset_pool {
           auto key = banked_reset::codexResetRedemptionKey(account.accountIdHash, account.quotaGeneration);
           const auto entry = co_await kv->get(key, strongRead());
           const auto snapshot = entry.value.toJson();
-          bool hasExpiredClaim = false;
+          std::optional<std::string> unavailableReason;
           if (!entry.value.isNull()) {
             const auto record = banked_reset::parseCodexResetRedemptionRecord(snapshot);
             if (!record) co_return PoolStepOutcome{.outcome = poolOutcome("skipped", "redemption_record_invalid")};
             if (!banked_reset_claim::matchesContext(*record, candidate.context)) {
               co_return PoolStepOutcome{.outcome = poolOutcome("skipped", "redemption_record_context_mismatch")};
             }
-            hasExpiredClaim = record->state == ::uos::types::CodexResetRedemptionState::claimed && record->lease_expires_at_ms <= nowMs;
-            if (!hasExpiredClaim) {
+            if (record->state == ::uos::types::CodexResetRedemptionState::claimed && record->lease_expires_at_ms <= nowMs) {
+              unavailableReason = "unsubmitted_transaction";
+            } else if (banked_reset_claim::isUnsubmittedInventoryRejection(*record)) {
+              unavailableReason = record->last_error_code;
+            }
+            if (!unavailableReason) {
               if (record->state != ::uos::types::CodexResetRedemptionState::verified) {
                 co_return PoolStepOutcome{.outcome = poolOutcome("pending", "transaction_in_progress")};
               }
@@ -409,7 +413,7 @@ namespace uos::codex::banked_reset_pool {
               co_return PoolStepOutcome{.outcome = poolOutcome(reset.kind, reset.reason, candidate.pool, reset)};
             }
           }
-          windows.push_back({candidate.pool.slot, hasExpiredClaim,
+          windows.push_back({candidate.pool.slot, std::move(unavailableReason),
                              {std::move(key), [snapshot](const json::value& current) { return rt::deepEqual(current, snapshot); }}});
         }
       } catch (...) {
@@ -424,11 +428,15 @@ namespace uos::codex::banked_reset_pool {
       if (!day) co_return PoolStepOutcome{.outcome = poolOutcome("skipped", "invalid_clock")};
       std::vector<ResolvedPoolCandidate> eligible;
       std::optional<CodexBankedResetPoolCandidate> firstCapped;
+      std::optional<std::string> firstRefusal;
       try {
         for (const auto& candidate : episode.eligible) {
           const auto window = std::find_if(windows.begin(), windows.end(), [&](const auto& item) { return item.slot == candidate.pool.slot; });
           if (window == windows.end()) co_return PoolStepOutcome{.outcome = poolOutcome("skipped", "full_pool_missing")};
-          if (window->hasExpiredClaim) continue;
+          if (window->unavailableReason) {
+            if (!firstRefusal) firstRefusal = window->unavailableReason;
+            continue;
+          }
           const auto key = banked_reset::codexResetAccountDailyKey(candidate.context.account.accountIdHash, *day);
           const auto entry = co_await kv->get(key, strongRead());
           if (!entry.value.isNull()) {
@@ -446,7 +454,8 @@ namespace uos::codex::banked_reset_pool {
       }
       if (eligible.empty()) {
         if (firstCapped) co_return PoolStepOutcome{.outcome = poolOutcome("skipped", "account_day_limit_reached", firstCapped)};
-        co_return PoolStepOutcome{.outcome = poolOutcome("pending", "unsubmitted_transaction")};
+        const std::string reason = firstRefusal.value_or("unsubmitted_transaction");
+        co_return PoolStepOutcome{.outcome = poolOutcome(reason == "unsubmitted_transaction" ? "pending" : "skipped", reason)};
       }
       episode.eligible = std::move(eligible);
       co_return std::nullopt;

@@ -185,21 +185,7 @@ namespace uos::authority::native_codex {
     };
     if (!active) return serialBootstrapDecision(context);
     if (activeEvaluation == nullptr) return serialReplacementDecision(context, *active);
-    if (activeEvaluation->routedAccount) {
-      if (activeEvaluation->routedAccount->quotaUsageProbeRequired) {
-        const auto included = std::find_if(context.eligibleInPoolOrder.begin(), context.eligibleInPoolOrder.end(), [](const CodexRoutingAccount& account) {
-          return account.hasFreshIncludedCapacity;
-        });
-        if (included != context.eligibleInPoolOrder.end()) {
-          // This transition prefers observed included capacity. The unresolved account's
-          // evaluation still grants neither full-pool reset nor paid-fallback proof.
-          CodexRoutingAccountEvaluation exhausted = *activeEvaluation;
-          exhausted.activeTransitionReason = "quota_exhausted";
-          return serialBlockedActiveDecision(context, *active, exhausted);
-        }
-      }
-      return serialCurrentActiveDecision(context, *active, *activeEvaluation->routedAccount);
-    }
+    if (activeEvaluation->routedAccount) return serialCurrentActiveDecision(context, *active, *activeEvaluation->routedAccount);
     return serialBlockedActiveDecision(context, *active, *activeEvaluation);
   }
 
