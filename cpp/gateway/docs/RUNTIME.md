@@ -87,6 +87,12 @@ The WebSocket limit fixture sets a 1,024-byte message budget and verifies zero d
 
 After each integration, update its row with the actual source entry point, effective limits and exception, boundary-test outcome and exact binary or tree. The final package includes the resulting table. [v40 implementation scope](/tmp/claude-1002/prod/assignment3/runtime/limits-v40/runtime-table.md)
 
+## Failed request diagnostics
+
+Use the gateway request ID to look up a failed request. Authenticated inference failures retain the received request body in the encrypted Sentinel store, including invalid JSON and streams that fail after HTTP 200. A cancelled or interrupted delivery can produce a diagnostic even when it has no replayable upstream trace. Authentication failures use metadata only. Live call diagnostics retain a projection of session fields to keep transport credentials private.
+
+Payloads expire after 48 hours and share the existing 1 GiB retention budget. Requests that exceed the capture limit or end before the body arrives have an omission reason. On the VPS, `sentinel-gateway-replay inspect REQUEST_ID` reports the capture status and verified body size and digest. Use its explicit body export option for private access to the bytes.
+
 ## Launch and state
 
 The executable serves with `--runtime-manifest <absolute-path>`. The launch manifest selects

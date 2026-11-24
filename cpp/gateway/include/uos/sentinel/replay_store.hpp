@@ -56,4 +56,12 @@ namespace uos::sentinel::replay_store {
   [[nodiscard]] rt::Task<replay_observation::SentinelReplayPersistResult> persistSentinelReplayFromEnvironment(
     const replay_model::AcceptedSentinelReplayInput& input, const replay_model::SentinelFailureObservation& observation,
     const std::optional<replay_model::SentinelClientFailureObservation>& clientObservation);
+
+  /** Request-only diagnostics for scoped authenticated failures. The caller admits the AI route
+   * and supplies a complete, bounded body. This writer never publishes an incident or claims
+   * upstream coverage. The encrypted envelope and request-ID status use the existing contract.
+   */
+  [[nodiscard]] rt::Task<replay_observation::SentinelReplayPersistResult> persistFailedRequestPayloadFromEnvironment(
+    const replay_model::AcceptedSentinelReplayInput& input, const replay_model::SentinelFailureObservation& observation,
+    const std::optional<replay_model::SentinelClientFailureObservation>& clientObservation = std::nullopt, bool deliveryInterrupted = false);
 }

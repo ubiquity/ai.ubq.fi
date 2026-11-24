@@ -680,13 +680,33 @@ namespace uos::sentinel::replay_store {
       co_return result;
     }
 
+    struct PersistencePolicy {
+      bool requestOnly = false;
+      bool deliveryInterrupted = false;
+
+      bool eligible(const SentinelFailureObservation& observation, const SentinelClientFailureObservation& clientObservation) const {
+        return requestOnly ? replay_observation::shouldPersistFailedRequestPayload(observation, clientObservation, deliveryInterrupted)
+                           : replay_observation::shouldPersistSentinelReplay(observation, clientObservation);
+      }
+    };
+
     rt::Task<SentinelReplayPersistResult> persistEncryptedSentinelReplayTask(AcceptedSentinelReplayInput input, SentinelFailureObservation observation,
                                                                             std::shared_ptr<PersistDependencies> dependencies,
-                                                                            SentinelClientFailureObservation clientObservation) {
+                                                                            SentinelClientFailureObservation clientObservation,
+                                                                            PersistencePolicy policy = {}) {
       // This frame's copy of the replay key (the caller's own buffer is the caller's to zero).
       auto keyCleanup = rt::scopeExit([dependencies] { zero(dependencies->keyBytes); });
-      if (!replay_observation::shouldPersistSentinelReplay(observation, clientObservation)) {
+      if (!policy.eligible(observation, clientObservation)) {
         throw rt::JsError("A successful request cannot be persisted as a sentinel replay");
+      }
+      if (policy.requestOnly) {
+        input.endpoint = input.endpoint.substr(0, input.endpoint.find('?'));
+        input.compatibility_headers.clear();
+        input.upstream.reset();
+        dependencies->incidentEvent.reset();
+        clientObservation.terminal_body_base64.reset();
+        clientObservation.terminal_body_truncated = false;
+        if (policy.deliveryInterrupted && !clientObservation.failure_kind) clientObservation.failure_kind = "delivery_interrupted";
       }
       if (static_cast<double>(dependencies->keyBytes.size()) != replay_model::REPLAY_KEY_BYTES) throw rt::JsError("Sentinel replay key must be 32 bytes");
       if (!replay_envelope::isCompatibilityHeaders(json::value(input.compatibility_headers))) {
@@ -721,8 +741,11 @@ namespace uos::sentinel::replay_store {
         .method = input.method,
         .observation = indexObservationOf(clientObservation),
       };
-      auto resolving = resolveIndexFingerprint(classification);
-      const std::optional<std::string> indexFingerprint = co_await std::move(resolving);
+      std::optional<std::string> indexFingerprint;
+      if (!policy.requestOnly) {
+        auto resolving = resolveIndexFingerprint(classification);
+        indexFingerprint = co_await std::move(resolving);
+      }
       const std::optional<rt::KvKey> indexKey =
         indexFingerprint ? std::optional<rt::KvKey>(rt::KvKey{SENTINEL_INCIDENT_INDEX_PREFIX, *indexFingerprint}) : std::nullopt;
       const std::string captureStatus = unavailable.empty() ? "ready" : "incomplete";
@@ -910,7 +933,8 @@ namespace uos::sentinel::replay_store {
     }
 
     rt::Task<SentinelReplayPersistResult> persistSentinelReplayFromEnvironmentTask(AcceptedSentinelReplayInput input, SentinelFailureObservation observation,
-                                                                                  SentinelClientFailureObservation resolvedClientObservation) {
+                                                                                  SentinelClientFailureObservation resolvedClientObservation,
+                                                                                  PersistencePolicy policy = {}) {
       std::optional<rt::Bytes> keyBytes;
       std::shared_ptr<rt::Kv> kv;
       std::optional<rt::KvEntry<SentinelIncidentFailureEvent>> incidentEvent;
@@ -919,13 +943,13 @@ namespace uos::sentinel::replay_store {
         if (keyBytes) zero(*keyBytes);
         replay_observation::zeroSentinelReplayInput(&input);
       });
-      if (!replay_observation::shouldPersistSentinelReplay(observation, resolvedClientObservation)) {
+      if (!policy.eligible(observation, resolvedClientObservation)) {
         throw rt::JsError("A successful request cannot be persisted as a sentinel replay");
       }
       auto opening = ::uos::kv::getKv();
       kv = co_await opening.wait();
       if (!kv) co_return SentinelReplayPersistResultDisabled{.reason = "kv_unavailable"};
-      if (replay_observation::shouldSignalSentinelIncident(observation, resolvedClientObservation)) {
+      if (!policy.requestOnly && replay_observation::shouldSignalSentinelIncident(observation, resolvedClientObservation)) {
         // The durable index observation is recorded BEFORE the key lookup and
         // encryption: even a missing key still leaves a discoverable incident
         // row with evidence_ref null. Unlike the transient event helper this
@@ -989,7 +1013,8 @@ namespace uos::sentinel::replay_store {
           .currentNow = [] { return rt::dateNow(); },
           .incidentEvent = incidentEvent,
         };
-        auto persisting = persistEncryptedSentinelReplay(input, observation, dependencies, resolvedClientObservation);
+        auto persisting = persistEncryptedSentinelReplayTask(input, observation, std::make_shared<PersistDependencies>(dependencies),
+                                                            resolvedClientObservation, policy);
         zero(dependencies.keyBytes);
         SentinelReplayPersistResult result = co_await std::move(persisting);
         if (const auto* incomplete = std::get_if<SentinelReplayPersistResultIncomplete>(&result)) {
@@ -1025,5 +1050,14 @@ namespace uos::sentinel::replay_store {
                                                                              const std::optional<SentinelClientFailureObservation>& clientObservation) {
     return persistSentinelReplayFromEnvironmentTask(
       input, observation, clientObservation ? *clientObservation : replay_observation::resolveSentinelClientFailureObservation(observation));
+  }
+
+  rt::Task<SentinelReplayPersistResult> persistFailedRequestPayloadFromEnvironment(const AcceptedSentinelReplayInput& input,
+                                                                                 const SentinelFailureObservation& observation,
+                                                                                 const std::optional<SentinelClientFailureObservation>& clientObservation,
+                                                                                 bool deliveryInterrupted) {
+    return persistSentinelReplayFromEnvironmentTask(
+      input, observation, clientObservation ? *clientObservation : replay_observation::resolveSentinelClientFailureObservation(observation),
+      PersistencePolicy{.requestOnly = true, .deliveryInterrupted = deliveryInterrupted});
   }
 }

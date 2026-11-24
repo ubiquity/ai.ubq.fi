@@ -60,6 +60,8 @@ namespace uos::admin::error_log {
     double latency_ms;
     std::optional<std::string> git_sha;
     std::optional<std::string> deno_revision;
+    /** Set only by a handler that verified authentication. Not part of the stored row. */
+    bool authenticated = false;
   };
 
   // `kvOverride?: Kv | null`: the overload without it is undefined (getKv); a null pointer is null.

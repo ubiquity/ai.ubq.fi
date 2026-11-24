@@ -36,6 +36,7 @@ namespace {
   using uos::runtime::http::ServeHandlerInfo;
   using uos::runtime::http::ServeHttpOptions;
   using uos::runtime::http::serveHttp;
+  using uos::runtime::http::snapshotBufferedRequestBody;
   using uos::runtime::http::trackRequestTask;
   using uos::runtime::http::WebSocketUpgrade;
   using uos::runtime::http_upgrade::UpgradeInfo;
@@ -74,6 +75,18 @@ namespace {
   rt::Task<void> shutdown(HttpServer server) {
     const rt::Promise<void> stopping = server.shutdown();
     co_await stopping.wait();
+  }
+
+  rt::Task<std::string> firstRawReply(const NetAddr& address, std::string request) {
+    const auto reply = rt::withResolvers<std::string>();
+    const auto socket = RawClient::connect(static_cast<int>(address.port));
+    socket->once("connect", [socket, request = std::move(request)](const std::string&) { socket->write(request); });
+    socket->once("data", [resolve = reply.resolve](const std::string& text) { resolve(text); });
+    socket->once("error", [reject = reply.reject](const std::string&) { reject(rt::makeReason(rt::JsError("fixture socket error"))); });
+    socket->once("close", [reject = reply.reject](const std::string&) { reject(rt::makeReason(rt::JsError("fixture socket closed before its reply"))); });
+    const auto response = co_await reply.promise.wait();
+    socket->destroy();
+    co_return response;
   }
 
   rt::ByteChunk bytes(std::string_view text) { return rt::encodeUtf8(text); }
@@ -713,4 +726,107 @@ ASYNC_TEST("HTTP unread POST refusal completes its response and server shutdown"
   EXPECT_EQ(receipt.signal.aborted(), false);
   auto stopping15_ = shutdown(server);
   co_await std::move(stopping15_);
+}
+
+ASYNC_TEST("HTTP snapshots only bounded body bytes already received, including chunked data") {
+  using uos::runtime::http::BufferedRequestBody;
+  std::vector<BufferedRequestBody> captures;
+  const auto server = serveHttp(loopbackOptions(), [&captures](rt::Request request, ServeHandlerInfo) -> rt::Task<rt::Response> {
+    captures.push_back(snapshotBufferedRequestBody(request, 8));
+    if (rt::URL(request.url()).pathname() == "/read") {
+      // The snapshot must leave the live decoder and application body intact.
+      auto reading = request.text();
+      const auto body = co_await std::move(reading);
+      EXPECT_EQ(body, "hello");
+    }
+    rt::ResponseInit init;
+    init.status = 429;
+    co_return rt::Response(nullptr, std::move(init));
+  });
+  const auto address = co_await server.ready.wait();
+  struct Case {
+    std::string_view target;
+    std::string_view framingAndBody;
+    std::optional<std::string_view> complete;
+    std::optional<std::string_view> prefix;
+    std::optional<std::string_view> omission;
+  };
+  const Case cases[]{
+    {"/read", "Content-Length: 5\r\n\r\nhello", "hello", {}, {}},
+    {"/refuse", "Content-Length: 7\r\n\r\nabc", {}, "abc", "body_partial"},
+    {"/refuse", "Content-Length: 7\r\n\r\n", {}, {}, "body_unread"},
+    {"/refuse", "Content-Length: 0\r\n\r\n", "", {}, {}},
+    {"/refuse", "Content-Length: 9\r\n\r\nabcdefghi", {}, {}, "body_over_limit"},
+    {"/read", "Transfer-Encoding: chunked\r\n\r\n2\r\nhe\r\n3\r\nllo\r\n0\r\nX-Trailer: marker\r\n\r\n"
+              "GET /next HTTP/1.1\r\nHost: localhost\r\n\r\n", "hello", {}, {}},
+    {"/refuse", "Transfer-Encoding: chunked\r\n\r\n7\r\nabc", {}, "abc", "body_partial"},
+    {"/refuse", "Transfer-Encoding: chunked\r\n\r\n9\r\nabcdefghi\r\n0\r\n\r\n", {}, {}, "body_over_limit"},
+  };
+  const auto text = [](const std::shared_ptr<rt::Bytes>& value) -> std::optional<std::string> {
+    if (!value) return std::nullopt;
+    return std::string(value->begin(), value->end());
+  };
+  for (const auto& item : cases) {
+    auto request = "POST " + std::string(item.target) + " HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n" +
+                   std::string(item.framingAndBody);
+    auto reply = firstRawReply(address, std::move(request));
+    const auto wire = co_await std::move(reply);
+    EXPECT(wire.starts_with("HTTP/1.1 429 "));
+    ASSERT(!captures.empty());
+    const auto& snapshot = captures.back();
+    EXPECT_EQ(text(snapshot.bytes), item.complete);
+    EXPECT_EQ(text(snapshot.receivedPrefix), item.prefix);
+    EXPECT_EQ(snapshot.omission, item.omission);
+  }
+  EXPECT_EQ(captures.size(), std::size(cases));
+  auto stopping = shutdown(server);
+  co_await std::move(stopping);
+}
+
+ASYNC_TEST("HTTP reports fixed refusal metadata before dispatch and preserves its wire status") {
+  using uos::runtime::http::TransportRequestRejection;
+  std::vector<TransportRequestRejection> rejected;
+  auto options = loopbackOptions();
+  options.onTransportRejection = [&rejected](const TransportRequestRejection& event) { rejected.push_back(event); };
+  int dispatched = 0;
+  const auto server = serveHttp(options, [&dispatched](rt::Request, ServeHandlerInfo) -> rt::Task<rt::Response> {
+    ++dispatched;
+    rt::ResponseInit init;
+    init.status = 429;
+    co_return rt::Response(nullptr, std::move(init));
+  });
+  const auto address = co_await server.ready.wait();
+  struct Case {
+    std::string wire;
+    int status;
+    std::string_view reason;
+    std::string_view omission;
+  };
+  const Case cases[]{
+    {"GET * HTTP/1.1\r\nHost: localhost\r\n\r\n", 400, "transport_invalid_head", "body_unread"},
+    {"POST /fixture?opaque=marker HTTP/1.1\r\nHost: localhost\r\nContent-Length: " +
+       std::to_string(rt::limits::kHttpBodyBytes + 1) + "\r\n\r\n", 413, "transport_body_limit", "body_over_limit"},
+    {"GET /fixture HTTP/1.1\r\nHost: localhost\r\nX-Fixture: " +
+       std::string(17000, 'x') + "\r\n\r\n", 431, "transport_header_limit", "body_unread"},
+  };
+  for (const auto& item : cases) {
+    auto reply = firstRawReply(address, item.wire);
+    const auto wire = co_await std::move(reply);
+    EXPECT(wire.starts_with("HTTP/1.1 " + std::to_string(item.status) + " "));
+    ASSERT(!rejected.empty());
+    const auto& record = rejected.back();
+    EXPECT_EQ(record.status, item.status);
+    EXPECT_EQ(record.reason, item.reason);
+    EXPECT_EQ(record.omission, item.omission);
+    EXPECT_EQ(record.requestId.size(), std::size_t{36});
+  }
+  EXPECT_EQ(dispatched, 0);
+  EXPECT_EQ(rejected.size(), std::size(cases));
+  auto reply = firstRawReply(address, "GET /fixture HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+  const auto wire = co_await std::move(reply);
+  EXPECT(wire.starts_with("HTTP/1.1 429 "));
+  EXPECT_EQ(dispatched, 1);
+  EXPECT_EQ(rejected.size(), std::size(cases));
+  auto stopping = shutdown(server);
+  co_await std::move(stopping);
 }

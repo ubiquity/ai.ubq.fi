@@ -594,7 +594,7 @@ namespace uos::sentinel::replay_observation {
     });
     request::observeRawBodyOnce(
       req, [candidate](std::shared_ptr<rt::Bytes> bytes) { candidate->body = std::move(bytes); },
-      [candidate](const std::string& reason) { candidate->body_omitted_reason = reason; });
+      [candidate](const std::string& reason) { candidate->body_omitted_reason = reason; }, request::RawBodyStage::received);
     return candidate;
   }
 
@@ -614,6 +614,7 @@ namespace uos::sentinel::replay_observation {
       .request_id = candidate->request_id,
       .git_sha = candidate->git_sha,
       .deno_revision = candidate->deno_revision,
+      .bodyStatus = candidate->body_omitted_reason,
     };
   }
 
@@ -638,6 +639,7 @@ namespace uos::sentinel::replay_observation {
       .git_sha = input.git_sha,
       .deno_revision = input.deno_revision,
       .upstream = std::move(upstream),
+      .bodyStatus = input.bodyStatus,
     };
   }
 
@@ -811,6 +813,14 @@ namespace uos::sentinel::replay_observation {
   bool shouldPersistSentinelReplay(const SentinelFailureObservation& observation, const SentinelClientFailureObservation& clientObservation) {
     if (observation.terminal_type == "cancelled") return false;
     return isPersistableSentinelFailure(persistableView(observation)) || isPersistableSentinelFailure(persistableView(clientObservation));
+  }
+
+  bool shouldPersistFailedRequestPayload(const SentinelFailureObservation& observation,
+                                         const SentinelClientFailureObservation& clientObservation, bool deliveryInterrupted) {
+    return deliveryInterrupted || observation.status >= 400 || clientObservation.status >= 400 ||
+           observation.terminal_type == "response.incomplete" || clientObservation.terminal_type == "response.incomplete" ||
+           observation.terminal_type == "cancelled" || clientObservation.terminal_type == "cancelled" ||
+           shouldPersistSentinelReplay(observation, clientObservation);
   }
 
   bool shouldSignalSentinelIncident(const SentinelFailureObservation& observation, const SentinelClientFailureObservation& clientObservation) {

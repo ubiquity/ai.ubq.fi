@@ -1,5 +1,6 @@
 #include "uos/runtime/http.hpp"
 
+#include "uos/rt/crypto.hpp"
 #include "uos/rt/date.hpp"
 #include "uos/rt/error.hpp"
 #include "uos/rt/json.hpp"
@@ -28,6 +29,18 @@
 #include <utility>
 
 namespace uos::runtime::http {
+  namespace {
+    void reportRejection(const std::function<void(const TransportRequestRejection&)>& observer, std::optional<int> status,
+                         std::string_view reason, std::string_view omission) noexcept {
+      if (!observer) return;
+      try {
+        observer({rt::crypto::randomUUID(), status, reason, omission});
+      } catch (...) {
+        // Observability cannot change rejection or socket behavior.
+      }
+    }
+  }
+
   namespace node_http {
     namespace asio = boost::asio;
     namespace ws = rt::ws;
@@ -311,6 +324,7 @@ namespace uos::runtime::http {
       bool closeEmitted = false;
       bool referenced = true;
       bool applicationChatBodyRejection = false;
+      std::function<void(const TransportRequestRejection&)> onTransportRejection;
       // The event loop's reference to a listening server (released by close()).
       std::shared_ptr<Server> keepAlive;
       rt::OrderedMap<const ConnectionState*, std::shared_ptr<ConnectionState>> connections;
@@ -491,6 +505,31 @@ namespace uos::runtime::http {
         return consumed;
       }
 
+      BufferedRequestBody snapshotChunked(std::string_view input, std::size_t limit) const {
+        if (input.empty()) return {.omission = "body_unread"};
+        // Only a parser paused at the untouched body boundary can be forked.
+        // Rebind its callback context and stop at the first message end.
+        RequestParser decoder;
+        decoder.wire = wire;
+        decoder.wire.data = &decoder;
+        decoder.bodyBytesRemaining = std::min(bodyBytesRemaining, limit);
+        auto bytes = std::make_shared<rt::Bytes>();
+        bytes->reserve(std::min(input.size(), limit));
+        while (!input.empty()) {
+          std::string_view chunk;
+          const auto consumed = decoder.decodeChunked(input, chunk);
+          if (!consumed) return {.omission = decoder.bodyTooLarge ? "body_over_limit" : "body_partial"};
+          if (!chunk.empty()) {
+            const auto* first = reinterpret_cast<const std::uint8_t*>(chunk.data());
+            bytes->insert(bytes->end(), first, first + chunk.size());
+          }
+          if (decoder.chunkPart == ChunkPart::done) return {.bytes = std::move(bytes)};
+          if (*consumed == 0) break;
+          input.remove_prefix(*consumed);
+        }
+        return {.omission = "body_partial", .receivedPrefix = bytes->empty() ? nullptr : std::move(bytes)};
+      }
+
       llhttp_t wire;
       Span target;
       std::array<Field, MAX_HEADER_FIELDS> fields;
@@ -547,6 +586,7 @@ namespace uos::runtime::http {
       std::uint64_t remaining = 0;
       RequestParser parser;
       bool bodyComplete = false;
+      bool chunkDecodingStarted = false;
       bool flowing = false;
       bool endScheduled = false;
       bool endEmitted = false;
@@ -622,6 +662,9 @@ namespace uos::runtime::http {
       void onEnd() {
         readEnded = true;
         upgrade.readable = false;
+        if (phase == Phase::head && server && !input.empty()) {
+          reportRejection(server->impl().onTransportRejection, std::nullopt, "transport_truncated_head", "body_unread");
+        }
         if (phase == Phase::lingering || phase == Phase::head) {
           destroy(nullptr);
           return;
@@ -673,6 +716,14 @@ namespace uos::runtime::http {
         closeGracefully();
       }
 
+      void refuseHead(std::string_view head, int status) {
+        refuse(head);
+        if (!server) return;
+        if (status == 413) reportRejection(server->impl().onTransportRejection, status, "transport_body_limit", "body_over_limit");
+        else reportRejection(server->impl().onTransportRejection, status,
+                             status == 431 ? "transport_header_limit" : "transport_invalid_head", "body_unread");
+      }
+
       // Parses one request head from `input`; true when a request was dispatched and the
       // remaining input should be processed in the new phase.
       bool parseHead() {
@@ -681,7 +732,8 @@ namespace uos::runtime::http {
         const RequestParser::Head parsed = parser.parseHead(text, consumed);
         if (parsed == RequestParser::Head::incomplete) return false;
         if (parsed != RequestParser::Head::complete) {
-          refuse(parsed == RequestParser::Head::overflow ? HEADER_OVERFLOW : BAD_REQUEST);
+          if (parsed == RequestParser::Head::overflow) refuseHead(HEADER_OVERFLOW, 431);
+          else refuseHead(BAD_REQUEST, 400);
           return false;
         }
 
@@ -701,12 +753,12 @@ namespace uos::runtime::http {
         const std::size_t targetStart = text.size() - requestLine.size() + method.size() + 1;
         if (target.empty() || target == "*" || parser.target.offset != targetStart || text[targetStart - 1] != ' ' ||
             !text.substr(parser.target.offset + target.size()).starts_with(suffix)) {
-          refuse(BAD_REQUEST);
+          refuseHead(BAD_REQUEST, 400);
           return false;
         }
         const auto targetPath = target.substr(0, target.find('#'));
         if (const auto query = targetPath.find('?'); query != std::string_view::npos && !rt::detail::boundedUrlQuery(targetPath.substr(query))) {
-          refuse(BAD_REQUEST);
+          refuseHead(BAD_REQUEST, 400);
           return false;
         }
 
@@ -714,7 +766,7 @@ namespace uos::runtime::http {
         // non-final or absent chunked coding cannot delimit a request body.
         const bool chunked = (parser.wire.flags & F_CHUNKED) != 0;
         if ((parser.wire.flags & F_TRANSFER_ENCODING) && !chunked) {
-          refuse(BAD_REQUEST);
+          refuseHead(BAD_REQUEST, 400);
           return false;
         }
         bool hasHost = false;
@@ -730,7 +782,7 @@ namespace uos::runtime::http {
           value = last == std::string_view::npos ? std::string_view{} : value.substr(0, last + 1);
           const std::string lower = lowerAscii(name);
           if (lower == "content-length" && value.size() > MAX_LENGTH_DIGITS) {
-            refuse(BAD_REQUEST);
+            refuseHead(BAD_REQUEST, 400);
             return false;
           }
           if (lower == "content-type") {
@@ -746,7 +798,7 @@ namespace uos::runtime::http {
           rawHeaders.push_back(rt::isAscii(value) ? std::string(value) : latin1(value));
         }
         if (http11 && !hasHost) {
-          refuse("HTTP/1.1 400 Bad Request\r\nConnection: close\r\nDate: " + utcDate() + "\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n");
+          refuseHead("HTTP/1.1 400 Bad Request\r\nConnection: close\r\nDate: " + utcDate() + "\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n", 400);
           return false;
         }
         keepAlive = http11 && llhttp_should_keep_alive(&parser.wire);
@@ -757,7 +809,7 @@ namespace uos::runtime::http {
         const bool oversized = remaining > parser.bodyBytesRemaining;
         if (oversized) {
           if (chunked || isUpgrade || !server || !server->impl().applicationChatBodyRejection || !isChatPost(method, target)) {
-            refuse(BODY_OVERFLOW);
+            refuseHead(BODY_OVERFLOW, 413);
             return false;
           }
           // Dispatch only the head. The application rejects Content-Length at the
@@ -796,6 +848,7 @@ namespace uos::runtime::http {
         state.http10 = !http11;
         response->shouldKeepAlive = keepAlive;
         bodyComplete = oversized || framing == Framing::none;
+        chunkDecodingStarted = false;
         incoming->complete_ = !oversized && bodyComplete;
         flowing = false;
         endScheduled = false;
@@ -813,6 +866,25 @@ namespace uos::runtime::http {
       }
 
       // ---- request bodies -------------------------------------------------------------
+
+      BufferedRequestBody snapshotBody(const IncomingMessage& incoming, std::size_t limit) const {
+        if (request.get() != &incoming || dumping || destroyed) {
+          return {.omission = incoming.complete() ? "body_unread" : "body_partial"};
+        }
+        if (framing == Framing::none) return {.bytes = std::make_shared<rt::Bytes>()};
+        if (framing == Framing::chunked) {
+          if (chunkDecodingStarted) return {.omission = "body_partial"};
+          return parser.snapshotChunked({reinterpret_cast<const char*>(input.data()), input.size()}, limit);
+        }
+        const auto length = parser.wire.content_length;
+        if (length > limit || length > parser.bodyBytesRemaining) return {.omission = "body_over_limit"};
+        if (remaining != length) return {.omission = "body_partial"};
+        if (input.empty()) return {.omission = "body_unread"};
+        const std::size_t available = static_cast<std::size_t>(std::min<std::uint64_t>(length, input.size()));
+        auto bytes = std::make_shared<rt::Bytes>(input.begin(), input.begin() + static_cast<std::ptrdiff_t>(available));
+        if (available == length) return {.bytes = std::move(bytes)};
+        return {.omission = "body_partial", .receivedPrefix = std::move(bytes)};
+      }
 
       // Decodes and delivers buffered body bytes while the message flows (or is being
       // discarded after its response).
@@ -843,6 +915,7 @@ namespace uos::runtime::http {
 
       // One step of the chunked decoder over the existing connection buffer.
       std::optional<bool> decodeChunked(rt::ByteChunk& chunk) {
+        chunkDecodingStarted = true;
         const std::string_view text(reinterpret_cast<const char*>(input.data()), input.size());
         std::string_view payload;
         const auto consumed = parser.decodeChunked(text, payload);
@@ -1681,7 +1754,11 @@ namespace uos::runtime::http {
     rt::Reason interrupted() { return rt::makeReason(rt::JsError("The client disconnected before its response was sent")); }
     // These external states can change during an awaited stream read.
     bool responseInterrupted(const ServerResponse& outgoing, const rt::AbortSignal& signal) { return signal.aborted() || outgoing.destroyed(); }
-    rt::WeakMap<rt::Request, http_body::IncomingBody> requestBodies;
+    struct RequestBodyState {
+      http_body::IncomingBody body;
+      std::weak_ptr<IncomingMessage> incoming;
+    };
+    rt::WeakMap<rt::Request, RequestBodyState> requestBodies;
 
     const rt::Regex EVENT_STREAM("^text\\/event-stream(?:\\s*;|$)", "i");
 
@@ -1724,7 +1801,7 @@ namespace uos::runtime::http {
         // `incoming.url ?? "/"`: a server request always has its target.
         const rt::URL url(incoming->url, "http://" + host);
         rt::Request request(url, std::move(init));
-        if (body) requestBodies.set(request, *body);
+        if (body) requestBodies.set(request, {*body, incoming});
         return request;
       } catch (...) {
         if (body) body->dispose();
@@ -1745,12 +1822,12 @@ namespace uos::runtime::http {
     void prepareResponseHeaders(const rt::Request& request, const rt::Response& response, ServerResponse& outgoing) {
       const bool earlyHeaders = http_early_sse::earlySseHeadersCommitted(request);
       if (!earlyHeaders) responseHeaders(response, outgoing);
-      const http_body::IncomingBody* inputBody = requestBodies.find(request);
-      if (inputBody && (inputBody->cancelled() || !inputBody->consumed())) {
+      const RequestBodyState* input = requestBodies.find(request);
+      if (input && (input->body.cancelled() || !input->body.consumed())) {
         // Refusals can return without reading input, including after asynchronous
         // authentication/admission. Discard it before handoff and close only after
         // the response is written; an unread paused input otherwise holds shutdown.
-        inputBody->dispose();
+        input->body.dispose();
         outgoing.shouldKeepAlive = false;
         if (!earlyHeaders) outgoing.setHeader("connection", "close");
       }
@@ -1797,8 +1874,8 @@ namespace uos::runtime::http {
       const std::function<void()> unregister = http_early_sse::registerEarlySseHeaders(request, [readiness, weakOutgoing, signal, request](const http_early_sse::EarlySseHeaders& value) {
         const rt::Headers& headers = value.headers;
         const std::shared_ptr<ServerResponse> target = weakOutgoing.lock();
-        const http_body::IncomingBody* input = requestBodies.find(request);
-        if (!readiness->pending || !target || responseInterrupted(*target, signal) || target->headersSent() || input == nullptr || !input->consumed()) return false;
+        const RequestBodyState* input = requestBodies.find(request);
+        if (!readiness->pending || !target || responseInterrupted(*target, signal) || target->headersSent() || input == nullptr || !input->body.consumed()) return false;
         if (!EVENT_STREAM.test(headers.get("content-type").value_or(""))) return false;
         for (const char* name : {"content-length", "content-encoding", "transfer-encoding"})
           if (headers.has(name)) return false;
@@ -1999,12 +2076,13 @@ namespace uos::runtime::http {
           if (isAdminRequest(request)) outgoing->setHeader("cache-control", "no-store");
           outgoing->setHeader("content-type", "text/plain; charset=utf-8");
           outgoing->end("Internal Server Error");
+          reportRejection(state->options.onTransportRejection, 500, "transport_handler_error", "body_unread");
         }
       }
       const rt::Promise<void> delivered = completed.catch_(rt::ignoreRejection);
       co_await delivered.wait();
       if (request) {
-        if (const http_body::IncomingBody* body = requestBodies.find(*request)) body->dispose();
+        if (const RequestBodyState* body = requestBodies.find(*request)) body->body.dispose();
         requestBodies.delete_(*request);
       }
       if (headerReadiness) headerReadiness->remove();
@@ -2062,6 +2140,15 @@ namespace uos::runtime::http {
     }
   }
 
+  BufferedRequestBody snapshotBufferedRequestBody(const rt::Request& request, std::size_t limit) {
+    const auto* state = requestBodies.find(request);
+    if (state) {
+      const auto incoming = state->incoming.lock();
+      if (incoming) return incoming->connection()->snapshotBody(*incoming, limit);
+    }
+    return {.omission = "body_unread"};
+  }
+
   HttpServer serveHttp(ServeHandler handler) { return serveHttp(ServeHttpOptions{}, std::move(handler)); }
 
   HttpServer serveHttp(ServeHttpOptions options, ServeHandler handler) {
@@ -2087,6 +2174,7 @@ namespace uos::runtime::http {
     // after its "close" event.
     state->server = node_http::createServer([state](std::shared_ptr<IncomingMessage> incoming, std::shared_ptr<ServerResponse> outgoing) { onRequest(state, incoming, outgoing); });
     state->server->impl().applicationChatBodyRejection = state->options.applicationChatBodyRejection;
+    state->server->impl().onTransportRejection = state->options.onTransportRejection;
     // Inference has application-owned deadlines. A quiet SSE or pending handler
     // must not inherit Bun.serve's ten-second idle timeout through node:http.
     state->server->timeout = 0;

@@ -107,6 +107,8 @@ namespace uos::sentinel::replay_model {
     std::optional<upstream_capture::SentinelUpstreamTrace> upstream{};
     /** Request-owned passive upstream recorder carried until the snapshot handoff. */
     std::optional<upstream_capture::SentinelUpstreamRecorder> upstreamRecorder{};
+    /** Received bytes can exist without a parsed request. This status is never serialized. */
+    std::optional<std::string> bodyStatus{};
   };
 
   /** Why a body the gateway accepted was not carried into a capture. */

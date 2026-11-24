@@ -365,3 +365,38 @@ ASYNC_TEST("readJsonBody returns the parsed value or null") {
   json::array outcome{parsed, broken, tooLarge, fits};
   EXPECT(same(outcome, R"([{"v":1},null,null,"x"])"));
 }
+
+ASYNC_TEST("received-body observation retains exact bytes for malformed and empty requests") {
+  const std::vector<std::pair<std::string, std::string>> cases{{"{bad", "invalid"}, {"   ", "invalid"}, {"", "empty"}};
+  for (const auto& [body, kind] : cases) {
+    const rt::Request req = post(rt::BodyInit(body));
+    std::shared_ptr<rt::Bytes> captured;
+    std::optional<std::string> status;
+    observeRawBodyOnce(req, [&captured](std::shared_ptr<rt::Bytes> bytes) { captured = std::move(bytes); },
+      [&status](const std::string& reason) { status = reason; }, request::RawBodyStage::received);
+    auto result = co_await readJsonBodyWithLimit(req, 1024);
+    const auto* error = std::get_if<request::JsonBodyReadResultNotOk>(&result);
+    ASSERT(error);
+    EXPECT_EQ(error->kind, kind);
+    ASSERT(captured);
+    EXPECT_EQ(*captured, bytesOf(body));
+    EXPECT_EQ(status, std::optional<std::string>(body.empty() ? "body_empty" : "body_invalid"));
+  }
+}
+
+ASYNC_TEST("received-body observation distinguishes partial and over-limit payloads") {
+  const auto observe = [](const rt::Request& req, std::optional<std::string>& status) {
+    observeRawBodyOnce(req, [](std::shared_ptr<rt::Bytes>) { EXPECT(false); },
+      [&status](const std::string& reason) { status = reason; }, request::RawBodyStage::received);
+  };
+  const rt::Request partial = post(rt::BodyInit(streamOf({bytesOf("{")}, "interrupted")));
+  std::optional<std::string> status;
+  observe(partial, status);
+  (void)co_await readJsonBodyWithLimit(partial, 1024);
+  EXPECT_EQ(status, std::optional<std::string>("body_partial"));
+  const rt::Request oversized = post(rt::BodyInit(std::string("123")));
+  status.reset();
+  observe(oversized, status);
+  (void)co_await readJsonBodyWithLimit(oversized, 2);
+  EXPECT_EQ(status, std::optional<std::string>("body_over_limit"));
+}

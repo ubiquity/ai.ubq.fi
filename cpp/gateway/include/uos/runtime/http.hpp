@@ -334,6 +334,16 @@ namespace uos::runtime::http {
     rt::Promise<void> completed;
   };
 
+  struct BufferedRequestBody {
+    std::shared_ptr<rt::Bytes> bytes{};
+    std::optional<std::string_view> omission{};
+    std::shared_ptr<rt::Bytes> receivedPrefix{};
+  };
+
+  // For authenticated failure capture only. Observe bytes already accepted by
+  // the transport without pulling the live body stream or reading the socket.
+  BufferedRequestBody snapshotBufferedRequestBody(const rt::Request& request, std::size_t limit);
+
   // export type ServeHandler = (request: Request, info: ServeHandlerInfo) => Response | Promise<Response>;
   // A handler returning a Response at once returns an already completed Task.
   using ServeHandler = std::function<rt::Task<rt::Response>(rt::Request request, ServeHandlerInfo info)>;
@@ -348,6 +358,13 @@ namespace uos::runtime::http {
 
   // export type ServeHttpOptions = Readonly<{ hostname?; port?; onListen?; signal?; upgrade? }>;
   // An empty std::function is undefined.
+  struct TransportRequestRejection {
+    std::string requestId;
+    std::optional<int> status;
+    std::string_view reason;
+    std::string_view omission;
+  };
+
   struct ServeHttpOptions {
     std::optional<std::string> hostname{};
     std::optional<double> port{};
@@ -356,6 +373,9 @@ namespace uos::runtime::http {
     ServeUpgradeHandler upgrade{};
     // Let the gateway format its usual Chat rejection for a refused Content-Length.
     bool applicationChatBodyRejection = false;
+    // A fixed metadata event at a transport-owned rejection boundary. No
+    // request target, header, payload or client-supplied identifier is exposed.
+    std::function<void(const TransportRequestRejection&)> onTransportRejection{};
   };
 
   // export type HttpServer = Readonly<{ addr: NetAddr; ready; finished; shutdown; ref; unref }>;

@@ -84,6 +84,35 @@ ASYNC_TEST("EdgeRuntime replay registration returns failure responses before def
   EXPECT(fixture::zeroed(snapshot->body));
 }
 
+ASYNC_TEST("unauthenticated terminal status only reaches the metadata journal") {
+  fixture::Isolation isolation;
+  rt::console::Capture logs({rt::console::Method::info});
+  auto capture = fixture::acceptedInput();
+  auto options = fixture::terminalOptions("unauthenticated-terminal");
+  options.authenticatedRequest = false;
+  options.sentinelReplayInput = capture;
+  int attemptedWrites = 0;
+  options.recordAdminError = [&](auto) {
+    ++attemptedWrites;
+    return rt::Promise<void>::resolve();
+  };
+  options.recordUsageRollup = [&](auto) {
+    ++attemptedWrites;
+    return rt::Promise<bool>::resolve(false);
+  };
+  options.persistFailedRequestPayload = [&](auto, auto, auto, bool) {
+    ++attemptedWrites;
+    return rt::Promise<sentinel::replay_observation::SentinelReplayPersistResult>::resolve(
+      sentinel::replay_observation::SentinelReplayPersistResultDisabled{.reason = "kv_unavailable"});
+  };
+  auto wrapped = terminal::withTerminalRequestLog(fixture::jsonResponse("{}", 403), options);
+  auto response = co_await wrapped.wait();
+  EXPECT_EQ(response.status(), 403);
+  EXPECT_EQ(attemptedWrites, 0);
+  EXPECT(fixture::zeroed(capture.body));
+  EXPECT_EQ(fixture::terminalPayloads(logs).size(), std::size_t{1});
+}
+
 ASYNC_TEST("thrown inference errors propagate before deferred exception replay persistence settles") {
   fixture::Isolation isolation;
   const auto previous = handler::http::globalEdgeRuntime();

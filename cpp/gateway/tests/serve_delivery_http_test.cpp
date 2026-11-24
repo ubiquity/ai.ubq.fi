@@ -368,13 +368,15 @@ ASYNC_TEST("provider read failure persists client failure evidence once and pres
   EXPECT_EQ(rt::getString(events[0], "delivery_outcome"), std::optional<std::string>("interrupted"));
 }
 
-ASYNC_TEST("cancelled downstream drops capture ownership and preserves completed semantic settlement") {
+ASYNC_TEST("cancelled downstream retains a request-only payload and preserves completed semantic settlement") {
   fixture::Isolation isolation;
   rt::console::Capture logs({rt::console::Method::info});
   const auto capture = fixture::acceptedInput();
   const auto pending = rt::withResolvers<void>();
   int cancelled = 0;
   int persisted = 0;
+  int diagnostics = 0;
+  const auto original = *capture.body;
   std::vector<std::string> settlements;
   rt::UnderlyingSource<rt::ByteChunk> source;
   source.start = [](auto controller) { controller.enqueue(rt::encodeUtf8("data: ready\n\n")); };
@@ -389,6 +391,14 @@ ASYNC_TEST("cancelled downstream drops capture ownership and preserves completed
     sentinel::replay_observation::SentinelReplayPersistResult result = sentinel::replay_observation::SentinelReplayPersistResultDisabled{.reason = "kv_unavailable"};
     return rt::Promise<sentinel::replay_observation::SentinelReplayPersistResult>::resolve(result);
   };
+  options.persistFailedRequestPayload = [&](auto snapshot, auto, auto client, bool interrupted) {
+    ++diagnostics;
+    EXPECT(interrupted);
+    EXPECT_EQ(*snapshot.body, original);
+    EXPECT(!snapshot.upstream && !snapshot.upstreamRecorder && !client.terminal_body_base64);
+    return rt::Promise<sentinel::replay_observation::SentinelReplayPersistResult>::resolve(
+      sentinel::replay_observation::SentinelReplayPersistResultDisabled{.reason = "kv_unavailable"});
+  };
   auto wrapped = terminal::withTerminalRequestLog(response, options);
   auto output = co_await wrapped.wait();
   auto reader = output.body()->getReader();
@@ -400,11 +410,68 @@ ASYNC_TEST("cancelled downstream drops capture ownership and preserves completed
   co_await rt::sleep(1);
   EXPECT_EQ(cancelled, 1);
   EXPECT_EQ(persisted, 0);
+  EXPECT_EQ(diagnostics, 1);
   EXPECT_EQ(settlements, std::vector<std::string>{"completed"});
   EXPECT(fixture::zeroed(capture.body));
   const auto events = fixture::terminalPayloads(logs);
   ASSERT(events.size() == 1);
   EXPECT_EQ(rt::getString(events[0], "delivery_outcome"), std::optional<std::string>("interrupted"));
+}
+
+ASYNC_TEST("buffered upstream success retains bytes only if downstream delivery fails") {
+  fixture::Isolation isolation;
+  for (const bool interrupted : {false, true}) {
+    const auto capture = fixture::acceptedInput();
+    const auto original = *capture.body;
+    const auto delivery = rt::withResolvers<void>();
+    const auto recorded = rt::withResolvers<void>();
+    int diagnostics = 0;
+    int settlements = 0;
+    int adminRows = 0;
+    std::shared_ptr<rt::Bytes> persistedBytes;
+    auto options = fixture::terminalOptions("buffered-delivery");
+    options.sentinelReplayInput = capture;
+    options.deliveryCompleted = delivery.promise;
+    options.onTerminal = [&](auto outcome, auto) {
+      ++settlements;
+      EXPECT_EQ(outcome, "completed");
+      return rt::Promise<void>::resolve();
+    };
+    options.persistFailedRequestPayload = [&](auto snapshot, auto observation, auto client, bool deliveryFailed) {
+      ++diagnostics;
+      EXPECT(deliveryFailed);
+      EXPECT(observation.completed && client.completed);
+      EXPECT_EQ(*snapshot.body, original);
+      EXPECT(!snapshot.upstream && !client.terminal_body_base64);
+      persistedBytes = snapshot.body;
+      return rt::Promise<sentinel::replay_observation::SentinelReplayPersistResult>::resolve(
+        sentinel::replay_observation::SentinelReplayPersistResultDisabled{.reason = "kv_unavailable"});
+    };
+    options.recordAdminError = [&](auto row) {
+      if (row.failure_kind) {
+        ++adminRows;
+        EXPECT_EQ(row.status, 200);
+        EXPECT_EQ(row.failure_kind, std::optional<std::string>("downstream_delivery_interrupted"));
+      }
+      recorded.resolve();
+      return rt::Promise<void>::resolve();
+    };
+    auto wrapped = terminal::withTerminalRequestLog(
+      openai_telemetry::setResponseCompletionTelemetry(fixture::jsonResponse("{}"), true), options);
+    auto response = co_await wrapped.wait();
+    EXPECT_EQ(response.status(), 200);
+    EXPECT_EQ(*capture.body, original);
+    EXPECT_EQ(diagnostics, 0);
+    if (interrupted) delivery.reject(rt::makeReason(rt::JsError("fixture delivery interrupted")));
+    else delivery.resolve();
+    co_await recorded.promise.wait();
+    co_await rt::microtask();
+    EXPECT_EQ(settlements, 1);
+    EXPECT_EQ(diagnostics, interrupted ? 1 : 0);
+    EXPECT_EQ(adminRows, interrupted ? 1 : 0);
+    EXPECT(fixture::zeroed(capture.body));
+    if (interrupted) EXPECT(fixture::zeroed(persistedBytes));
+  }
 }
 
 ASYNC_TEST("accounting retries three times and a redacted failure never replaces the buffered response") {

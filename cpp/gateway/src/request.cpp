@@ -19,6 +19,7 @@ namespace uos::request {
     struct RawBodyObservation {
       RawBodyObserver observer;
       RawBodyRejection onRejected;
+      RawBodyStage stage;
     };
 
     rt::WeakMap<rt::Request, RawBodyObservation> rawBodyObservers;
@@ -39,14 +40,19 @@ namespace uos::request {
     }
   }
 
-  void observeRawBodyOnce(const rt::Request& req, RawBodyObserver observer, RawBodyRejection onRejected) {
-    rawBodyObservers.set(req, RawBodyObservation{std::move(observer), std::move(onRejected)});
+  void observeRawBodyOnce(const rt::Request& req, RawBodyObserver observer, RawBodyRejection onRejected, RawBodyStage stage) {
+    rawBodyObservers.set(req, RawBodyObservation{std::move(observer), std::move(onRejected), stage});
   }
 
-  bool captureRawBodyOnce(const rt::Request& req, const std::shared_ptr<rt::Bytes>& bytes) {
+  RawBodyRejection receivedRawBodyRejection(const rt::Request& req) {
+    const auto pending = rawBodyObservers.get(req);
+    return pending && pending->stage == RawBodyStage::received ? pending->onRejected : RawBodyRejection{};
+  }
+
+  bool captureRawBodyOnce(const rt::Request& req, const std::shared_ptr<rt::Bytes>& bytes, RawBodyStage stage) {
     const std::optional<RawBodyObservation> pending = rawBodyObservers.get(req);
+    if (!pending || (stage == RawBodyStage::received && pending->stage != stage)) return false;
     rawBodyObservers.delete_(req);
-    if (!pending) return false;
     if (bytes->size() > static_cast<std::size_t>(MAX_ACCEPTED_JSON_BODY_BYTES)) {
       // The route accepted this body for inference, but the fixed replay storage
       // contract cannot carry it: report the omission instead of staying silent.
@@ -90,7 +96,10 @@ namespace uos::request {
         throw RequestBodyTooLargeError();
       }
       std::optional<rt::ByteStream> body = req.body();
-      if (!body) co_return std::make_shared<rt::Bytes>();
+      if (!body) {
+        if (declared.value_or(0) > 0 && receivedRawBodyRejection(req)) rejectRawBodyOnce(req, "body_unavailable");
+        co_return std::make_shared<rt::Bytes>();
+      }
       const rt::ReadableStreamDefaultReader<rt::ByteChunk> reader = body->getReader();
       std::vector<rt::Bytes> chunks;
       double total = 0;
@@ -120,6 +129,9 @@ namespace uos::request {
         error = std::current_exception();
       }
       if (error) {
+        if (!isRequestBodyTooLargeError(error) && total > 0 && receivedRawBodyRejection(req)) {
+          try { (void)rejectRawBodyOnce(req, "body_partial"); } catch (...) {}
+        }
         for (rt::Bytes& chunk : chunks) std::fill(chunk.begin(), chunk.end(), std::uint8_t{0});
         rt::Promise<void> cancelled = rt::Promise<void>(reader.cancel(error)).catch_(rt::ignoreRejection);
         co_await cancelled.wait();
@@ -136,15 +148,18 @@ namespace uos::request {
     bool captured = false;
     std::optional<JsonBodyReadResult> result;
     rt::Reason error;
+    const auto reportReceivedStatus = receivedRawBodyRejection(req);
+    const bool alreadyUsed = req.bodyUsed();
     try {
       bytes = co_await readBoundedRequestBody(req, maxBodyBytes);
+      if (alreadyUsed && reportReceivedStatus) rejectRawBodyOnce(req, "body_unavailable");
+      else if (!alreadyUsed) captured = captureRawBodyOnce(req, bytes, RawBodyStage::received);
       if (bytes->empty()) {
+        if (captured && reportReceivedStatus) reportReceivedStatus("body_empty");
         result = JsonBodyReadResultNotOk{"empty"};
       } else {
         json::value parsed = rt::jsonParseWithLimit(rt::decodeUtf8(*bytes), maxDocumentBytes);
-        // Replay capture has its own fixed 32 MiB storage contract even when a
-        // route permits a larger JSON body for protocol-specific payloads.
-        captured = captureRawBodyOnce(req, bytes);
+        if (!captured) captured = captureRawBodyOnce(req, bytes);
         result = JsonBodyReadResultOk{std::move(parsed)};
       }
     } catch (...) {
@@ -156,6 +171,8 @@ namespace uos::request {
         // A body the route refused at its own fixed cap is an explicit omission
         // reason, not a silently empty capture for the request that failed here.
         if (isRequestBodyTooLargeError(error)) rejectRawBodyOnce(req, "body_over_limit");
+        else if (captured && reportReceivedStatus) reportReceivedStatus("body_invalid");
+        else if (reportReceivedStatus) rejectRawBodyOnce(req, "body_unavailable");
         result = JsonBodyReadResultNotOk{isRequestBodyTooLargeError(error) ? "too_large" : "invalid"};
       } catch (...) {
         escaped = std::current_exception();

@@ -182,6 +182,22 @@ namespace {
     EXPECT_EQ(kv->writes.size(), std::size_t{0});
   }
 
+  ASYNC_TEST("admin error ledger excludes anonymous gateway 401 but retains authenticated gateway 401") {
+    const auto kv = std::make_shared<SetOnlyKv>();
+    auto input = terminal([](AdminErrorInput& value) {
+      value.status = 401;
+      value.provider = "gateway";
+    });
+    auto refusing = recordAdminError(input, std::shared_ptr<rt::Kv>(kv));
+    co_await std::move(refusing);
+    EXPECT(kv->writes.empty());
+    input.authenticated = true;
+    auto recording = recordAdminError(input, std::shared_ptr<rt::Kv>(kv));
+    co_await std::move(recording);
+    ASSERT_EQ(kv->writes.size(), std::size_t{1});
+    EXPECT_EQ(kv->writes[0].value, withVersion(input));
+  }
+
   ASYNC_TEST("admin error history hides only affected cancellations and collects analytics in one scan") {
     std::vector<rt::KvValue> records{
       withVersion(terminal([](AdminErrorInput& value) {

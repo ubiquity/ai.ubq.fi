@@ -872,6 +872,109 @@ ASYNC_TEST("an omitted capture publishes a bounded status row and never replaces
   }
 }
 
+TEST("failed request diagnostics include known semantic and delivery failures") {
+  using sentinel::replay_observation::shouldPersistFailedRequestPayload;
+  using sentinel::replay_observation::shouldPersistSentinelReplay;
+  const SentinelFailureObservation success = successfulInternalObservation();
+  const SentinelClientFailureObservation delivered = successfulClientObservation();
+  EXPECT(!shouldPersistFailedRequestPayload(success, delivered));
+  EXPECT(shouldPersistFailedRequestPayload(success, delivered, true));
+  EXPECT(!shouldPersistSentinelReplay(success, delivered));
+
+  for (const std::string terminal : {"response.incomplete", "cancelled"}) {
+    SentinelFailureObservation failed = success;
+    failed.completed = false;
+    failed.terminal_type = terminal;
+    SentinelClientFailureObservation client = delivered;
+    client.completed = false;
+    client.terminal_type = terminal;
+    EXPECT(shouldPersistFailedRequestPayload(failed, client));
+    EXPECT(!shouldPersistSentinelReplay(failed, client));
+  }
+
+  SentinelFailureObservation httpError = success;
+  httpError.status = 429;
+  EXPECT(shouldPersistFailedRequestPayload(httpError, delivered));
+}
+
+ASYNC_TEST("request-only diagnostics authenticate malformed body bytes by original and duplicate request IDs") {
+  using sentinel::replay_read::listEncryptedSentinelReplaysByRequestId;
+  using sentinel::replay_store::persistFailedRequestPayloadFromEnvironment;
+  const rt::env::ScopedOverride environment({{"SENTINEL_REPLAY_KEY", rt::btoa(std::string(32, 'Z'))},
+      {"DENO_DEPLOY_ORG_SLUG", std::nullopt}, {"DENO_DEPLOY_APP_SLUG", std::nullopt}, {"DENO_TIMELINE", std::nullopt}});
+  const std::shared_ptr<rt::Kv> kv = openSentinelTestKv();
+  kvfacade::setKvForTest(kv);
+  const auto cleanup = rt::scopeExit([&kv] {
+    kvfacade::setKvForTest(nullptr);
+    closeKv(*kv);
+  });
+
+  const rt::Bytes original{'{', '"', 'x', '"', ':', 0xff};
+  SentinelFailureObservation failure = internalObservation();
+  failure.status = 400;
+  SentinelClientFailureObservation client = clientObservationWithBody("synthetic terminal body");
+  client.status = 400;
+  auto request = [&](std::string id) {
+    auto input = replayInput("", id);
+    input.endpoint = "/v1/responses?untrusted=synthetic";
+    input.body = std::make_shared<rt::Bytes>(original);
+    input.compatibility_headers = {{"authorization", "synthetic-only"}};
+    return input;
+  };
+
+  const auto firstInput = request("diagnostic-first");
+  auto firstWrite = persistFailedRequestPayloadFromEnvironment(firstInput, failure, client);
+  const auto first = co_await std::move(firstWrite);
+  ASSERT(std::holds_alternative<SentinelReplayPersistResultStored>(first));
+  EXPECT(zeroed(*firstInput.body));
+
+  const auto secondInput = request("diagnostic-second");
+  auto secondWrite = persistFailedRequestPayloadFromEnvironment(secondInput, failure, client);
+  const auto second = co_await std::move(secondWrite);
+  ASSERT(std::holds_alternative<SentinelReplayPersistResultDuplicate>(second));
+  EXPECT(zeroed(*secondInput.body));
+
+  auto firstRead = listEncryptedSentinelReplaysByRequestId(*kv, firstInput.request_id);
+  const auto firstExport = co_await std::move(firstRead);
+  auto secondRead = listEncryptedSentinelReplaysByRequestId(*kv, secondInput.request_id);
+  const auto secondExport = co_await std::move(secondRead);
+  EXPECT_EQ(secondExport.status.request_id, secondInput.request_id);
+  EXPECT_EQ(secondExport.status.status, std::string("incomplete"));
+  EXPECT(firstExport.status.manifest_key == secondExport.status.manifest_key);
+  EXPECT(firstExport.status.fingerprint == secondExport.status.fingerprint);
+  EXPECT(firstExport.status.expires_at_ms == secondExport.status.expires_at_ms);
+  ASSERT_EQ(secondExport.captures.size(), std::size_t{1});
+  EXPECT(firstExport.captures == secondExport.captures);
+
+  auto decrypting = decryptExportedSentinelReplay(secondExport.captures[0], KEY_BYTES);
+  const auto decrypted = co_await std::move(decrypting);
+  EXPECT_EQ(decrypted.request_id, firstInput.request_id);
+  EXPECT_EQ(decrypted.endpoint, std::string("/v1/responses"));
+  EXPECT(decrypted.compatibility_headers.empty());
+  EXPECT(decrypted.upstream.attempts.empty());
+  EXPECT(!decrypted.client_observation.terminal_body_base64);
+  EXPECT(decrypted.body && *decrypted.body == original);
+  EXPECT_EQ(decrypted.capture_status, std::optional<std::string>("incomplete"));
+
+  auto emptyInput = replayInput("", "diagnostic-empty");
+  emptyInput.bodyStatus = "body_empty";
+  auto emptyWrite = persistFailedRequestPayloadFromEnvironment(emptyInput, failure, client);
+  const auto empty = co_await std::move(emptyWrite);
+  ASSERT(std::holds_alternative<SentinelReplayPersistResultStored>(empty));
+  auto emptyRead = listEncryptedSentinelReplaysByRequestId(*kv, emptyInput.request_id);
+  const auto emptyExport = co_await std::move(emptyRead);
+  ASSERT_EQ(emptyExport.captures.size(), std::size_t{1});
+  auto decryptingEmpty = decryptExportedSentinelReplay(emptyExport.captures[0], KEY_BYTES);
+  const auto emptyDecoded = co_await std::move(decryptingEmpty);
+  ASSERT(emptyDecoded.body != nullptr);
+  EXPECT(emptyDecoded.body->empty());
+  EXPECT_EQ(emptyDecoded.body_bytes, std::optional<double>(0));
+
+  auto findingIncidents = listSentinelIncidentIndexRows(*kv, SentinelIncidentIndexListOptions{});
+  const auto incidents = co_await std::move(findingIncidents);
+  EXPECT(incidents.rows.empty());
+}
+
 ASYNC_TEST("environment persistence reports how it was disabled and zeroes the request body") {
   const rt::env::ScopedOverride environment = quietEnvironment();
   const SentinelFailureObservation failure = internalObservation();

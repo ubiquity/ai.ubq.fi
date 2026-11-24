@@ -8,6 +8,7 @@
 #include "uos/sentinel/replay_model.hpp"
 #include "uos/sentinel/replay_observation.hpp"
 
+#include <cstddef>
 #include <functional>
 #include <optional>
 #include <string>
@@ -43,12 +44,19 @@ namespace uos::handler::terminal_log {
     std::function<rt::Promise<sentinel::replay_observation::SentinelReplayPersistResult>(
       sentinel::replay_model::AcceptedSentinelReplayInput input, sentinel::replay_model::SentinelFailureObservation observation,
       sentinel::replay_model::SentinelClientFailureObservation clientObservation)> persistSentinelReplay{};
+    std::function<rt::Promise<sentinel::replay_observation::SentinelReplayPersistResult>(
+      sentinel::replay_model::AcceptedSentinelReplayInput input, sentinel::replay_model::SentinelFailureObservation observation,
+      sentinel::replay_model::SentinelClientFailureObservation clientObservation, bool deliveryInterrupted)> persistFailedRequestPayload{};
     std::optional<sentinel::replay_model::SentinelReplayCaptureOmissionReason> sentinelReplayOmission{};
+    bool sentinelReplayDiagnosticOnly = false;
+    std::optional<std::size_t> sentinelBodyObservedBytes{};
     std::function<rt::Promise<void>(std::string requestId, sentinel::replay_model::SentinelReplayCaptureOmissionReason reason, double nowMs)>
       recordSentinelReplayOmission{};
     std::function<rt::Promise<bool>(double observedAtMs)> recordSentinelDegradation{};
     std::function<rt::Promise<void>(admin::error_log::AdminErrorInput input)> recordAdminError{};
     http::SentinelBackgroundTaskRegistrar waitUntil{};
+    /** A trusted caller sets false for metadata-only unauthenticated requests. */
+    std::optional<bool> authenticatedRequest{};
   };
 
   // Plain entry functions start the source's synchronous setup at the call point.
@@ -61,6 +69,10 @@ namespace uos::handler::terminal_log {
     std::optional<http::RequestDeliveryInfo> delivery{};
     std::function<void()> onSettled{};
     std::optional<double> admissionWaitMs{};
+    std::optional<sentinel::replay_model::AcceptedSentinelReplayInput> sentinelReplayInput{};
+    std::optional<sentinel::replay_model::SentinelReplayCaptureOmissionReason> sentinelReplayOmission{};
+    std::optional<std::size_t> sentinelBodyObservedBytes{};
+    std::optional<bool> authenticatedRequest{};
   };
   rt::Promise<rt::Response> withRejectionTerminalLog(rt::Response response, std::optional<std::string> route, RejectionTerminalLogInput input);
 }

@@ -132,7 +132,7 @@ namespace uos::admin::error_log {
     rt::Task<void> recordAdminErrorTask(AdminErrorInput input, std::optional<std::shared_ptr<rt::Kv>> kvOverride) {
       // Authentication failures are not inference failures and must retain the
       // request path's zero-KV budget.
-      if (input.status == 401 && input.provider == "gateway") co_return;
+      if (!input.authenticated && input.status == 401 && input.provider == "gateway") co_return;
       const bool failed = input.status >= 400 || is(input.terminal_type, "error") || is(input.terminal_type, "eof") || is(input.terminal_type, "deadline") ||
                           is(input.terminal_type, "response.failed") || is(input.terminal_type, "response.incomplete") || input.failure_kind.has_value();
       if (!failed) co_return;

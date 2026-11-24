@@ -3,6 +3,7 @@
 #include "uos/handler/terminal_log.hpp"
 #include "uos/api_key_policy.hpp"
 #include "uos/auth/index.hpp"
+#include "uos/auth/local_development_key.hpp"
 #include "uos/chat/envelope.hpp"
 #include "uos/config.hpp"
 #include "uos/decisions/handlers.hpp"
@@ -14,12 +15,15 @@
 #include "uos/kernel/quota_reserve.hpp"
 #include "uos/models/catalog.hpp"
 #include "uos/openai_telemetry.hpp"
+#include "uos/request.hpp"
 #include "uos/responses_handler.hpp"
+#include "uos/runtime/http.hpp"
 #include "uos/rt/console.hpp"
 #include "uos/rt/clock.hpp"
 #include "uos/sentinel/replay_store.hpp"
 #include "uos/systemone/handlers.hpp"
 
+#include <algorithm>
 #include <memory>
 #include <utility>
 #include <variant>
@@ -38,6 +42,12 @@ namespace uos::handler::terminal_route {
     std::optional<std::string> apiKeyIdFrom(const AuthenticatedClientResult& authResult) {
       const auto* method = std::get_if<auth::index::ClientAuthMethodKvApiKey>(&authResult.method);
       return method ? std::optional(method->key_id) : std::nullopt;
+    }
+
+    bool verifiedClientAuthentication(const AuthenticatedClientResult& authResult) {
+      if (std::holds_alternative<auth::index::ClientAuthMethodDisabled>(authResult.method)) return false;
+      const auto* method = std::get_if<auth::index::ClientAuthMethodKvApiKey>(&authResult.method);
+      return !method || method->key_id != auth::local_development_key::LOCAL_DEVELOPMENT_KEY_ID;
     }
 
     std::optional<ApiKeyPolicy> apiKeyPolicyFrom(const AuthenticatedClientResult& authResult) {
@@ -60,32 +70,20 @@ namespace uos::handler::terminal_route {
       return delivery ? std::optional(delivery->downstreamSignal) : std::nullopt;
     }
 
-    rt::Task<AdmissionResult> reserveUsageAdmission(rt::Request req, ApiKeyPolicy policy, std::string requestId, std::string route,
-                                                   double startedAtMonotonicMs, std::optional<http::RequestDeliveryInfo> delivery,
-                                                   std::function<void()> onSettled, std::optional<double> admissionWaitMs) {
+    rt::Task<AdmissionResult> reserveUsageAdmission(ApiKeyPolicy policy, std::string requestId, std::string route) {
       api_key_policy::ReserveApiKeyUsageV3Options options;
       options.deferWhenFull = true;
       rt::Promise<api_key_policy::ApiKeyUsageReservationDecision> pending(api_key_policy::reserveApiKeyUsageV3(policy, requestId, route, options));
       auto admission = co_await pending.wait();
       if (auto* accepted = std::get_if<api_key_policy::ApiKeyUsageReservationDecisionOk>(&admission)) co_return accepted->reservation;
-      const auto response = ::uos::http::withCors(http::withRequestId(std::get<api_key_policy::ApiKeyUsageReservationDecisionNotOk>(admission).response, requestId), req);
-      terminal_log::RejectionTerminalLogInput log{.requestId = requestId, .admissionStage = "pre_admission", .startedAtMonotonicMs = startedAtMonotonicMs,
-                                                .delivery = delivery, .onSettled = onSettled, .admissionWaitMs = admissionWaitMs};
-      auto rejection = terminal_log::withRejectionTerminalLog(response, route, log);
-      auto result = co_await rejection.wait();
-      co_return result;
+      co_return std::get<api_key_policy::ApiKeyUsageReservationDecisionNotOk>(admission).response;
     }
 
     struct ReserveKernelAdmissionInput {
-      rt::Request req;
       KernelRepo repo;
       std::string route;
       std::string requestId;
-      double startedAtMonotonicMs;
-      std::optional<http::RequestDeliveryInfo> delivery;
       std::optional<ApiKeyUsageReservation> usageReservation;
-      std::function<void()> onSettled;
-      std::optional<double> admissionWaitMs;
     };
 
     rt::Task<KernelAdmissionResult> reserveKernelAdmission(ReserveKernelAdmissionInput input) {
@@ -103,12 +101,7 @@ namespace uos::handler::terminal_route {
         terminal_log::QuotaAccountingFailureInput warning{input.route, input.requestId};
         terminal_log::warnQuotaAccountingFailure(warning, std::current_exception());
       }
-      auto response = ::uos::http::withCors(http::withRequestId(std::get<kernel::quota_v2::KernelQuotaReservationDecisionNotOk>(admission).response, input.requestId), input.req);
-      terminal_log::RejectionTerminalLogInput log{.requestId = input.requestId, .admissionStage = "pre_admission", .startedAtMonotonicMs = input.startedAtMonotonicMs,
-                                                .delivery = input.delivery, .onSettled = input.onSettled, .admissionWaitMs = input.admissionWaitMs};
-      auto rejection = terminal_log::withRejectionTerminalLog(response, input.route, log);
-      auto result = co_await rejection.wait();
-      co_return result;
+      co_return std::get<kernel::quota_v2::KernelQuotaReservationDecisionNotOk>(admission).response;
     }
 
     bool truthyReason(const rt::Reason& reason) {
@@ -136,6 +129,7 @@ namespace uos::handler::terminal_route {
       double requestStartedAtMonotonicMs;
       std::optional<std::string> terminalRoute;
       AuthenticatedClientResult authResult;
+      bool authenticatedRequest;
       std::string idempotencyPrincipal;
       rt::AbortSignal callerSignal;
       std::optional<inference_admission::InferenceAdmissionGranted> processPermit;
@@ -145,6 +139,7 @@ namespace uos::handler::terminal_route {
       std::optional<ApiKeyUsageReservation> usageReservation;
       std::shared_ptr<sentinel::replay_model::SentinelReplayCaptureCandidate> sentinelReplayCandidate;
       std::optional<std::string> sentinelReplayOmission;
+      std::optional<std::size_t> sentinelBodyObservedBytes;
       std::optional<KernelRepo> kernelRepo;
       std::optional<KernelQuotaReservation> kernelReservation;
       std::optional<std::string> kernelQuotaRoute;
@@ -154,7 +149,8 @@ namespace uos::handler::terminal_route {
       TerminalState(rt::Request request, std::string requestPath, std::optional<http::RequestDeliveryInfo> info, std::string id,
                     double started, double monotonic, std::optional<std::string> route, AuthenticatedClientResult auth, std::string principal)
         : req(std::move(request)), path(std::move(requestPath)), delivery(std::move(info)), requestId(std::move(id)), requestStartedAtMs(started),
-          requestStartedAtMonotonicMs(monotonic), terminalRoute(std::move(route)), authResult(std::move(auth)), idempotencyPrincipal(std::move(principal)),
+          requestStartedAtMonotonicMs(monotonic), terminalRoute(std::move(route)), authResult(std::move(auth)),
+          authenticatedRequest(verifiedClientAuthentication(authResult)), idempotencyPrincipal(std::move(principal)),
           callerSignal(delivery ? delivery->downstreamSignal : req.signal()) {}
 
       rt::Response withCors(rt::Response response) const { return ::uos::http::withCors(response, req); }
@@ -192,18 +188,20 @@ namespace uos::handler::terminal_route {
         auto refusal = std::holds_alternative<inference_admission::InferenceAdmissionCallerAborted>(admitted)
           ? ::uos::http::openaiError(499, "Request was cancelled.", "request_cancelled", options)
           : admission::localOverloadResponse(std::get<inference_admission::InferenceAdmissionLocalOverload>(admitted).cause);
-        auto response = withCors(http::withRequestId(refusal, requestId));
-        terminal_log::RejectionTerminalLogInput log{.requestId = requestId, .admissionStage = "pre_admission",
-                                                  .startedAtMonotonicMs = requestStartedAtMonotonicMs, .delivery = delivery};
-        auto rejection = terminal_log::withRejectionTerminalLog(response, admissionRoute, log);
-        auto result = co_await rejection.wait();
-        co_return result;
+        auto rejection = logAuthenticatedRejection(std::move(refusal), "pre_admission");
+        co_return co_await std::move(rejection);
       }
-      rt::Task<void> recordPreCaptureRejection() {
-        sentinel::replay_observation::discardSentinelReplayCaptureCandidate(sentinelReplayCandidate);
-        if (!sentinelReplayOmission) sentinelReplayOmission = "rejected_before_capture";
-        rt::Promise<void> omissionTask(sentinel::replay_store::recordSentinelReplayOmissionFromEnvironment(requestId, *sentinelReplayOmission, rt::dateNow()));
-        if (!http::scheduleSentinelBackgroundTask(omissionTask, {})) co_await omissionTask.wait();
+      rt::Task<rt::Response> logAuthenticatedRejection(rt::Response refusal, terminal_log::TerminalAdmissionStage stage) {
+        auto response = withCors(http::withRequestId(refusal, requestId));
+        terminal_log::RejectionTerminalLogInput log{.requestId = requestId, .admissionStage = std::move(stage),
+          .startedAtMonotonicMs = requestStartedAtMonotonicMs, .delivery = delivery, .admissionWaitMs = admissionWaitMs};
+        if (processPermit) log.onSettled = onSettled();
+        log.sentinelReplayInput = takeSentinelReplayInput();
+        log.sentinelReplayOmission = std::move(sentinelReplayOmission);
+        log.sentinelBodyObservedBytes = sentinelBodyObservedBytes;
+        log.authenticatedRequest = authenticatedRequest;
+        auto result = terminal_log::withRejectionTerminalLog(std::move(response), terminalRoute, std::move(log));
+        co_return co_await result.wait();
       }
       rt::Task<std::optional<rt::Response>> reserveUsageForRequest() {
         if (!usagePolicy || !terminalRoute) co_return std::nullopt;
@@ -211,15 +209,13 @@ namespace uos::handler::terminal_route {
         auto policy = *usagePolicy;
         auto route = *terminalRoute;
         std::function<rt::Task<AdmissionResult>()> step = [self, policy, route] {
-          return reserveUsageAdmission(self->req, policy, self->requestId, route, self->requestStartedAtMonotonicMs,
-                                       self->delivery, self->onSettled(), self->admissionWaitMs);
+          return reserveUsageAdmission(policy, self->requestId, route);
         };
         rt::Promise<AdmissionResult> pending(releaseOnThrow<AdmissionResult>(step));
         auto admission = co_await pending.wait();
         if (auto* rejection = std::get_if<rt::Response>(&admission)) {
-          rt::Promise<void> recorded(recordPreCaptureRejection());
-          co_await recorded.wait();
-          co_return *rejection;
+          auto logged = logAuthenticatedRejection(std::move(*rejection), "pre_admission");
+          co_return co_await std::move(logged);
         }
         usageReservation = std::get<ApiKeyUsageReservation>(admission);
         usagePolicy = usageReservation->policy;
@@ -228,23 +224,37 @@ namespace uos::handler::terminal_route {
       rt::Task<std::optional<rt::Response>> reserveKernelForRequest() {
         if (!kernelRepo || !kernelQuotaRoute) co_return std::nullopt;
         auto self = shared_from_this();
-        ReserveKernelAdmissionInput input{req, *kernelRepo, *kernelQuotaRoute, requestId, requestStartedAtMonotonicMs, delivery,
-                                         usageReservation, onSettled(), admissionWaitMs};
+        ReserveKernelAdmissionInput input{*kernelRepo, *kernelQuotaRoute, requestId, usageReservation};
         std::function<rt::Task<KernelAdmissionResult>()> step = [input] { return reserveKernelAdmission(input); };
         rt::Promise<KernelAdmissionResult> pending(releaseOnThrow<KernelAdmissionResult>(step));
         auto admission = co_await pending.wait();
         if (auto* rejection = std::get_if<rt::Response>(&admission)) {
-          rt::Promise<void> recorded(recordPreCaptureRejection());
-          co_await recorded.wait();
-          co_return *rejection;
+          auto logged = logAuthenticatedRejection(std::move(*rejection), "pre_admission");
+          co_return co_await std::move(logged);
         }
         kernelReservation = std::get<KernelQuotaReservation>(admission);
         co_return std::nullopt;
       }
       std::optional<AcceptedSentinelReplayInput> takeSentinelReplayInput() {
+        request::discardRawBodyObserverOnce(req);
+        if (sentinelReplayCandidate && !sentinelReplayCandidate->body && !sentinelReplayCandidate->body_omitted_reason) {
+          auto buffered = runtime::http::snapshotBufferedRequestBody(req, static_cast<std::size_t>(request::MAX_ACCEPTED_JSON_BODY_BYTES));
+          if (buffered.bytes) {
+            sentinelReplayCandidate->body_omitted_reason = buffered.bytes->empty() ? "body_empty" : "body_unparsed";
+            sentinelReplayCandidate->body = std::move(buffered.bytes);
+          } else {
+            sentinelReplayCandidate->body_omitted_reason = std::string(buffered.omission.value_or("body_unread"));
+            if (buffered.receivedPrefix) {
+              sentinelBodyObservedBytes = buffered.receivedPrefix->size();
+              std::fill(buffered.receivedPrefix->begin(), buffered.receivedPrefix->end(), std::uint8_t{0});
+            }
+          }
+        }
         auto materialized = sentinel::replay_observation::materializeSentinelReplayInput(sentinelReplayCandidate);
-        auto omission = sentinelReplayCandidate ? sentinelReplayCandidate->body_omitted_reason : (terminalRoute ? std::optional<std::string>("non_post") : std::nullopt);
+        auto omission = sentinelReplayCandidate ? sentinelReplayCandidate->body_omitted_reason :
+          (authenticatedRequest && terminalRoute && req.method() != "POST" ? std::optional<std::string>("non_post") : std::nullopt);
         sentinel::replay_observation::discardSentinelReplayCaptureCandidate(sentinelReplayCandidate);
+        sentinelReplayCandidate.reset();
         if (!materialized) {
           if (sentinelUpstreamRecorder) sentinelUpstreamRecorder->dispose();
           if (omission && !sentinelReplayOmission) sentinelReplayOmission = omission;
@@ -252,6 +262,21 @@ namespace uos::handler::terminal_route {
         }
         if (sentinelUpstreamRecorder) materialized->upstreamRecorder = sentinelUpstreamRecorder;
         return materialized;
+      }
+      rt::Task<void> persistExceptionPayload(rt::Reason error) {
+        if (!sentinelReplayCandidate) co_return;
+        try {
+          auto captured = takeSentinelReplayInput();
+          if (captured) {
+            auto persisted = persistInferenceExceptionReplay(std::move(*captured), error);
+            co_await std::move(persisted);
+          } else if (sentinelReplayOmission) {
+            rt::Promise<void> omission(sentinel::replay_store::recordSentinelReplayOmissionFromEnvironment(requestId, *sentinelReplayOmission, rt::dateNow()));
+            if (!http::scheduleSentinelBackgroundTask(omission, {})) co_await omission.wait();
+          }
+        } catch (...) {
+          // Capture failure must not replace the original exception.
+        }
       }
       rt::Task<void> settleKernelQuota(std::string outcome, std::optional<std::string> reason) {
         if (!kernelReservation) co_return;
@@ -312,6 +337,8 @@ namespace uos::handler::terminal_route {
           input.sentinelReplayInput = sentinelReplayInput;
           input.admissionWaitMs = admissionWaitMs;
           input.sentinelReplayOmission = sentinelReplayOmission;
+          input.sentinelBodyObservedBytes = sentinelBodyObservedBytes;
+          input.authenticatedRequest = authenticatedRequest;
           auto pending = terminal_log::withTerminalRequestLog(withCors(http::withRequestId(decorated, requestId)), input);
           auto result = co_await pending.wait();
           co_return result;
@@ -347,14 +374,8 @@ namespace uos::handler::terminal_route {
         if (truthyReason(runError)) {
           rt::Promise<void> settled(bestEffortSettleKernelQuota("incomplete", "inference_exception"));
           co_await settled.wait();
-          auto sentinelReplayInput = takeSentinelReplayInput();
-          if (sentinelReplayInput) {
-            rt::Promise<void> persisted(persistInferenceExceptionReplay(*sentinelReplayInput, runError));
-            co_await persisted.wait();
-          } else if (sentinelReplayOmission) {
-            rt::Promise<void> omissionTask(sentinel::replay_store::recordSentinelReplayOmissionFromEnvironment(requestId, *sentinelReplayOmission, rt::dateNow()));
-            if (!http::scheduleSentinelBackgroundTask(omissionTask, {})) co_await omissionTask.wait();
-          }
+          auto persisted = persistExceptionPayload(runError);
+          co_await std::move(persisted);
           if (rt::isError(runError)) std::rethrow_exception(runError);
           throw rt::withCause(rt::JsError("Inference handler threw a non-Error value"), runError);
         }
@@ -499,12 +520,8 @@ namespace uos::handler::terminal_route {
         options.type = "server_error";
         options.param = std::optional<std::string>();
         auto refusal = ::uos::http::openaiError(499, "Request was cancelled.", "request_cancelled", options);
-        auto response = withCors(http::withRequestId(refusal, requestId));
-        terminal_log::RejectionTerminalLogInput log{.requestId = requestId, .admissionStage = "accepted",
-          .startedAtMonotonicMs = requestStartedAtMonotonicMs, .delivery = delivery, .onSettled = onSettled(), .admissionWaitMs = admissionWaitMs};
-        auto rejection = terminal_log::withRejectionTerminalLog(response, terminalRoute, log);
-        auto result = co_await rejection.wait();
-        co_return result;
+        auto rejection = logAuthenticatedRejection(std::move(refusal), "accepted");
+        co_return co_await std::move(rejection);
       }
     };
   }
@@ -524,7 +541,7 @@ namespace uos::handler::terminal_route {
       ? std::make_shared<decltype(options.persistSentinelReplay)>(std::move(options.persistSentinelReplay)) : nullptr;
     rt::Promise<sentinel::replay_observation::SentinelReplayPersistResult> persisted = persist
       ? (*persist)(replaySnapshot, observation)
-      : rt::Promise<sentinel::replay_observation::SentinelReplayPersistResult>(sentinel::replay_store::persistSentinelReplayFromEnvironment(replaySnapshot, observation));
+      : rt::Promise<sentinel::replay_observation::SentinelReplayPersistResult>(sentinel::replay_store::persistFailedRequestPayloadFromEnvironment(replaySnapshot, observation));
     auto persistence = persisted.then([](const sentinel::replay_observation::SentinelReplayPersistResult&) {}, [](rt::Reason) {}).then([replaySnapshot, persist] {
       (void)persist;
       sentinel::replay_observation::zeroSentinelReplayInput(&replaySnapshot);
@@ -541,57 +558,64 @@ namespace uos::handler::terminal_route {
       const auto response = ::uos::http::withCors(http::withRequestId(rejection->response, requestId), req);
       terminal_log::RejectionTerminalLogInput input{.requestId = requestId, .admissionStage = "pre_admission",
         .startedAtMonotonicMs = requestStartedAtMonotonicMs, .delivery = delivery};
+      input.authenticatedRequest = false;
       auto pending = terminal_log::withRejectionTerminalLog(response, terminalRoute, input);
       auto result = co_await pending.wait();
       co_return result;
     }
     auto authResult = std::get<AuthenticatedClientResult>(auth);
-    rt::Promise<std::string> principalPending(http::resolveIdempotencyPrincipal(authResult));
-    auto principal = co_await principalPending.wait();
-    auto state = std::make_shared<TerminalState>(req, path, delivery, requestId, requestStartedAtMs, requestStartedAtMonotonicMs, terminalRoute, authResult, principal);
-    if (terminalRoute && admission::ADMISSION_ROUTES.has(*terminalRoute)) state->admissionRoute = terminalRoute;
-    rt::Promise<std::optional<rt::Response>> admissionPending(state->acquireProcessPermit());
-    auto admissionRefusal = co_await admissionPending.wait();
-    if (admissionRefusal) co_return *admissionRefusal;
-    state->usagePolicy = apiKeyPolicyFrom(authResult);
-    std::function<rt::Task<std::shared_ptr<sentinel::replay_model::SentinelReplayCaptureCandidate>>()> capture = [state] {
-      return rt::fulfilledTask(state->terminalRoute ? sentinel::replay_observation::captureAcceptedSentinelReplayInput(state->req, state->requestId) : nullptr);
-    };
-    rt::Promise<std::shared_ptr<sentinel::replay_model::SentinelReplayCaptureCandidate>> captured(state->releaseOnThrow(capture));
-    state->sentinelReplayCandidate = co_await captured.wait();
-    rt::Promise<std::optional<rt::Response>> usagePending(state->reserveUsageForRequest());
-    auto usageRefusal = co_await usagePending.wait();
-    if (usageRefusal) co_return *usageRefusal;
-    std::function<rt::Task<std::optional<KernelRepo>>()> resolve = [state] { return resolveKernelRepo(state->req, state->authResult); };
-    rt::Promise<std::optional<KernelRepo>> repoPending(state->releaseOnThrow(resolve));
-    state->kernelRepo = co_await repoPending.wait();
-    state->kernelQuotaRoute = http::kernelQuotaRouteForRequest(req.method(), path);
-    rt::Promise<std::optional<rt::Response>> kernelPending(state->reserveKernelForRequest());
-    auto kernelRefusal = co_await kernelPending.wait();
-    if (kernelRefusal) co_return *kernelRefusal;
-    if (terminalRoute) state->sentinelUpstreamRecorder = sentinel::upstream_capture::createSentinelUpstreamRecorder();
-    state->usageContext.keyId = apiKeyIdFrom(authResult);
-    state->usageContext.kernelRepo = state->kernelRepo;
-    if (state->kernelRepo) state->usageContext.kernelOrg = openai_telemetry::UsageContext::KernelOrg{state->kernelRepo->owner};
-    state->usageContext.paidFallbackEnabled = state->usagePolicy && state->usagePolicy->paid_fallback_enabled;
-    state->usageContext.idempotencyPrincipal = principal;
-    state->usageContext.requestId = requestId;
-    state->usageContext.startedAtMs = requestStartedAtMs;
-    state->usageContext.startedAtMonotonicMs = requestStartedAtMonotonicMs;
-    state->usageContext.downstreamSignal = downstreamSignalFor(req, delivery, state->kernelReservation);
-    if (state->usageReservation) state->usageContext.beforeProviderDispatch = state->usageReservation->beforeProviderDispatch;
-    state->usageContext.sentinelUpstreamRecorder = state->sentinelUpstreamRecorder;
-    if (terminalRoute) {
-      json::object event{{"request_id", requestId}, {"route", *terminalRoute}, {"queue_wait_ms", state->admissionWaitMs.value_or(0)},
-        {"git_sha", config::runtimeGitSha()}, {"deno_revision", config::runtimeDeploymentId()}};
-      rt::console::info("[ai.ubq.fi] request_accepted", rt::jsonStringify(event));
+    auto state = std::make_shared<TerminalState>(req, path, delivery, requestId, requestStartedAtMs, requestStartedAtMonotonicMs, terminalRoute, authResult, std::string());
+    rt::Reason failure;
+    try {
+      if (terminalRoute && admission::ADMISSION_ROUTES.has(*terminalRoute)) state->admissionRoute = terminalRoute;
+      if (state->authenticatedRequest && state->terminalRoute)
+        state->sentinelReplayCandidate = sentinel::replay_observation::captureAcceptedSentinelReplayInput(state->req, state->requestId);
+      rt::Promise<std::string> principalPending(http::resolveIdempotencyPrincipal(authResult));
+      state->idempotencyPrincipal = co_await principalPending.wait();
+      rt::Promise<std::optional<rt::Response>> admissionPending(state->acquireProcessPermit());
+      auto admissionRefusal = co_await admissionPending.wait();
+      if (admissionRefusal) co_return *admissionRefusal;
+      state->usagePolicy = apiKeyPolicyFrom(authResult);
+      rt::Promise<std::optional<rt::Response>> usagePending(state->reserveUsageForRequest());
+      auto usageRefusal = co_await usagePending.wait();
+      if (usageRefusal) co_return *usageRefusal;
+      std::function<rt::Task<std::optional<KernelRepo>>()> resolve = [state] { return resolveKernelRepo(state->req, state->authResult); };
+      rt::Promise<std::optional<KernelRepo>> repoPending(state->releaseOnThrow(resolve));
+      state->kernelRepo = co_await repoPending.wait();
+      state->kernelQuotaRoute = http::kernelQuotaRouteForRequest(req.method(), path);
+      rt::Promise<std::optional<rt::Response>> kernelPending(state->reserveKernelForRequest());
+      auto kernelRefusal = co_await kernelPending.wait();
+      if (kernelRefusal) co_return *kernelRefusal;
+      if (terminalRoute) state->sentinelUpstreamRecorder = sentinel::upstream_capture::createSentinelUpstreamRecorder();
+      state->usageContext.keyId = apiKeyIdFrom(authResult);
+      state->usageContext.kernelRepo = state->kernelRepo;
+      if (state->kernelRepo) state->usageContext.kernelOrg = openai_telemetry::UsageContext::KernelOrg{state->kernelRepo->owner};
+      state->usageContext.paidFallbackEnabled = state->usagePolicy && state->usagePolicy->paid_fallback_enabled;
+      state->usageContext.idempotencyPrincipal = state->idempotencyPrincipal;
+      state->usageContext.requestId = requestId;
+      state->usageContext.startedAtMs = requestStartedAtMs;
+      state->usageContext.startedAtMonotonicMs = requestStartedAtMonotonicMs;
+      state->usageContext.downstreamSignal = downstreamSignalFor(req, delivery, state->kernelReservation);
+      if (state->usageReservation) state->usageContext.beforeProviderDispatch = state->usageReservation->beforeProviderDispatch;
+      state->usageContext.sentinelUpstreamRecorder = state->sentinelUpstreamRecorder;
+      if (terminalRoute) {
+        json::object event{{"request_id", requestId}, {"route", *terminalRoute}, {"queue_wait_ms", state->admissionWaitMs.value_or(0)},
+          {"git_sha", config::runtimeGitSha()}, {"deno_revision", config::runtimeDeploymentId()}};
+        rt::console::info("[ai.ubq.fi] request_accepted", rt::jsonStringify(event));
+      }
+      rt::Promise<std::optional<rt::Response>> abortedPending(state->refuseAbortedBeforeDispatch());
+      auto abortedRefusal = co_await abortedPending.wait();
+      if (abortedRefusal) co_return *abortedRefusal;
+      std::function<rt::Task<rt::Response>()> dispatch = [state] { return state->dispatchTerminalRoute(); };
+      rt::Promise<rt::Response> pending(state->releaseOnThrow(dispatch));
+      auto result = co_await pending.wait();
+      co_return result;
+    } catch (...) {
+      failure = std::current_exception();
     }
-    rt::Promise<std::optional<rt::Response>> abortedPending(state->refuseAbortedBeforeDispatch());
-    auto abortedRefusal = co_await abortedPending.wait();
-    if (abortedRefusal) co_return *abortedRefusal;
-    std::function<rt::Task<rt::Response>()> dispatch = [state] { return state->dispatchTerminalRoute(); };
-    rt::Promise<rt::Response> pending(state->releaseOnThrow(dispatch));
-    auto result = co_await pending.wait();
-    co_return result;
+    state->releaseProcessPermit();
+    auto persisted = state->persistExceptionPayload(failure);
+    co_await std::move(persisted);
+    std::rethrow_exception(failure);
   }
 }

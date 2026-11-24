@@ -221,10 +221,10 @@ namespace {
   }
   rt::Task<std::optional<ImageRequestFailure>> rejectInvalidImageEditContentLength(rt::Request req, std::string declaredLength) {
     const auto normalizedLength = rt::trim(declaredLength); static const rt::Regex pattern(R"(^(?:0|[1-9]\d*)$)", "u");
-    if (!pattern.test(normalizedLength)) { request::discardRawBodyObserverOnce(req); co_return imageRequestError("Multipart Content-Length is invalid."); }
+    if (!pattern.test(normalizedLength)) { request::rejectRawBodyOnce(req, "body_unavailable"); co_return imageRequestError("Multipart Content-Length is invalid."); }
     const auto parsedLength = rt::stringToNumber(normalizedLength);
     if (!rt::Number::isSafeInteger(parsedLength) || parsedLength > IMAGE_MAX_MULTIPART_BODY_BYTES) {
-      request::discardRawBodyObserverOnce(req);
+      request::rejectRawBodyOnce(req, "body_over_limit");
       if (const auto body = req.body()) { try { auto task = body->cancel(); rt::Promise<void> pending(std::move(task)); co_await pending.wait(); } catch (...) {} }
       else co_await rt::microtask();
       co_return imageRequestError("Multipart image edits must be no larger than 64 MiB.", "image");
@@ -306,15 +306,23 @@ namespace {
     options.signal = req.signal(); options.cancellationReason = "Multipart image request exceeded its read limit";
     auto readTask = bounded_response_body::readBoundedResponseBody(source, options); rt::Promise<bounded_response_body::BoundedResponseBody> readPending(std::move(readTask));
     auto bounded = co_await readPending.wait(); bytes = std::make_shared<rt::Bytes>(std::move(bounded.bytes));
-    if (!bounded.complete || static_cast<double>(bytes->size()) > IMAGE_MAX_MULTIPART_BODY_BYTES) co_return imageRequestError("Multipart image edits must be no larger than 64 MiB.", "image");
+    const bool overLimit = static_cast<double>(bytes->size()) > IMAGE_MAX_MULTIPART_BODY_BYTES;
+    if (!bounded.complete || overLimit) {
+      request::rejectRawBodyOnce(req, overLimit ? "body_over_limit" : bytes->empty() ? "body_unavailable" : "body_partial");
+      co_return imageRequestError("Multipart image edits must be no larger than 64 MiB.", "image");
+    }
+    const auto reportReceivedStatus = request::receivedRawBodyRejection(req);
+    captured = request::captureRawBodyOnce(req, bytes, request::RawBodyStage::received);
     rt::FormParts form;
     try {
       const rt::InboundFormDecoder decoder(req.headers().get("content-type").value_or(""));
       form = decoder.decode(*bytes);
     } catch (...) {
+      if (captured && reportReceivedStatus) reportReceivedStatus(bytes->empty() ? "body_empty" : "body_invalid");
       co_return imageRequestError("Image edits must include valid multipart form data.");
     }
-    captured = request::captureRawBodyOnce(req, bytes); json::object body;
+    if (!captured) captured = request::captureRawBodyOnce(req, bytes);
+    json::object body;
     if (const auto failure = collectImageEditFields(form, body)) co_return *failure;
     auto sanitizedBody = withoutNullImageOptions(body); const auto validation = validateImageScalarOptions(sanitizedBody, "edits", true);
     if (const auto* failure = std::get_if<ImageRequestFailure>(&validation)) co_return *failure;

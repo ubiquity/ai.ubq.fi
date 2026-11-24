@@ -39,7 +39,11 @@
 #include "uos/live/calls.hpp"
 #include "uos/handler/serve_handler.hpp"
 #include "uos/handler/index.hpp"
+#include "uos/rt/console.hpp"
+#include "uos/rt/env.hpp"
+#include "uos/rt/text_codec.hpp"
 #include "uos/rt/url.hpp"
+#include "uos/sentinel/replay_read.hpp"
 #include "tests/helpers/loopback_http.hpp"
 #include "uos/rt/test_async.hpp"
 namespace rt=uos::rt;namespace json=uos::json;namespace harness=uos::tests::helpers::live_relay_harness;namespace live=uos::live;
@@ -155,6 +159,75 @@ ASYNC_TEST("POST /v1/live answers 502 when the upstream call-creation route is u
   HttpFixture fixture;auto seed=fixture.seed();co_await std::move(seed);auto stoppingUpstream=fixture.stopUpstream();co_await std::move(stoppingUpstream);
   auto task=create(harness::callRequest());auto response=co_await std::move(task);EXPECT_EQ(response.status(),502);auto read=errorOf(response);const auto error=co_await std::move(read);EXPECT_EQ(rt::getString(error,"code").value(),"codex_upstream_unreachable");auto settle=fixture.close();co_await std::move(settle);
 }
+ASYNC_TEST("failed live call retains only the authenticated AI session input") {
+  HttpFixture fixture;
+  const rt::Bytes encryptionKey(32, 0x51);
+  const rt::env::ScopedOverride replayKey({{"SENTINEL_REPLAY_KEY", uos::utils::base64UrlEncode(encryptionKey)}});
+  auto seed = fixture.seed();
+  co_await std::move(seed);
+  fixture.responder = [](harness::UpstreamCall) {
+    return rt::fulfilledTask(rt::Response("provider-secret-fixture", rt::ResponseInit{.status = 502}));
+  };
+  const json::object session{{"model", "realtime-model"}, {"instructions", "Answer the synthetic question"},
+    {"client_secret", "session-secret-fixture"}, {"tools", json::array{json::object{{"authorization", "tool-secret-fixture"}}}}};
+  const auto req = harness::callRequest(harness::realtimeCallBody("v=0\r\na=ice-pwd:rtc-secret-fixture\r\n", session));
+  auto creating = create(req);
+  const auto response = co_await std::move(creating);
+  ASSERT_EQ(response.status(), 502);
+  const auto requestId = response.headers().get("x-uos-request-id");
+  ASSERT(requestId);
+  co_await response.text();
+  auto settling = fixture.close();
+  co_await std::move(settling);
+
+  auto lookup = uos::sentinel::replay_read::listEncryptedSentinelReplaysByRequestId(*fixture.kv, *requestId);
+  const auto evidence = co_await std::move(lookup);
+  ASSERT_EQ(evidence.captures.size(), 1U);
+  auto decrypting = uos::sentinel::replay_read::decryptExportedSentinelReplay(evidence.captures.front(), encryptionKey);
+  const auto plaintext = co_await std::move(decrypting);
+  EXPECT_EQ(plaintext.request_id, *requestId);
+  EXPECT_EQ(plaintext.endpoint, "/v1/live");
+  EXPECT_EQ(plaintext.observation.status, 502);
+  EXPECT(plaintext.compatibility_headers.empty());
+  ASSERT(plaintext.body);
+  const auto payload = rt::decodeUtf8(*plaintext.body);
+  EXPECT_EQ(payload, R"({"schema":"uos-live-failure-projection-v1","session":{"model":"realtime-model","instructions":"Answer the synthetic question"}})");
+  EXPECT(!plaintext.client_observation.terminal_body_base64);
+}
+
+ASYNC_TEST("ordinary failures journal only metadata and use the returned ID") {
+  HttpFixture fixture;
+  const rt::console::Capture logs({rt::console::Method::info});
+  rt::RequestInit init;
+  init.method = "UNRECOGNIZED-SECRET";
+  init.headers = rt::Headers{{"authorization", "Bearer header-secret"}, {"cookie", "session=cookie-secret"}};
+  auto first = uos::handler::index::handler(rt::Request("http://fixture.invalid/path-secret?secret=query-secret", init));
+  const auto unknown = co_await std::move(first);
+  EXPECT_EQ(unknown.status(), 404);
+  const auto unknownId = unknown.headers().get("x-uos-request-id");
+  ASSERT(unknownId);
+  auto second = uos::handler::index::handler(rt::Request("http://fixture.invalid/health/providers?secret=query-secret"));
+  const auto health = co_await std::move(second);
+  EXPECT(health.status() >= 400);
+  const auto healthId = health.headers().get("x-uos-request-id");
+  ASSERT(healthId);
+
+  std::vector<json::value> events;
+  for (const auto& call : logs.calls()) {
+    if (call.args.size() != 2 || call.args[0] != std::string_view("[ai.ubq.fi] request_failure")) continue;
+    EXPECT(call.text.find("secret") == std::string::npos);
+    events.push_back(rt::jsonParse(call.args[1].string()));
+  }
+  ASSERT_EQ(events.size(), 2U);
+  EXPECT_EQ(rt::getString(events[0], "request_id").value(), *unknownId);
+  EXPECT_EQ(rt::getString(events[0], "route").value(), "unmatched");
+  EXPECT_EQ(rt::getString(events[0], "method").value(), "OTHER");
+  EXPECT_EQ(rt::getString(events[1], "request_id").value(), *healthId);
+  EXPECT_EQ(rt::getString(events[1], "route").value(), "health");
+  EXPECT_EQ(rt::getString(events[1], "method").value(), "GET");
+  for (const auto& event : events) EXPECT_EQ(rt::getBool(event, "body_present"), std::optional<bool>(false));
+}
+
 ASYNC_TEST("POST /v1/live retries a credential failure once with the next eligible account"){
   HttpFixture fixture;auto seed=fixture.seed();co_await std::move(seed);fixture.responder=[](harness::UpstreamCall call){return rt::fulfilledTask(call.headers.get("chatgpt-account-id")==std::optional<std::string>(std::string(harness::ACCOUNT_A))?rt::Response("{\"detail\":\"credential expired\"}",rt::ResponseInit{.status=401}):harness::acceptedAnswer());};
   auto task=create(harness::callRequest());auto response=co_await std::move(task);EXPECT_EQ(response.status(),201);auto bodyTask=response.text();const auto body=co_await std::move(bodyTask);EXPECT_EQ(body,harness::SDP_ANSWER);EXPECT_EQ(response.headers().get("location"),std::optional<std::string>("/v1/live/"+std::string(harness::CALL_ID)));EXPECT_EQ(fixture.calls.size(),2U);if(fixture.calls.size()==2){EXPECT_EQ(fixture.calls[0].headers.get("chatgpt-account-id"),std::optional<std::string>(std::string(harness::ACCOUNT_A)));EXPECT_EQ(fixture.calls[1].headers.get("chatgpt-account-id"),std::optional<std::string>(std::string(harness::ACCOUNT_B)));}

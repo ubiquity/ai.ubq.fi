@@ -299,3 +299,34 @@ ASYNC_TEST("a successful response never publishes an omission status") {
   EXPECT(!bytes.empty());
   EXPECT_EQ(recorded, 0);
 }
+
+ASYNC_TEST("authenticated invalid and zero-byte request bodies remain privately retrievable by their own request IDs") {
+  fixture::Isolation isolation;
+  const CaptureStore installed;
+  rt::console::Capture logs({rt::console::Method::info});
+  const rt::Bytes keyBytes(32, 42);
+  const rt::env::ScopedOverride replayKey({{"SENTINEL_REPLAY_KEY", utils::base64UrlEncode(keyBytes)}});
+  const std::string token = api_keys::generateApiKeyToken();
+  auto seeding = seedAuthenticatedKey(installed.kv, token);
+  co_await std::move(seeding);
+  for (const std::string body : {"{private-synthetic-malformed-marker", ""}) {
+    rt::RequestInit input{.method = "POST", .headers = rt::Headers{{"Content-Type", "application/json"}, {"Authorization", "Bearer " + token}}, .body = body};
+    auto handling = handler::index::handler(rt::Request("https://ai.ubq.fi/v1/responses", input));
+    const auto response = co_await std::move(handling);
+    EXPECT_EQ(response.status(), 400);
+    const auto requestId = response.headers().get("x-uos-request-id");
+    ASSERT(requestId);
+    auto listing = sentinel::replay_read::listEncryptedSentinelReplaysByRequestId(*installed.kv, *requestId);
+    const auto result = co_await std::move(listing);
+    ASSERT_EQ(result.captures.size(), std::size_t{1});
+    EXPECT_EQ(result.status.status, std::string("incomplete"));
+    auto decrypting = sentinel::replay_read::decryptExportedSentinelReplay(result.captures.front(), keyBytes);
+    const auto plaintext = co_await std::move(decrypting);
+    ASSERT(plaintext.body);
+    EXPECT_EQ(*plaintext.body, rt::encodeUtf8(body));
+    EXPECT_EQ(plaintext.request_id, *requestId);
+  }
+  for (const auto& log : logs.calls()) {
+    EXPECT(!rt::includes(log.text, "private-synthetic-malformed-marker"));
+  }
+}

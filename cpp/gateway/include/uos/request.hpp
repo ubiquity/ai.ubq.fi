@@ -33,10 +33,13 @@ namespace uos::request {
   using JsonBodyReadResult = std::variant<JsonBodyReadResultOk, JsonBodyReadResultNotOk>;
 
   // An empty onRejected is an omitted (undefined) callback.
-  void observeRawBodyOnce(const rt::Request& req, RawBodyObserver observer, RawBodyRejection onRejected = {});
+  enum class RawBodyStage { parsed, received };
+  void observeRawBodyOnce(const rt::Request& req, RawBodyObserver observer, RawBodyRejection onRejected = {},
+                          RawBodyStage stage = RawBodyStage::parsed);
+  RawBodyRejection receivedRawBodyRejection(const rt::Request& req);
 
   /** Transfer one accepted raw body to its observer under the fixed replay cap. */
-  bool captureRawBodyOnce(const rt::Request& req, const std::shared_ptr<rt::Bytes>& bytes);
+  bool captureRawBodyOnce(const rt::Request& req, const std::shared_ptr<rt::Bytes>& bytes, RawBodyStage stage = RawBodyStage::parsed);
 
   void discardRawBodyObserverOnce(const rt::Request& req);
 

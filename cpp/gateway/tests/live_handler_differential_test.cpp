@@ -30,6 +30,7 @@
 #include "uos/live/calls.hpp"
 #include "uos/live/handler.hpp"
 #include "uos/live/sideband.hpp"
+#include "uos/rt/console.hpp"
 #include "uos/rt/crypto.hpp"
 #include "uos/rt/test_async.hpp"
 #include "uos/rt/url.hpp"
@@ -230,7 +231,7 @@ namespace uos::auth::index {
   }
 }
 namespace uos::live::calls {
-  rt::Task<rt::Response> handleLiveCallCreate(rt::Request req, std::string principal) {
+  rt::Task<rt::Response> handleLiveCallCreate(rt::Request req, std::string principal, std::optional<FailedLiveCallCapture>) {
     record("call", req, std::nullopt, principal);
     if (text(active().input, "dispatch") == "reject") throw rt::JsError("call rejected");
     co_return response();
@@ -287,3 +288,21 @@ ASYNC_TEST("live handler Upgrade descriptor remains untouched") { auto task = ru
 ASYNC_TEST("live handler Upgrade authentication gate") { auto task = runScenario(21); co_await std::move(task); }
 ASYNC_TEST("live handler Upgrade auth rejection escapes") { auto task = runScenario(22); co_await std::move(task); }
 ASYNC_TEST("live handler Upgrade preparation rejection escapes") { auto task = runScenario(23); co_await std::move(task); }
+
+ASYNC_TEST("live WebSocket rejection logs one metadata-only request event") {
+  const rt::console::Capture logs({rt::console::Method::info});
+  auto unknown = runScenario(15);
+  co_await std::move(unknown);
+  const auto calls = logs.calls();
+  ASSERT_EQ(calls.size(), 1U);
+  ASSERT_EQ(calls.front().args.size(), 2U);
+  EXPECT(calls.front().args[0] == std::string_view("[ai.ubq.fi] request_failure"));
+  EXPECT(calls.front().text.find("fixture-client-bearer") == std::string::npos);
+  EXPECT(calls.front().text.find("/other") == std::string::npos);
+  const auto event = rt::jsonParse(calls.front().args[1].string());
+  EXPECT_EQ(rt::getString(event, "route").value(), "live.upgrade");
+  EXPECT_EQ(rt::getString(event, "request_id").value(), "00000000-0000-4000-8000-000000000000");
+  EXPECT_EQ(rt::getBool(event, "body_present"), std::optional<bool>(false));
+  EXPECT_EQ(rt::getBool(event, "authenticated"), std::optional<bool>(false));
+  EXPECT_EQ(rt::getString(event, "body_evidence").value(), "no_body");
+}

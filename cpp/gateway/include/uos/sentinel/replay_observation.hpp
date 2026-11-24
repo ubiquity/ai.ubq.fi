@@ -124,6 +124,11 @@ namespace uos::sentinel::replay_observation {
   bool shouldPersistSentinelReplay(const replay_model::SentinelFailureObservation& observation,
                                    const replay_model::SentinelClientFailureObservation& clientObservation);
 
+  /** Encrypted diagnostic retention includes terminal failures without causal replay coverage. */
+  bool shouldPersistFailedRequestPayload(const replay_model::SentinelFailureObservation& observation,
+                                         const replay_model::SentinelClientFailureObservation& clientObservation,
+                                         bool deliveryInterrupted = false);
+
   bool shouldSignalSentinelIncident(const replay_model::SentinelFailureObservation& observation,
                                     const replay_model::SentinelClientFailureObservation& clientObservation);
 

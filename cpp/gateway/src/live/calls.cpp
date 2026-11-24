@@ -10,6 +10,8 @@
 #include "uos/codex/responses_operations.hpp"
 #include "uos/codex/routing_mutations.hpp"
 #include "uos/codex/routing_state.hpp"
+#include "uos/config.hpp"
+#include "uos/handler/http.hpp"
 #include "uos/http.hpp"
 #include "uos/live/upstream.hpp"
 #include "uos/rt/clock.hpp"
@@ -19,10 +21,13 @@
 #include "uos/rt/regex.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/rt/text_codec.hpp"
+#include "uos/runtime/http_tasks.hpp"
+#include "uos/sentinel/replay_store.hpp"
 #include "uos/types.hpp"
 #include "uos/utils.hpp"
 
 #include <exception>
+#include <memory>
 #include <optional>
 #include <utility>
 #include <variant>
@@ -189,62 +194,112 @@ namespace uos::live::calls {
       if (callId && response.ok()) { rt::Promise<void> saved(upstream::writeLiveCallAccount(*callId, accountId, principal)); co_await saved.wait(); }
       co_return rt::Response(rt::bodyInit(response.body()), rt::ResponseInit{.status = response.status(), .statusText = response.statusText(), .headers = headers});
     }
-  }
-  rt::Task<rt::Response> handleLiveCallCreate(rt::Request req, std::string principal) {
-    rt::Promise<ParsedLiveCallCreate> parsedPending(parseLiveCallCreate(req)); const auto parsed = co_await parsedPending.wait();
-    if (const auto* response = std::get_if<rt::Response>(&parsed)) co_return *response;
-    const auto& parts = std::get<LiveCallCreateParts>(parsed); const auto serializedBody = rt::jsonStringify(json::object{{"sdp", parts.sdp}, {"session", parts.session}});
-    const auto headers = upstream::liveCallsUpstreamHeaders(req); const auto model = utils::getString(rt::get(parts.session, "model"));
-    rt::OrderedSet<std::string> attemptedAccountIds; std::optional<rt::Response> captured;
-    bool recoveryAttempted = false;
-    for (int attempt = 1; attempt <= LIVE_CALL_MAX_UPSTREAM_ATTEMPTS; ++attempt) {
-      auto task = resolveLiveCallAttempt(attemptedAccountIds, model, req.signal()); rt::Promise<LiveCallAttemptResult> resolvedPending(std::move(task)); auto resolved = co_await resolvedPending.wait();
-      if (const auto* response = std::get_if<rt::Response>(&resolved)) co_return captured.value_or(*response);
-      std::optional<LiveCallAttempt> dispatched;
-      std::optional<rt::Response> upstreamResponse; rt::Reason failure;
-      try {
-        if (const auto* blocked = std::get_if<QuotaBlocked>(&resolved)) {
-          if (std::exchange(recoveryAttempted, true)) co_return captured.value_or(liveRoutingFailureResponse(*blocked));
-          auto recovery = codex::responses_operations::recoverBlockedSubscription({upstream::liveCallsUrl(), serializedBody, headers, model, req.signal(), attemptedAccountIds});
-          const auto recovered = co_await std::move(recovery);
-          if (!recovered) co_return captured.value_or(liveRoutingFailureResponse(*blocked));
-          dispatched = LiveCallAttempt{recovered->routing.auth.account_id, recovered->routing, recovered->routing.auth};
-          upstreamResponse = recovered->response;
-        } else {
-          dispatched = std::get<LiveCallAttempt>(resolved);
-          upstreamResponse = co_await codex::dispatch::fetchCodexResponseWithAuth(dispatched->auth, upstream::liveCallsUrl(), serializedBody, headers, req.signal());
+    rt::Task<rt::Response> dispatchLiveCall(rt::Request req, std::string principal, std::string serializedBody, std::optional<std::string> model) {
+      const auto headers = upstream::liveCallsUpstreamHeaders(req);
+      rt::OrderedSet<std::string> attemptedAccountIds; std::optional<rt::Response> captured;
+      bool recoveryAttempted = false;
+      for (int attempt = 1; attempt <= LIVE_CALL_MAX_UPSTREAM_ATTEMPTS; ++attempt) {
+        auto task = resolveLiveCallAttempt(attemptedAccountIds, model, req.signal()); rt::Promise<LiveCallAttemptResult> resolvedPending(std::move(task)); auto resolved = co_await resolvedPending.wait();
+        if (const auto* response = std::get_if<rt::Response>(&resolved)) co_return captured.value_or(*response);
+        std::optional<LiveCallAttempt> dispatched;
+        std::optional<rt::Response> upstreamResponse; rt::Reason failure;
+        try {
+          if (const auto* blocked = std::get_if<QuotaBlocked>(&resolved)) {
+            if (std::exchange(recoveryAttempted, true)) co_return captured.value_or(liveRoutingFailureResponse(*blocked));
+            auto recovery = codex::responses_operations::recoverBlockedSubscription({upstream::liveCallsUrl(), serializedBody, headers, model, req.signal(), attemptedAccountIds});
+            const auto recovered = co_await std::move(recovery);
+            if (!recovered) co_return captured.value_or(liveRoutingFailureResponse(*blocked));
+            dispatched = LiveCallAttempt{recovered->routing.auth.account_id, recovered->routing, recovered->routing.auth};
+            upstreamResponse = recovered->response;
+          } else {
+            dispatched = std::get<LiveCallAttempt>(resolved);
+            upstreamResponse = co_await codex::dispatch::fetchCodexResponseWithAuth(dispatched->auth, upstream::liveCallsUrl(), serializedBody, headers, req.signal());
+          }
+        } catch (...) { failure = std::current_exception(); }
+        if (failure) {
+          if (dispatched) co_await codex::dispatch::recordCodexThrownHealth(dispatched->accountId, failure);
+          co_return captured.value_or(liveCallDispatchFailureResponse(failure));
         }
-      } catch (...) { failure = std::current_exception(); }
-      if (failure) {
-        if (dispatched) co_await codex::dispatch::recordCodexThrownHealth(dispatched->accountId, failure);
-        co_return captured.value_or(liveCallDispatchFailureResponse(failure));
-      }
-      const auto& account = *dispatched;
-      attemptedAccountIds.add(account.accountId);
-      const auto response = *upstreamResponse; const bool credentialFailure = response.status() == 401 || response.status() == 403;
-      if (credentialFailure) {
-        auto mark = codex::routing_mutations::markCodexCredentialInvalid(account.routing); rt::Promise<void> marked(std::move(mark)); co_await marked.wait();
-        if (codex::auth::hasLeaderAuthReader()) {
-          try {
-            auto reading = codex::auth::useLeaderCredential(account.auth, true);
-            co_await std::move(reading);
-            attemptedAccountIds.delete_(account.accountId);
-          } catch (...) {}
+        const auto& account = *dispatched;
+        attemptedAccountIds.add(account.accountId);
+        const auto response = *upstreamResponse; const bool credentialFailure = response.status() == 401 || response.status() == 403;
+        if (credentialFailure) {
+          auto mark = codex::routing_mutations::markCodexCredentialInvalid(account.routing); rt::Promise<void> marked(std::move(mark)); co_await marked.wait();
+          if (codex::auth::hasLeaderAuthReader()) {
+            try {
+              auto reading = codex::auth::useLeaderCredential(account.auth, true);
+              co_await std::move(reading);
+              attemptedAccountIds.delete_(account.accountId);
+            } catch (...) {}
+          }
         }
-      }
-      auto record = codex::dispatch::recordCodexResponseHealth(account.accountId, response, account.auth, std::string("success")); rt::Promise<void> recorded(std::move(record)); co_await recorded.wait();
-      if (!credentialFailure || attempt == LIVE_CALL_MAX_UPSTREAM_ATTEMPTS) {
-        auto result = co_await relayLiveCallResponse(response, account.accountId, principal);
-        if (response.ok() && account.routing.probeGeneration) {
-          const auto location = response.headers().get("location");
-          if (location && upstream::parseLiveCallIdFromLocation(*location)) co_await codex::routing_mutations::markCodexSuccess(account.routing);
-          else co_await codex::routing_mutations::releaseCodexRoutingProbe(account.routing);
+        auto record = codex::dispatch::recordCodexResponseHealth(account.accountId, response, account.auth, std::string("success")); rt::Promise<void> recorded(std::move(record)); co_await recorded.wait();
+        if (!credentialFailure || attempt == LIVE_CALL_MAX_UPSTREAM_ATTEMPTS) {
+          auto result = co_await relayLiveCallResponse(response, account.accountId, principal);
+          if (response.ok() && account.routing.probeGeneration) {
+            const auto location = response.headers().get("location");
+            if (location && upstream::parseLiveCallIdFromLocation(*location)) co_await codex::routing_mutations::markCodexSuccess(account.routing);
+            else co_await codex::routing_mutations::releaseCodexRoutingProbe(account.routing);
+          }
+          co_return result;
         }
-        co_return result;
+        rt::Promise<void> transitions(codex::dispatch::awaitPendingCodexProbeTransitions()); co_await transitions.wait();
+        rt::Promise<rt::Response> capture(captureLiveCallAttempt(response, req.signal())); captured = co_await capture.wait();
       }
-      rt::Promise<void> transitions(codex::dispatch::awaitPendingCodexProbeTransitions()); co_await transitions.wait();
-      rt::Promise<rt::Response> capture(captureLiveCallAttempt(response, req.signal())); captured = co_await capture.wait();
+      co_return captured.value_or(http::openaiError(502, "Codex upstream request failed: upstream unreachable.", "codex_upstream_unreachable"));
     }
-    co_return captured.value_or(http::openaiError(502, "Codex upstream request failed: upstream unreachable.", "codex_upstream_unreachable"));
+
+    std::shared_ptr<rt::Bytes> failedLiveCallPayload(const json::object& session) {
+      constexpr std::size_t maxPayloadBytes = 64 * 1024;
+      // SDP carries ICE credentials and addresses. A session can also carry
+      // authorization and remote-tool configuration, so retain only AI input.
+      json::object projection;
+      for (const auto* key : {"model", "instructions"}) {
+        const auto* value = session.if_contains(key);
+        if (value && value->is_string() && value->get_string().size() <= maxPayloadBytes) projection.emplace(key, *value);
+      }
+      if (projection.empty()) return nullptr;
+      const auto encoded = rt::jsonStringify(json::object{{"schema", "uos-live-failure-projection-v1"}, {"session", std::move(projection)}});
+      if (encoded.size() > maxPayloadBytes) return nullptr;
+      return std::make_shared<rt::Bytes>(rt::encodeUtf8(encoded));
+    }
+
+    rt::Task<void> retainLiveCallFailure(sentinel::replay_model::AcceptedSentinelReplayInput input, int status) {
+      const auto wipe = rt::scopeExit([&input] { sentinel::replay_observation::zeroSentinelReplayInput(&input); });
+      const sentinel::replay_model::SentinelFailureObservation observation{
+        .status = static_cast<double>(status), .stream = false, .completed = false, .terminal_type = std::nullopt,
+        .failure_kind = std::nullopt, .synthetic_terminal_type = std::nullopt, .provider_route = "live",
+      };
+      try {
+        auto writing = sentinel::replay_store::persistFailedRequestPayloadFromEnvironment(input, observation);
+        co_await std::move(writing);
+      } catch (...) {
+        // Retention cannot replace the original client response.
+      }
+    }
+  }
+
+  rt::Task<rt::Response> handleLiveCallCreate(rt::Request req, std::string principal, std::optional<FailedLiveCallCapture> capture) {
+    rt::Promise<ParsedLiveCallCreate> parsedPending(parseLiveCallCreate(req));
+    const auto parsed = co_await parsedPending.wait();
+    if (const auto* response = std::get_if<rt::Response>(&parsed)) co_return *response;
+    const auto& parts = std::get<LiveCallCreateParts>(parsed);
+    auto dispatch = dispatchLiveCall(std::move(req), std::move(principal),
+      rt::jsonStringify(json::object{{"sdp", parts.sdp}, {"session", parts.session}}), utils::getString(rt::get(parts.session, "model")));
+    const auto response = co_await std::move(dispatch);
+    if (capture && response.status() >= 400) {
+      if (auto payload = failedLiveCallPayload(parts.session)) {
+        if (capture->projected) *capture->projected = true;
+        sentinel::replay_model::AcceptedSentinelReplayInput input{
+          .endpoint = "/v1/live", .method = "POST", .body = std::move(payload), .content_type = "application/json",
+          .compatibility_headers = {}, .request_id = std::move(capture->requestId),
+          .git_sha = config::runtimeGitSha(), .deno_revision = config::runtimeDeploymentId(),
+        };
+        rt::Promise<void> retained(retainLiveCallFailure(std::move(input), response.status()));
+        if (capture->deliveryCompleted) runtime::http_tasks::trackRequestTask(capture->deliveryCompleted, retained);
+        else if (!::uos::handler::http::scheduleSentinelBackgroundTask(retained, {})) co_await retained.wait();
+      }
+    }
+    co_return response;
   }
 }

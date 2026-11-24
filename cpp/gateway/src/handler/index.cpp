@@ -1,4 +1,5 @@
 #include "uos/handler/index.hpp"
+#include "uos/handler/failure_journal.hpp"
 #include "uos/handler/terminal_route.hpp"
 #include "uos/admin/index.hpp"
 #include "uos/admin/api_key_audit.hpp"
@@ -27,6 +28,7 @@
 #include "uos/static.hpp"
 
 #include <algorithm>
+#include <string_view>
 #include <utility>
 
 namespace uos::handler::index {
@@ -264,31 +266,37 @@ namespace uos::handler::index {
     }
     const auto url = rt::URL(req.url());
     const auto path = http::normalizePath(url.pathname());
+    const auto finish = [&req, &requestId](const rt::Response& response, std::string_view route) {
+      return failure_journal::withApplicationFailure(req, ::uos::http::withCors(response, req), route, requestId);
+    };
     rt::Promise<std::optional<rt::Response>> staticPending(handleStaticRoute(req, path));
     auto staticResponse = co_await staticPending.wait();
-    if (staticResponse) co_return ::uos::http::withCors(*staticResponse, req);
+    if (staticResponse) co_return finish(*staticResponse, "static");
     rt::Promise<std::optional<rt::Response>> healthPending(handleHealthRoute(req, path));
     auto healthResponse = co_await healthPending.wait();
-    if (healthResponse) co_return ::uos::http::withCors(*healthResponse, req);
+    if (healthResponse) co_return finish(*healthResponse, "health");
     rt::Promise<std::optional<rt::Response>> authPending(handleAuthRoute(req, path));
     auto authResponse = co_await authPending.wait();
-    if (authResponse) co_return ::uos::http::withCors(*authResponse, req);
+    if (authResponse) co_return finish(*authResponse, "auth");
     rt::Promise<std::optional<rt::Response>> adminPending(handleAdminRoute(req, path, requestId));
     auto adminResponse = co_await adminPending.wait();
-    if (adminResponse) co_return ::uos::http::withCors(*adminResponse, req);
+    if (adminResponse) co_return finish(*adminResponse, "admin");
     rt::Promise<std::optional<rt::Response>> uosPending(handleUosRoute(req, path));
     auto uosResponse = co_await uosPending.wait();
-    if (uosResponse) co_return ::uos::http::withCors(*uosResponse, req);
-    rt::Promise<std::optional<rt::Response>> livePending(live::handler::handleLiveRoute(req, requestId));
+    if (uosResponse) co_return finish(*uosResponse, "uos");
+    rt::Promise<std::optional<rt::Response>> livePending(
+      live::handler::handleLiveRoute(req, requestId, delivery ? std::optional(delivery->completed) : std::nullopt));
     auto liveResponse = co_await livePending.wait();
     if (liveResponse) co_return *liveResponse;
     if (!isTerminalInferencePath(path)) {
       const auto response = ::uos::http::notFound();
-      co_return ::uos::http::withCors(req.method() == "HEAD" ? ::uos::http::withoutBody(response) : response, req);
+      co_return finish(req.method() == "HEAD" ? ::uos::http::withoutBody(response) : response, "unmatched");
     }
     rt::Promise<rt::Response> pending(terminal_route::handleTerminalRoute(req, path, delivery, requestId, requestStartedAtMs, requestStartedAtMonotonicMs));
     auto response = co_await pending.wait();
-    co_return response;
+    if (http::terminalRouteForRequest(req.method(), path)) co_return response;
+    co_return failure_journal::withApplicationFailure(
+      req, std::move(response), path == "/v1/models" ? "models" : "unmatched", requestId);
   }
 
   rt::Task<runtime::http_upgrade::UpgradeResult> upgradeHandler(rt::Request req, runtime::http_upgrade::UpgradeInfo info) {

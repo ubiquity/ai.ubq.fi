@@ -151,6 +151,16 @@ namespace uos::serve {
   }
 
   namespace {
+    void logTransportRejection(const runtime::http::TransportRequestRejection& rejection) {
+      rt::console::warn("[ai.ubq.fi] request_failure", json::object{
+        {"request_id", rejection.requestId},
+        {"route", "transport"},
+        {"status", rejection.status ? json::value(*rejection.status) : json::value(nullptr)},
+        {"reason", std::string(rejection.reason)},
+        {"body_omission", std::string(rejection.omission)},
+      });
+    }
+
     rt::Task<void> servePrepared(std::string hostname, int port) {
       auto opening = kv::getKv();
       auto store = co_await opening.wait();
@@ -164,7 +174,7 @@ namespace uos::serve {
       try {
         migration = initializeModule().catch_(rt::ignoreRejection);
         runtime::http::ServeHttpOptions options{.hostname = std::move(hostname), .port = static_cast<double>(port), .onListen = application.onListen, .upgrade = application.upgrade,
-                                               .applicationChatBodyRejection = true};
+                                               .applicationChatBodyRejection = true, .onTransportRejection = logTransportRejection};
         const auto server = runtime::http::serveHttp(options, application.fetch);
         shutdown.emplace([server] {
           server.shutdown().catch_([](rt::Reason) { rt::console::error("[ai.ubq.fi] HTTP shutdown failed"); });

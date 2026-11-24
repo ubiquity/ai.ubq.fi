@@ -8,6 +8,7 @@
 #include <string>
 
 namespace uos::live::handler {
-  rt::Task<std::optional<rt::Response>> handleLiveRoute(rt::Request req, std::string requestId);
+  rt::Task<std::optional<rt::Response>> handleLiveRoute(rt::Request req, std::string requestId,
+                                                        std::optional<rt::Promise<void>> deliveryCompleted = std::nullopt);
   rt::Task<runtime::http_upgrade::UpgradeResult> handleLiveUpgrade(rt::Request req, runtime::http_upgrade::UpgradeInfo info);
 }
