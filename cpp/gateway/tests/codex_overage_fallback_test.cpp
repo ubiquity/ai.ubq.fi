@@ -23,6 +23,7 @@
 #include "uos/codex/overage_settings.hpp"
 #include "uos/utils.hpp"
 #include "uos/rt/console.hpp"
+#include "uos/rt/date.hpp"
 #include "uos/rt/number.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/rt/test_async.hpp"
