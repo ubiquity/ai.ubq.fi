@@ -56,7 +56,7 @@ namespace {
   namespace passport = uos::auth::passport;
   using uos::handler::index::handler;
   const std::string ORIGIN = "https://ai.ubq.fi";
-  const std::string ISSUER = "https://passport.ubq.fi";
+  const std::string ISSUER = "https://auth.ubq.fi";
   const std::string SESSION_COOKIE = "__Host-uos_ai_passport_session";
   const std::string STATE_COOKIE = "__Host-uos_ai_passport_state";
   const std::string VERIFIER_COOKIE = "__Host-uos_ai_passport_verifier";
@@ -99,6 +99,7 @@ namespace {
     json::array exchanges;
     int jwksStatus = 200;
     int exchangeStatus = 200;
+    rt::Reason exchangeFailure;
     std::optional<rt::GlobalFetchOverride> fetch;
     Fixture() {
       uos::config::config.codexAuthJsonB64.clear(); harness::resetHarness(); passport::resetPassportCacheForTest(); uos::tests::helpers::responses_conformance_client::stageGatewayAssets();
@@ -113,8 +114,10 @@ namespace {
         }
         if (url == ISSUER + "/api/auth/sso/exchange") {
           EXPECT_EQ(init.method, std::optional<std::string>("POST")); EXPECT_EQ(init.redirect, std::optional<std::string>("error"));
+          ASSERT(init.signal.has_value());
           const rt::Response reader(init.body.value_or(rt::BodyInit(nullptr)));
           AWAIT(body, reader.json()); exchanges.push_back(body);
+          if (exchangeFailure) std::rethrow_exception(exchangeFailure);
           const rt::ResponseInit responseInit{.status = static_cast<double>(exchangeStatus)};
           if (exchangeStatus != 200) co_return rt::Response::json(json::object{{"error", "Exchange failed"}}, responseInit);
           const json::object exchanged{{"accessToken", exchangedToken}, {"appSession", appGrant}};
@@ -153,9 +156,7 @@ namespace {
     }
   };
 
-  rt::Task<void> checkExchangeFailure(int exchangeStatus, std::string code, int status, std::string errorCode) {
-    Fixture fixture;
-    fixture.exchangeStatus = exchangeStatus;
+  rt::Task<void> checkExchangeFailure(Fixture& fixture, std::string code, int status, std::string errorCode) {
     AWAIT(begin, fixture.begin());
     const rt::RequestInit init{.headers = rt::Headers{{"Cookie", begin.stateCookie}}};
     const auto callback = request("/auth/callback?state=" + begin.state + "&code=" + code, "", init);
@@ -166,6 +167,7 @@ namespace {
       VERIFIER_COOKIE + "=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax",
     };
     EXPECT_EQ(response.headers().getSetCookie(), expectedCookies);
+    EXPECT_EQ(response.headers().get("Cache-Control"), std::optional<std::string>("no-store"));
     EXPECT_EQ(response.status(), status);
     AWAIT(body, response.json());
     EXPECT_EQ(rt::getString(member(body, "error"), "code"), errorCode);
@@ -209,7 +211,9 @@ ASYNC_TEST("Passport callback rejects absent, mismatched and duplicated state be
 ASYNC_TEST("Passport callback returns 401 and clears state for rejected exchange statuses") {
   const std::vector<int> statuses{400, 401, 403, 422, 429};
   for (const int status : statuses) {
-    auto checking = checkExchangeFailure(status, "rejected-code", 401, "invalid_api_key");
+    Fixture fixture;
+    fixture.exchangeStatus = status;
+    auto checking = checkExchangeFailure(fixture, "rejected-code", 401, "invalid_api_key");
     co_await std::move(checking);
   }
 }
@@ -217,9 +221,31 @@ ASYNC_TEST("Passport callback returns 401 and clears state for rejected exchange
 ASYNC_TEST("Passport callback retains 502 and clears state for upstream exchange failures") {
   const std::vector<int> statuses{500, 502, 503, 504};
   for (const int status : statuses) {
-    auto checking = checkExchangeFailure(status, "valid-code", 502, "passport_unavailable");
+    Fixture fixture;
+    fixture.exchangeStatus = status;
+    auto checking = checkExchangeFailure(fixture, "valid-code", 502, "passport_unavailable");
     co_await std::move(checking);
   }
+}
+
+ASYNC_TEST("Passport callback reports exchange network failures and timeouts as unavailable") {
+  const std::vector<rt::Reason> failures{
+    std::make_exception_ptr(rt::TypeError("fixture exchange connection failed")),
+    std::make_exception_ptr(rt::DOMException("fixture exchange timed out", "TimeoutError")),
+  };
+  for (const auto& failure : failures) {
+    Fixture fixture;
+    fixture.exchangeFailure = failure;
+    auto checking = checkExchangeFailure(fixture, "fixture-code", 502, "passport_unavailable");
+    co_await std::move(checking);
+  }
+}
+
+ASYNC_TEST("Passport callback rejects invalid exchanged credentials and clears state") {
+  Fixture fixture;
+  fixture.exchangedToken = "invalid-token";
+  auto checking = checkExchangeFailure(fixture, "fixture-code", 401, "invalid_api_key");
+  co_await std::move(checking);
 }
 
 ASYNC_TEST("failed Passport callback clears only transient cookies and never creates a session from an agent") {
@@ -250,7 +276,7 @@ ASYNC_TEST("Passport admin rejects ordinary users, agent cookies, JWT bearers an
 
 ASYNC_TEST("Passport verifies signature, expiry, issuer, audience, client, algorithm and key source") {
   Fixture fixture; const auto now = rt::Math::floor(rt::dateNow() / 1000);
-  const std::vector<json::object> claims{{{"iss", "https://evil.example"}}, {{"aud", "other"}}, {{"clientId", "other"}}, {{"exp", now - 1}}, {{"iat", now + 120}}, {{"isAdmin", "true"}}};
+  const std::vector<json::object> claims{{{"iss", "https://passport.ubq.fi"}}, {{"iss", "https://evil.example"}}, {{"aud", "other"}}, {{"clientId", "other"}}, {{"exp", now - 1}}, {{"iat", now + 120}}, {{"isAdmin", "true"}}};
   for (const auto& value : claims) { AWAIT(result, auth::authenticateAdmin(request("/admin/api-keys", sign(value)))); refused(result, 401); }
   const std::vector<json::object> headers{{{"alg", "HS256"}}, {{"jku", "https://evil.example/keys"}}, {{"jwk", rt::crypto::subtle::exportJwk(keys().publicKey)}}};
   for (const auto& value : headers) { AWAIT(result, auth::authenticateAdmin(request("/admin/api-keys", sign({}, value)))); refused(result, 401); }

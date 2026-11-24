@@ -165,7 +165,7 @@ namespace {
           revoked.status = shared->status == 200 ? 204 : shared->status;
           co_return rt::Response(rt::BodyInit(nullptr), std::move(revoked));
         }
-        EXPECT_EQ(url, "https://passport.ubq.fi/api/auth/sso/session");
+        EXPECT_EQ(url, "https://auth.ubq.fi/api/auth/sso/session");
         shared->reads += 1;
         rt::ResponseInit init_;
         init_.status = shared->status;
