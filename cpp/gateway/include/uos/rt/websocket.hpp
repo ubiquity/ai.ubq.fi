@@ -403,6 +403,8 @@ namespace uos::rt::ws {
     // options.WebSocket(null, undefined, options)`; a subclass may override
     // close() and the other virtual methods. Default: WebSocket itself.
     std::function<std::shared_ptr<ws::WebSocket>(const ServerOptions& options)> WebSocket{};
+    // Gateway observer receives only the fixed status and can return a request ID.
+    std::function<std::optional<std::string>(int)> onHandshakeRejection{};
   };
 
   // `handleUpgrade`'s callback: `(ws, req) => ...`.
@@ -442,6 +444,7 @@ namespace uos::rt::ws {
 
   private:
     std::shared_ptr<const void> pinEventReceiver() const override { return weak_from_this().lock(); }
+    void rejectHandshake(UpgradeSocket& socket, int status, std::string message = "", std::vector<std::pair<std::string, std::string>> headers = {});
     void completeUpgrade(const std::string& key, const std::vector<std::string>& protocols, const UpgradeRequest& request, UpgradeSocket& socket, Bytes head, UpgradeCallback cb);
     void emitClose();
     ServerOptions options_;

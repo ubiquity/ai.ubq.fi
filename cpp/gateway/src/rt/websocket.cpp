@@ -736,20 +736,36 @@ namespace uos::rt::ws {
     return true;
   }
 
+  void WebSocketServer::rejectHandshake(UpgradeSocket& socket, int status, std::string message,
+                                        std::vector<std::pair<std::string, std::string>> headers) {
+    if (options_.onHandshakeRejection) {
+      try {
+        auto requestId = options_.onHandshakeRejection(status);
+        const auto idCharacter = [](char ch) { return ch == '-' || (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f'); };
+        if (requestId && requestId->size() == 36 && std::all_of(requestId->begin(), requestId->end(), idCharacter)) {
+          headers.emplace_back("x-uos-request-id", std::move(*requestId));
+        }
+      } catch (...) {
+        // The transport observer never changes handshake behavior.
+      }
+    }
+    abortHandshake(socket, status, std::move(message), std::move(headers));
+  }
+
   void WebSocketServer::handleUpgrade(const UpgradeRequest& request, UpgradeSocket& socket, Bytes head, UpgradeCallback cb) {
     const std::optional<std::string> key = request.header("sec-websocket-key");
     const std::optional<std::string> upgrade = request.header("upgrade");
     const std::optional<std::string> versionHeader = request.header("sec-websocket-version");
     const double version = versionHeader ? stringToNumber(*versionHeader) : std::nan("");
-    if (request.method != "GET") return abortHandshake(socket, 405, "Invalid HTTP method");
-    if (!upgrade || toLowerCase(*upgrade) != "websocket") return abortHandshake(socket, 400, "Invalid Upgrade header");
-    if (!key || !validKey(*key)) return abortHandshake(socket, 400, "Missing or invalid Sec-WebSocket-Key header");
-    if (version != 13 && version != 8) return abortHandshake(socket, 400, "Missing or invalid Sec-WebSocket-Version header", {{"Sec-WebSocket-Version", "13, 8"}});
-    if (!shouldHandle(request)) return abortHandshake(socket, 400);
+    if (request.method != "GET") return rejectHandshake(socket, 405, "Invalid HTTP method");
+    if (!upgrade || toLowerCase(*upgrade) != "websocket") return rejectHandshake(socket, 400, "Invalid Upgrade header");
+    if (!key || !validKey(*key)) return rejectHandshake(socket, 400, "Missing or invalid Sec-WebSocket-Key header");
+    if (version != 13 && version != 8) return rejectHandshake(socket, 400, "Missing or invalid Sec-WebSocket-Version header", {{"Sec-WebSocket-Version", "13, 8"}});
+    if (!shouldHandle(request)) return rejectHandshake(socket, 400);
     std::vector<std::string> protocols;
     if (const auto secWebSocketProtocol = request.header("sec-websocket-protocol")) {
       auto offered = parseSubprotocols(*secWebSocketProtocol);
-      if (!offered) return abortHandshake(socket, 400, "Invalid Sec-WebSocket-Protocol header");
+      if (!offered) return rejectHandshake(socket, 400, "Invalid Sec-WebSocket-Protocol header");
       protocols = std::move(*offered);
     }
     completeUpgrade(*key, protocols, request, socket, std::move(head), std::move(cb));
@@ -762,7 +778,7 @@ namespace uos::rt::ws {
       takeSocket(socket)->destroy();
       return;
     }
-    if (state_ > RUNNING) return abortHandshake(socket, 503);
+    if (state_ > RUNNING) return rejectHandshake(socket, 503);
     const std::string digest = detail::handshakeAccept(key);
     std::vector<std::string> headers{"HTTP/1.1 101 Switching Protocols", "Upgrade: websocket", "Connection: Upgrade", "Sec-WebSocket-Accept: " + digest};
     std::shared_ptr<ws::WebSocket> websocket = options_.WebSocket(options_);

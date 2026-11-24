@@ -365,6 +365,10 @@ namespace uos::runtime::http {
     std::string_view omission;
   };
 
+  /** The optional returned ID can be attached to the transport rejection response. */
+  std::optional<std::string> reportTransportRejection(const std::function<void(const TransportRequestRejection&)>& observer,
+                                                       std::optional<int> status, std::string_view reason, std::string_view omission) noexcept;
+
   struct ServeHttpOptions {
     std::optional<std::string> hostname{};
     std::optional<double> port{};

@@ -197,6 +197,7 @@ ASYNC_TEST("failed live call retains only the authenticated AI session input") {
 
 ASYNC_TEST("ordinary failures journal only metadata and use the returned ID") {
   HttpFixture fixture;
+  uos::tests::helpers::responses_conformance_client::stageGatewayAssets();
   const rt::console::Capture logs({rt::console::Method::info});
   rt::RequestInit init;
   init.method = "UNRECOGNIZED-SECRET";

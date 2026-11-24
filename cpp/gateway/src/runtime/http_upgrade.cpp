@@ -66,6 +66,7 @@ namespace uos::runtime::http_upgrade {
     struct Upgrades {
       ServeUpgradeHandler handler;
       RequestAdapter requestAdapter;
+      std::function<void(const http::TransportRequestRejection&)> onTransportRejection;
       // `const sockets = new Set<WebSocket>()`
       rt::OrderedMap<const ws::WebSocket*, std::shared_ptr<ws::WebSocket>> sockets;
       bool stopping = false;
@@ -79,15 +80,32 @@ namespace uos::runtime::http_upgrade {
       return request;
     }
 
+    struct Refusal {
+      bool recorded = false;
+      std::optional<std::string> requestId;
+    };
+
+    std::optional<std::string> recordRefusal(const Upgrades& state, Refusal& refusal, int status, std::string_view reason) {
+      if (!refusal.recorded) {
+        refusal.recorded = true;
+        refusal.requestId = http::reportTransportRejection(state.onTransportRejection, status, reason, "no_body");
+      }
+      return refusal.requestId;
+    }
+
+    rt::Response transportRefusal(const Upgrades& state, Refusal& refusal, int status, std::string_view reason, std::string message) {
+      rt::ResponseInit init{.status = static_cast<double>(status)};
+      if (auto requestId = recordRefusal(state, refusal, status, reason)) init.headers.set("x-uos-request-id", *requestId);
+      return rt::Response(rt::BodyInit(std::move(message)), std::move(init));
+    }
+
     // The `try` block of upgrade().
     rt::Task<void> authorizeAndUpgrade(std::shared_ptr<Upgrades> state, std::shared_ptr<IncomingMessage> incoming, std::shared_ptr<UpgradeSocket> socket, rt::Bytes head,
-                                       rt::AbortController controller) {
+                                       rt::AbortController controller, std::shared_ptr<Refusal> observedRefusal) {
       const rt::Request request = state->requestAdapter(incoming, controller.signal());
       std::optional<UpgradeResult> result;
       if (!state->handler || state->stopping) {
-        rt::ResponseInit init;
-        init.status = 426;
-        result = rt::Response(rt::BodyInit(std::string("WebSocket upgrade unavailable")), std::move(init));
+        result = transportRefusal(*state, *observedRefusal, 426, "transport_ws_upgrade_unavailable", "WebSocket upgrade unavailable");
       } else {
         UpgradeInfo info{http::NetAddr{"tcp", incoming->socket()->remoteAddress().value_or(""), incoming->socket()->remotePort().value_or(0)}};
         const rt::Promise<UpgradeResult> handling(state->handler(request, std::move(info)));
@@ -95,6 +113,11 @@ namespace uos::runtime::http_upgrade {
       }
       if (controller.signal().aborted() || socket->destroyed()) co_return;
       if (const rt::Response* refusal = std::get_if<rt::Response>(&*result)) {
+        if (!observedRefusal->recorded) {
+          // A returned application refusal already owns its request event.
+          observedRefusal->recorded = true;
+          observedRefusal->requestId = refusal->headers().get("x-uos-request-id");
+        }
         auto refusing = refuseUpgrade(socket, *refusal);
         co_await std::move(refusing);
         co_return;
@@ -108,9 +131,7 @@ namespace uos::runtime::http_upgrade {
       }
       // Even the cached module resumes on a microtask. Check before the synchronous handoff.
       if (state->stopping) {
-        rt::ResponseInit init;
-        init.status = 503;
-        auto refusing = refuseUpgrade(socket, rt::Response(rt::BodyInit(std::string("Server shutting down")), std::move(init)));
+        auto refusing = refuseUpgrade(socket, transportRefusal(*state, *observedRefusal, 503, "transport_ws_shutdown", "Server shutting down"));
         co_await std::move(refusing);
         co_return;
       }
@@ -121,6 +142,11 @@ namespace uos::runtime::http_upgrade {
       options.clientTracking = false;
       options.perMessageDeflate = false;
       options.maxPayload = accepted.maxPayloadBytes;
+      if (state->onTransportRejection) {
+        options.onHandshakeRejection = [state, observedRefusal](int status) {
+          return recordRefusal(*state, *observedRefusal, status, "transport_ws_invalid_handshake");
+        };
+      }
       options.WebSocket = [payloadLimitClose](const ws::ServerOptions& serverOptions) -> std::shared_ptr<ws::WebSocket> {
         return std::make_shared<PayloadLimitedSocket>(serverOptions.autoPong, payloadLimitClose);
       };
@@ -156,9 +182,10 @@ namespace uos::runtime::http_upgrade {
       const IncomingListener closed([controller](const IncomingEvent&) { controller.abort(rt::makeReason(rt::JsError("WebSocket upgrade disconnected"))); });
       socket->once("close", closed);
       socket->once("error", closed);
+      auto observedRefusal = std::make_shared<Refusal>();
       rt::Reason failure;
       try {
-        auto upgrading = authorizeAndUpgrade(state, incoming, socket, std::move(head), controller);
+        auto upgrading = authorizeAndUpgrade(state, incoming, socket, std::move(head), controller, observedRefusal);
         co_await std::move(upgrading);
       } catch (...) {
         failure = std::current_exception();
@@ -166,9 +193,7 @@ namespace uos::runtime::http_upgrade {
       rt::Reason refusalFailure;
       if (failure && !socket->destroyed()) {
         try {
-          rt::ResponseInit init;
-          init.status = 500;
-          auto refusing = refuseUpgrade(socket, rt::Response(rt::BodyInit(std::string("WebSocket upgrade failed")), std::move(init)));
+          auto refusing = refuseUpgrade(socket, transportRefusal(*state, *observedRefusal, 500, "transport_ws_upgrade_error", "WebSocket upgrade failed"));
           co_await std::move(refusing);
         } catch (...) {
           refusalFailure = std::current_exception();
@@ -202,10 +227,12 @@ namespace uos::runtime::http_upgrade {
     }
   }
 
-  WebSocketUpgrades createWebSocketUpgrades(ServeUpgradeHandler handler, RequestAdapter requestAdapter) {
+  WebSocketUpgrades createWebSocketUpgrades(ServeUpgradeHandler handler, RequestAdapter requestAdapter,
+    std::function<void(const http::TransportRequestRejection&)> onTransportRejection) {
     auto state = std::make_shared<Upgrades>();
     state->handler = std::move(handler);
     state->requestAdapter = std::move(requestAdapter);
+    state->onTransportRejection = std::move(onTransportRejection);
     WebSocketUpgrades upgrades;
     upgrades.upgrade = [state](std::shared_ptr<IncomingMessage> incoming, std::shared_ptr<UpgradeSocket> socket, rt::Bytes head) {
       return upgrade(state, std::move(incoming), std::move(socket), std::move(head));

@@ -21,6 +21,10 @@
 #include <string>
 #include <variant>
 
+namespace uos::runtime::http {
+  struct TransportRequestRejection;
+}
+
 namespace uos::runtime::http_upgrade {
   // Readonly<{ code: number; reason: string }>
   struct PayloadLimitClose {
@@ -61,7 +65,8 @@ namespace uos::runtime::http_upgrade {
   };
 
   /** Upgrade authorization finishes before ws writes the switching-protocols reply. */
-  WebSocketUpgrades createWebSocketUpgrades(ServeUpgradeHandler handler, RequestAdapter requestAdapter);
+  WebSocketUpgrades createWebSocketUpgrades(ServeUpgradeHandler handler, RequestAdapter requestAdapter,
+    std::function<void(const http::TransportRequestRejection&)> onTransportRejection = {});
 }
 
 #endif

@@ -527,6 +527,56 @@ ASYNC_TEST("WebSocket authorization refuses before upgrade and preserves real bi
   co_await std::move(stopping10_);
 }
 
+ASYNC_TEST("WebSocket transport logs malformed handshakes and fallback failures once") {
+  using uos::runtime::http::TransportRequestRejection;
+  std::vector<TransportRequestRejection> failures;
+  ServeHttpOptions options = loopbackOptions();
+  options.onTransportRejection = [&failures](const TransportRequestRejection& event) { failures.push_back(event); };
+  const auto ordinary = [](rt::Request, ServeHandlerInfo) { return rt::fulfilledTask(rt::Response("ordinary")); };
+  const std::string invalidKey =
+    "GET /upgrade?private=query HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n"
+    "Sec-WebSocket-Key: not-a-key\r\nSec-WebSocket-Version: 13\r\nAuthorization: Bearer fixture\r\n\r\n";
+  const auto missing = serveHttp(options, ordinary);
+  const auto missingAddress = co_await missing.ready.wait();
+  auto missingReply = firstRawReply(missingAddress, invalidKey);
+  const auto unavailable = co_await std::move(missingReply);
+  EXPECT(unavailable.find("HTTP/1.1 426") != std::string::npos);
+  ASSERT_EQ(failures.size(), 1U);
+  EXPECT_EQ(failures.back().reason, "transport_ws_upgrade_unavailable");
+  EXPECT(unavailable.find(failures.back().requestId) != std::string::npos);
+  co_await missing.shutdown().wait();
+
+  options.upgrade = [](rt::Request req, UpgradeInfo) -> rt::Task<UpgradeResult> {
+    if (rt::URL(req.url()).pathname() == "/throw") throw rt::JsError("private exception marker");
+    if (rt::URL(req.url()).pathname() == "/app") co_return rt::Response("denied", rt::ResponseInit{.status = 401});
+    WebSocketUpgrade accepted;
+    accepted.maxPayloadBytes = 1024;
+    accepted.accept = [](std::shared_ptr<ws::WebSocket>) { EXPECT(false); };
+    co_return accepted;
+  };
+  const auto server = serveHttp(options, ordinary);
+  const auto address = co_await server.ready.wait();
+  auto malformed = firstRawReply(address, invalidKey);
+  const auto handshake = co_await std::move(malformed);
+  EXPECT(handshake.find("HTTP/1.1 400") != std::string::npos);
+  ASSERT_EQ(failures.size(), 2U);
+  EXPECT_EQ(failures.back().reason, "transport_ws_invalid_handshake");
+  EXPECT_EQ(failures.back().omission, "no_body");
+  EXPECT(handshake.find(failures.back().requestId) != std::string::npos);
+  auto thrown = firstRawReply(address, std::string(invalidKey).replace(4, 8, "/throw"));
+  const auto internal = co_await std::move(thrown);
+  EXPECT(internal.find("HTTP/1.1 500") != std::string::npos);
+  EXPECT(internal.find("private exception marker") == std::string::npos);
+  ASSERT_EQ(failures.size(), 3U);
+  EXPECT_EQ(failures.back().reason, "transport_ws_upgrade_error");
+  EXPECT(internal.find(failures.back().requestId) != std::string::npos);
+  auto refused = firstRawReply(address, std::string(invalidKey).replace(4, 8, "/app"));
+  const auto denial = co_await std::move(refused);
+  EXPECT(denial.find("HTTP/1.1 401") != std::string::npos);
+  EXPECT_EQ(failures.size(), 3U);
+  co_await server.shutdown().wait();
+}
+
 ASYNC_TEST("WebSocket hard payload limit preserves the route's failure close contract") {
   auto messages = std::make_shared<int>(0);
   ServeHttpOptions options = loopbackOptions();

@@ -389,7 +389,17 @@ ASYNC_TEST("received-body observation distinguishes partial and over-limit paylo
     observeRawBodyOnce(req, [](std::shared_ptr<rt::Bytes>) { EXPECT(false); },
       [&status](const std::string& reason) { status = reason; }, request::RawBodyStage::received);
   };
-  const rt::Request partial = post(rt::BodyInit(streamOf({bytesOf("{")}, "interrupted")));
+  rt::UnderlyingSource<rt::ByteChunk> source;
+  source.pull = [sent = false](rt::ReadableStreamDefaultController<rt::ByteChunk> controller) mutable {
+    if (sent) controller.error(rt::makeReason(rt::JsError("interrupted")));
+    else {
+      sent = true;
+      controller.enqueue(bytesOf("{"));
+    }
+  };
+  rt::QueuingStrategy strategy;
+  strategy.highWaterMark = 0;
+  const rt::Request partial = post(rt::BodyInit(rt::ByteStream(std::move(source), strategy)));
   std::optional<std::string> status;
   observe(partial, status);
   (void)co_await readJsonBodyWithLimit(partial, 1024);

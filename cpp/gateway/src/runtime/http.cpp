@@ -29,15 +29,16 @@
 #include <utility>
 
 namespace uos::runtime::http {
-  namespace {
-    void reportRejection(const std::function<void(const TransportRequestRejection&)>& observer, std::optional<int> status,
-                         std::string_view reason, std::string_view omission) noexcept {
-      if (!observer) return;
-      try {
-        observer({rt::crypto::randomUUID(), status, reason, omission});
-      } catch (...) {
-        // Observability cannot change rejection or socket behavior.
-      }
+  std::optional<std::string> reportTransportRejection(const std::function<void(const TransportRequestRejection&)>& observer, std::optional<int> status,
+                                                       std::string_view reason, std::string_view omission) noexcept {
+    if (!observer) return std::nullopt;
+    try {
+      const TransportRequestRejection result{rt::crypto::randomUUID(), status, reason, omission};
+      observer(result);
+      return result.requestId;
+    } catch (...) {
+      // Observability cannot change rejection or socket behavior.
+      return std::nullopt;
     }
   }
 
@@ -663,7 +664,7 @@ namespace uos::runtime::http {
         readEnded = true;
         upgrade.readable = false;
         if (phase == Phase::head && server && !input.empty()) {
-          reportRejection(server->impl().onTransportRejection, std::nullopt, "transport_truncated_head", "body_unread");
+          reportTransportRejection(server->impl().onTransportRejection, std::nullopt, "transport_truncated_head", "body_unread");
         }
         if (phase == Phase::lingering || phase == Phase::head) {
           destroy(nullptr);
@@ -719,8 +720,8 @@ namespace uos::runtime::http {
       void refuseHead(std::string_view head, int status) {
         refuse(head);
         if (!server) return;
-        if (status == 413) reportRejection(server->impl().onTransportRejection, status, "transport_body_limit", "body_over_limit");
-        else reportRejection(server->impl().onTransportRejection, status,
+        if (status == 413) reportTransportRejection(server->impl().onTransportRejection, status, "transport_body_limit", "body_over_limit");
+        else reportTransportRejection(server->impl().onTransportRejection, status,
                              status == 431 ? "transport_header_limit" : "transport_invalid_head", "body_unread");
       }
 
@@ -2076,7 +2077,7 @@ namespace uos::runtime::http {
           if (isAdminRequest(request)) outgoing->setHeader("cache-control", "no-store");
           outgoing->setHeader("content-type", "text/plain; charset=utf-8");
           outgoing->end("Internal Server Error");
-          reportRejection(state->options.onTransportRejection, 500, "transport_handler_error", "body_unread");
+          reportTransportRejection(state->options.onTransportRejection, 500, "transport_handler_error", "body_unread");
         }
       }
       const rt::Promise<void> delivered = completed.catch_(rt::ignoreRejection);
@@ -2156,7 +2157,7 @@ namespace uos::runtime::http {
     auto state = std::make_shared<ServeState>();
     state->options = std::move(options);
     state->handler = std::move(handler);
-    state->upgrades = http_upgrade::createWebSocketUpgrades(state->options.upgrade, incomingRequest);
+    state->upgrades = http_upgrade::createWebSocketUpgrades(state->options.upgrade, incomingRequest, state->options.onTransportRejection);
     auto readyResolvers = rt::withResolvers<NetAddr>();
     auto finishedResolvers = rt::withResolvers<void>();
     state->ready = readyResolvers.promise;

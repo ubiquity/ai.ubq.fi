@@ -147,7 +147,7 @@ namespace {
     return {{"kind", "upgrade"}, {"samePrepared", samePrepared}, {"maxPayloadBytes", result.maxPayloadBytes}, {"headers", headers},
             {"payloadLimitClose", json::object{{"code", result.payloadLimitClose->code}, {"reason", result.payloadLimitClose->reason}}}};
   }
-  rt::Task<void> runScenario(std::size_t index) {
+  rt::Task<void> runScenario(std::size_t index, bool checkRejectionJournal = false) {
     harness::Fixture fixture;
     const auto savedOrigin = uos::config::config.allowOrigin;
     uos::config::config.allowOrigin = "*";
@@ -205,6 +205,20 @@ namespace {
     observed.emplace("randomCalls", scenario.randomCalls);
     observed.emplace("requestBodyUsed", scenario.request->bodyUsed());
     EXPECT_EQ(rt::jsonStringify(observed), rt::jsonStringify(*rt::get(row, "expected")));
+    if (checkRejectionJournal) {
+      const auto calls = fixture.logging.calls();
+      ASSERT_EQ(calls.size(), 1U);
+      ASSERT_EQ(calls.front().args.size(), 2U);
+      EXPECT(calls.front().args[0] == std::string_view("[ai.ubq.fi] request_failure"));
+      EXPECT(calls.front().text.find("fixture-client-bearer") == std::string::npos);
+      EXPECT(calls.front().text.find("/other") == std::string::npos);
+      const auto event = rt::jsonParse(calls.front().args[1].string());
+      EXPECT_EQ(rt::getString(event, "route").value(), "live.upgrade");
+      EXPECT_EQ(rt::getString(event, "request_id").value(), "00000000-0000-4000-8000-000000000000");
+      EXPECT_EQ(rt::getBool(event, "body_present"), std::optional<bool>(false));
+      EXPECT_EQ(rt::getBool(event, "authenticated"), std::optional<bool>(false));
+      EXPECT_EQ(rt::getString(event, "body_evidence").value(), "no_body");
+    }
     EXPECT(fixture.calls.empty());
     EXPECT(fixture.refreshTokens.empty());
     EXPECT(!rt::env::has("CODEX_HOME"));
@@ -290,19 +304,6 @@ ASYNC_TEST("live handler Upgrade auth rejection escapes") { auto task = runScena
 ASYNC_TEST("live handler Upgrade preparation rejection escapes") { auto task = runScenario(23); co_await std::move(task); }
 
 ASYNC_TEST("live WebSocket rejection logs one metadata-only request event") {
-  const rt::console::Capture logs({rt::console::Method::info});
-  auto unknown = runScenario(15);
+  auto unknown = runScenario(15, true);
   co_await std::move(unknown);
-  const auto calls = logs.calls();
-  ASSERT_EQ(calls.size(), 1U);
-  ASSERT_EQ(calls.front().args.size(), 2U);
-  EXPECT(calls.front().args[0] == std::string_view("[ai.ubq.fi] request_failure"));
-  EXPECT(calls.front().text.find("fixture-client-bearer") == std::string::npos);
-  EXPECT(calls.front().text.find("/other") == std::string::npos);
-  const auto event = rt::jsonParse(calls.front().args[1].string());
-  EXPECT_EQ(rt::getString(event, "route").value(), "live.upgrade");
-  EXPECT_EQ(rt::getString(event, "request_id").value(), "00000000-0000-4000-8000-000000000000");
-  EXPECT_EQ(rt::getBool(event, "body_present"), std::optional<bool>(false));
-  EXPECT_EQ(rt::getBool(event, "authenticated"), std::optional<bool>(false));
-  EXPECT_EQ(rt::getString(event, "body_evidence").value(), "no_body");
 }
