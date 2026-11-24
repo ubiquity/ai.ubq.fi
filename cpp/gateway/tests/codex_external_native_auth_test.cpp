@@ -11,7 +11,7 @@
 // Links: tests/codex_external_native_auth_test.cpp src/codex/auth_repair.cpp src/codex/auth.cpp src/codex/auth_refresh.cpp
 //        src/codex/native_auth.cpp src/codex/native_auth_transport.cpp src/codex/external_auth.cpp src/codex/capacity_routing.cpp
 //        src/codex/rate_limit_429.cpp src/codex/routing_mutations.cpp src/codex/routing_state.cpp src/codex/routing_evaluation.cpp
-//        src/codex/account_routing.cpp src/codex/routing_serial.cpp src/codex/overage_settings.cpp src/authority/native_codex.cpp
+//        src/codex/account_routing.cpp src/codex/routing_serial.cpp src/codex/{overage_settings,reset_settings}.cpp src/authority/native_codex.cpp
 //        src/authority/native_codex_429.cpp src/authority/native_codex_capacity.cpp src/authority/native_codex_contracts.cpp
 //        src/authority/native_codex_evaluation.cpp src/authority/native_codex_mutations.cpp src/bounded_response_body.cpp src/config.cpp
 //        src/kv.cpp src/models/codex_models_availability.cpp src/provider/claude_code_accounts.cpp src/provider/claude_code_credentials.cpp src/provider/health.cpp

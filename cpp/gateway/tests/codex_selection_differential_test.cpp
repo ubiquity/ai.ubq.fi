@@ -8,7 +8,7 @@
 // no such member, so that key is dropped from the expectation.
 // Links: tests/codex_selection_differential_test.cpp tests/helpers/codex_diff_kv.cpp src/codex/account_routing.cpp src/codex/routing_serial.cpp
 //        src/codex/routing_evaluation.cpp src/codex/capacity_routing.cpp src/codex/rate_limit_429.cpp src/codex/routing_mutations.cpp
-//        src/codex/overage_settings.cpp src/codex/routing_state.cpp src/codex/auth.cpp src/codex/native_auth.cpp src/codex/native_auth_transport.cpp
+//        src/codex/{overage_settings,reset_settings}.cpp src/codex/routing_state.cpp src/codex/auth.cpp src/codex/native_auth.cpp src/codex/native_auth_transport.cpp
 //        src/codex/external_auth.cpp src/authority/native_codex.cpp src/authority/native_codex_429.cpp src/authority/native_codex_capacity.cpp
 //        src/authority/native_codex_contracts.cpp src/authority/native_codex_evaluation.cpp src/authority/native_codex_mutations.cpp
 //        src/models/codex_models_availability.cpp src/provider/selection.cpp src/provider/presentation.cpp src/provider/health.cpp

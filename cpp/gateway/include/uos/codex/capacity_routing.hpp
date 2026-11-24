@@ -91,6 +91,8 @@ namespace uos::codex::capacity_routing {
   // `Promise<Kv | null>`: a null pointer is null.
   [[nodiscard]] rt::Task<std::shared_ptr<rt::Kv>> openRoutingKv();
 
+  void setCapacityRoutingObservationCache(std::vector<routing_state::CodexCapacityRoutingObservation> observations, double now);
+
   [[nodiscard]] rt::Task<std::optional<bool>> readQuotaUsageProbePolicy(std::shared_ptr<rt::Kv> kv, std::string accountId);
 
   enum class QuotaUsageProbeResult { optedOut, refreshed, unavailable };

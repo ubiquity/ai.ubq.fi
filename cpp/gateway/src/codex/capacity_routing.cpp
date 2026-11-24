@@ -1,20 +1,14 @@
 #include "uos/codex/capacity_routing.hpp"
 
 #include "uos/authority/native_codex_evaluation.hpp"
-#include "uos/bounded_response_body.hpp"
-#include "uos/codex/overage_settings.hpp"
-#include "uos/codex/reset_settings.hpp"
-#include "uos/codex/routing_serial.hpp"
 #include "uos/kv.hpp"
 #include "uos/provider/capacity_contract.hpp"
-#include "uos/provider/capacity_parse.hpp"
 #include "uos/rt/clock.hpp"
 #include "uos/rt/json.hpp"
 #include "uos/rt/number.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/utils.hpp"
 
-#include <algorithm>
 #include <exception>
 #include <tuple>
 #include <utility>
@@ -41,91 +35,6 @@ namespace uos::codex::capacity_routing {
     using routing_state::routingStateCache;
 
     rt::KvGetOptions strongRead() { return rt::KvGetOptions{.consistency = rt::KvConsistencyLevel::strong}; }
-
-    namespace usage = provider::capacity_parse;
-
-    std::optional<CodexCapacityRoutingWindow> routingWindow(const std::optional<provider::capacity_contract::ProviderCapacityWindow>& window) {
-      if (!window) return std::nullopt;
-      return CodexCapacityRoutingWindow{window->limit_window_seconds, window->used_percent, window->reset_at_ms};
-    }
-
-    bool includedCapacityPermitted(const json::value* limit) {
-      const auto* allowed = rt::get(limit, "allowed");
-      const auto* reached = rt::get(limit, "limit_reached");
-      return (!allowed || rt::getBool(allowed) == true) && (!reached || rt::getBool(reached) == false);
-    }
-
-    rt::Task<std::optional<CodexCapacityRoutingObservation>> readQuotaUsage(RoutingAccount account, double startedAt,
-                                                                            std::optional<rt::AbortSignal> requestSignal,
-                                                                            bool requireScopedWindows) {
-      constexpr double TIMEOUT_MS = 8'000;
-      const auto timeout = rt::AbortSignal::timeout(TIMEOUT_MS);
-      const auto signal = requestSignal ? rt::AbortSignal::any({*requestSignal, timeout}) : timeout;
-      rt::RequestInit init;
-      init.method = "GET";
-      init.headers = rt::Headers{{"Authorization", "Bearer " + account.auth.access_token}, {"ChatGPT-Account-ID", account.auth.account_id},
-                                 {"Accept", "application/json"}, {"User-Agent", "codex_cli_rs/0.100.0 (ai.ubq.fi)"}};
-      init.redirect = "manual";
-      init.signal = signal;
-      auto request = rt::fetch(usage::codexUsageUrl(), std::move(init));
-      const auto response = co_await std::move(request);
-      if (!response.ok()) {
-        if (const auto body = response.body()) rt::spawn(body->cancel(), rt::ignoreRejection);
-        co_return std::nullopt;
-      }
-      const bounded_response_body::ReadBoundedResponseBodyOptions bodyOptions{
-        .signal = signal, .maxBytes = std::nullopt, .timeoutMs = TIMEOUT_MS, .cancellationReason = std::nullopt,
-      };
-      auto reading = bounded_response_body::readBoundedResponseBody(response, bodyOptions);
-      const auto result = co_await std::move(reading);
-      if (!result.complete || result.bytes.empty() || signal.aborted()) co_return std::nullopt;
-      const auto payload = rt::jsonParse(std::string_view(reinterpret_cast<const char*>(result.bytes.data()), result.bytes.size()));
-      if (const auto* responseAccount = rt::get(payload, "account_id"); responseAccount && rt::getString(responseAccount) != account.auth.account_id)
-        co_return std::nullopt;
-      const auto parsed = usage::parseCodexUsage(payload);
-      if (!parsed) co_return std::nullopt;
-      CodexCapacityRoutingObservation observation{
-        .slot = account.slot, .account_id_hash = account.accountIdHash, .state = "available",
-        .source_observed_at_ms = startedAt, .snapshot_at_ms = startedAt,
-        .windows = {routingWindow(parsed->primary), routingWindow(parsed->secondary)},
-      };
-      for (const auto& limit : usage::additionalRateLimitsForRouting(parsed->additional_rate_limits, startedAt)) {
-        observation.additional_rate_limits.push_back({limit.limit_name, limit.metered_feature,
-                                                       {routingWindow(limit.windows.primary), routingWindow(limit.windows.secondary)}});
-      }
-      const auto model = account.requestedModel.hasValue() ? std::optional<std::string_view>(*account.requestedModel) : std::nullopt;
-      bool permitsIncluded = includedCapacityPermitted(rt::get(payload, "rate_limit"));
-      if (model) {
-        bool scoped = false;
-        bool scopedPermitsIncluded = true;
-        if (const auto* limits = rt::getArray(payload, "additional_rate_limits")) {
-          for (const auto& raw : *limits) {
-            const auto name = rt::getString(raw, "limit_name");
-            if (!name || !capacityDecisions::capacityLimitMatchesModel(*name, *model)) continue;
-            scoped = true;
-            scopedPermitsIncluded = scopedPermitsIncluded && includedCapacityPermitted(rt::get(raw, "rate_limit"));
-          }
-        }
-        const bool hasParsedScope = std::any_of(observation.additional_rate_limits.begin(), observation.additional_rate_limits.end(), [&model](const auto& limit) {
-          return capacityDecisions::capacityLimitMatchesModel(limit.limit_name, *model);
-        });
-        if ((scoped || requireScopedWindows) && !hasParsedScope) co_return std::nullopt;
-        if (scoped) permitsIncluded = scopedPermitsIncluded;
-      }
-      const double now = rt::dateNow();
-      const auto headroom = capacityDecisions::capacityHeadroomForObservation(observation, model);
-      if ((permitsIncluded && headroom && *headroom > 0) || capacityDecisions::capacityExhaustedResetAtMs(observation, model, now))
-        co_return observation;
-      co_return std::nullopt;
-    }
-
-    std::optional<CodexAccountRoutingState> withoutUsageProbeLease(const CodexAccountRoutingState& state, const RoutingAccount& account, double now) {
-      const auto* slot = rt::at(state.slots, account.slot);
-      if (!slot || !slotMatchesRoutingAccount(*slot, account) || !probeLeaseMatchesRoutingAccount(*slot, account)) return std::nullopt;
-      auto next = *slot;
-      next.probe_lease.reset();
-      return capacityDecisions::withSlot(state, account.slot, next, now);
-    }
 
     rt::Task<std::string> codexRoutingAccountIdHashForId(std::string accountId) {
       rt::Promise<std::string> hashing(utils::sha256Hex(std::string("uos_ai") + '\0' + "codex_routing_account" + '\0' + accountId));
@@ -538,77 +447,9 @@ namespace uos::codex::capacity_routing {
     co_return nullptr;
   }
 
-  rt::Task<std::optional<bool>> readQuotaUsageProbePolicy(std::shared_ptr<rt::Kv> kv, std::string accountId) {
-    try {
-      if (!kv) co_return std::nullopt;
-      const auto hash = co_await utils::sha256Hex(std::move(accountId));
-      if (!(co_await overage_settings::readOverageUsage(kv, hash))) co_return false;
-      const auto reset = co_await reset_settings::readCodexResetUsage(kv, hash);
-      if (reset.allowed) co_return true;
-      if (reset.entries.size() == 1 && reset.entries.front().value.isObject()) {
-        const auto& enabled = reset.entries.front().value["enabled"];
-        if (enabled.isBool() && !enabled.asBool()) co_return false;
-      }
-    } catch (...) {
-    }
-    co_return std::nullopt;
-  }
-
-  rt::Task<QuotaUsageProbeResult> refreshCodexQuotaUsage(RoutingAccount account, std::optional<rt::AbortSignal> signal) {
-    try {
-      const auto kv = co_await openRoutingKv();
-      if (!kv) co_return QuotaUsageProbeResult::unavailable;
-      const auto enabled = co_await readQuotaUsageProbePolicy(kv, account.auth.account_id);
-      if (!enabled) co_return QuotaUsageProbeResult::unavailable;
-      if (!*enabled) co_return QuotaUsageProbeResult::optedOut;
-      const auto rows = co_await routing_serial::readStrongCodexRoutingRows(kv);
-      if (!account.activeGeneration || rows.authEntry.versionstamp != account.activePoolVersionstamp ||
-          !routing_state::isCodexActiveAccountSelectionCurrent(rows.activeEntry.value, account, *account.activeGeneration)) co_return QuotaUsageProbeResult::unavailable;
-      const auto state = parseCodexAccountRoutingState(rows.routingEntry.value);
-      const auto* slot = state ? rt::at(state->slots, account.slot) : nullptr;
-      const double startedAt = rt::dateNow();
-      if (!slot || !slot->probe_lease || slot->probe_lease->expires_at_ms <= startedAt ||
-          slot->invalid_credential_version == account.credentialVersion) co_return QuotaUsageProbeResult::unavailable;
-      if (!slotMatchesRoutingAccount(*slot, account) || !probeLeaseMatchesRoutingAccount(*slot, account))
-        co_return QuotaUsageProbeResult::unavailable;
-      const auto durable = capacityDecisions::parseStoredCapacityObservationStore(rows.capacityEntry.value);
-      const auto model = account.requestedModel.hasValue() ? std::optional<std::string_view>(*account.requestedModel) : std::nullopt;
-      bool requireScopedWindows = false;
-      if (model) {
-        for (const auto& observation : durable) {
-          if (observation.account_id_hash != account.accountIdHash) continue;
-          requireScopedWindows = std::any_of(observation.additional_rate_limits.begin(), observation.additional_rate_limits.end(), [&model](const auto& limit) {
-            return capacityDecisions::capacityLimitMatchesModel(limit.limit_name, *model);
-          });
-        }
-      }
-      const auto observation = co_await readQuotaUsage(account, startedAt, signal, requireScopedWindows);
-      const double now = rt::dateNow();
-      if (!observation || slot->probe_lease->expires_at_ms <= now || (signal && signal->aborted())) co_return QuotaUsageProbeResult::unavailable;
-      const std::vector observations{*observation};
-      const auto plan = capacityDecisions::planCapacityObservationStore(rows.capacityEntry.versionstamp, durable, observations, now);
-      const auto released = withoutUsageProbeLease(*state, account, now);
-      if (!released) co_return QuotaUsageProbeResult::unavailable;
-      auto operation = kv->atomic();
-      operation->check(rows.activeEntry).check(rows.authEntry).check(rows.routingEntry).check(rows.capacityEntry);
-      operation->set(CODEX_CAPACITY_ROUTING_OBSERVATION_KV_KEY, rt::KvValue(capacityDecisions::toJson(plan.writes.capacity)));
-      operation->set(CODEX_ACCOUNT_ROUTING_KV_KEY, rt::KvValue(routing_state::toJson(*released)));
-      const auto commit = co_await operation->commit();
-      if (!commit.ok) co_return QuotaUsageProbeResult::unavailable;
-      routing_state::setRoutingStateCache(*released, commit.versionstamp);
-      cachedCapacityObservations = plan.writes.capacity.observations;
-      cachedCapacityObservationsLoadedAtMs = now;
-      co_return QuotaUsageProbeResult::refreshed;
-    } catch (...) {
-      co_return QuotaUsageProbeResult::unavailable;
-    }
-  }
-
-  rt::Task<void> releaseCodexQuotaUsageProbe(RoutingAccount account) {
-    auto updating = updateRoutingState([account](const CodexAccountRoutingState& state) {
-      return withoutUsageProbeLease(state, account, rt::dateNow());
-    });
-    co_await std::move(updating);
+  void setCapacityRoutingObservationCache(std::vector<CodexCapacityRoutingObservation> observations, double now) {
+    cachedCapacityObservations = std::move(observations);
+    cachedCapacityObservationsLoadedAtMs = now;
   }
 
   rt::Task<std::vector<CodexCapacityRoutingObservation>> loadCodexCapacityRoutingObservations(::uos::types::CodexAuthPoolState pool, bool forceKv) {
