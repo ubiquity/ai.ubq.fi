@@ -264,12 +264,14 @@ ASYNC_TEST("concurrent live evaluations with different first choices consume one
   secondProvider->inventory = inventory("credit-b", fixture.clock->nowMs + 40'000);
   const auto bothRead = std::make_shared<Deferred<>>();
   std::size_t reads = 0;
-  fixture.provider->readInventoryReplacement = [&](uos::codex::banked_reset_provider::ResetAccountContext, rt::AbortSignal)
-      -> rt::Task<uos::codex::banked_reset_provider::ResetInventory> {
+  fixture.provider->readInventoryReplacement = [&](uos::codex::banked_reset_provider::ResetAccountContext, rt::AbortSignal) {
     const bool firstEvaluation = ++reads == 1;
+    const double expiresAtMs = fixture.clock->nowMs + (firstEvaluation ? 20'000 : 50'000);
     if (!firstEvaluation) bothRead->resolve();
-    co_await bothRead->promise.wait();
-    co_return inventory("credit-a", fixture.clock->nowMs + (firstEvaluation ? 20'000 : 50'000));
+    return rt::async([ready = bothRead->promise, expiresAtMs]() -> rt::Task<uos::codex::banked_reset_provider::ResetInventory> {
+      co_await ready.wait();
+      co_return inventory("credit-a", expiresAtMs);
+    });
   };
   const auto pool = fullPool(first, fixture.provider, second, secondProvider);
   const auto deps = dependencies(fixture.kv, fixture.provider, fixture.clock, h::config({.mode = "live", .maxPerAccountPerDay = 1}));

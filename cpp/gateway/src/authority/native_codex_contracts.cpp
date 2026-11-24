@@ -253,7 +253,8 @@ namespace uos::authority::native_codex_contracts {
       const bool bankedResetRecoveryProbePending = isTrue(member(value, "banked_reset_recovery_probe_pending"));
       std::vector<std::string> quotaBlockedClasses = parseQuotaBlockedClasses(member(value, "quota_blocked_classes"));
       static const json::value emptyObject = json::object{};
-      const json::value* rawClassBlocks = isRecord(member(value, "quota_blocks_by_class")) ? member(value, "quota_blocks_by_class") : &emptyObject;
+      const json::value* storedClassBlocks = member(value, "quota_blocks_by_class");
+      const json::value* rawClassBlocks = rt::isRecord(storedClassBlocks) ? storedClassBlocks : &emptyObject;
       const bool unmarkedSyntheticLegacyUnknown = hasUnmarkedSyntheticLegacyUnknown(rawClassBlocks);
       CodexQuotaBlocksByClass quotaBlocksByClass = parseQuotaBlocksByClass(
         rawClassBlocks, unmarkedSyntheticLegacyUnknown, CodexSlotClassBlockFields{observedResetAtMs, observedResetAtIsStable, bankedResetGenerationAmbiguous, bankedResetRecoveryProbePending});
