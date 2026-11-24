@@ -253,6 +253,34 @@ ASYNC_TEST("invalid or ineligible live inventory cannot consume") {
   }
 }
 
+ASYNC_TEST("concurrent live evaluations with different first choices consume one cohort credit") {
+  Isolation isolation;
+  Fixture fixture;
+  const auto first = candidate({.accountId = "test-account-a", .routingGeneration = 7});
+  const auto second = candidate({.accountId = "test-account-b", .routingGeneration = 8});
+  DONE(seedFences(fixture.kv, first));
+  DONE(seedFences(fixture.kv, second));
+  const auto secondProvider = std::make_shared<FakeCodexUsageResetProvider>();
+  secondProvider->inventory = inventory("credit-b", fixture.clock->nowMs + 40'000);
+  const auto bothRead = std::make_shared<Deferred<>>();
+  std::size_t reads = 0;
+  fixture.provider->readInventoryReplacement = [&](uos::codex::banked_reset_provider::ResetAccountContext, rt::AbortSignal)
+      -> rt::Task<uos::codex::banked_reset_provider::ResetInventory> {
+    const bool firstEvaluation = ++reads == 1;
+    if (!firstEvaluation) bothRead->resolve();
+    co_await bothRead->promise.wait();
+    co_return inventory("credit-a", fixture.clock->nowMs + (firstEvaluation ? 20'000 : 50'000));
+  };
+  const auto pool = fullPool(first, fixture.provider, second, secondProvider);
+  const auto deps = dependencies(fixture.kv, fixture.provider, fixture.clock, h::config({.mode = "live", .maxPerAccountPerDay = 1}));
+  rt::Promise<PoolOutcome> left(evaluateCodexBankedResetPool(pool, deps));
+  rt::Promise<PoolOutcome> right(evaluateCodexBankedResetPool(pool, deps));
+  const auto outcomes = co_await rt::all(left, right).wait();
+  EXPECT_EQ(reads, 2u);
+  EXPECT_EQ(fixture.provider->redeemInputs.size() + secondProvider->redeemInputs.size(), 1u);
+  EXPECT((std::get<0>(outcomes).kind == "verified") != (std::get<1>(outcomes).kind == "verified"));
+}
+
 ASYNC_TEST("sequential shadow duplicates skip inventory only after current strong fences pass") {
   Isolation isolation;
 
