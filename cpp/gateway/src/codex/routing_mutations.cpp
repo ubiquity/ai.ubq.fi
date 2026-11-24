@@ -104,7 +104,9 @@ namespace uos::codex::routing_mutations {
         recoveryLease.expires_at_ms = probeExpiresAtMs;
         recoveryLease.generation = nextGeneration;
         recoveryLease.circuit = "quota";
-        recoveryLease.quota_class = requestedQuotaClass;
+        const auto scope = authority::native_codex_capacity::quotaBlockKeyForClass(
+          *current, requestedQuotaClass, authority::native_codex_capacity::requestedModelView(account.requestedModel));
+        recoveryLease.quota_class = scope && authority::native_codex_contracts::isCodexCapacityModelScope(*scope) ? *scope : requestedQuotaClass;
         const CodexAccountRoutingState next = routingDecisions::recoveryProbeTransition(*state, nativeCodexAccountMetadata(account), recoveryLease, rt::dateNow());
         const rt::KvValue row(routing_state::toJson(next));
         std::unique_ptr<rt::AtomicOperation> operation = kv->atomic();

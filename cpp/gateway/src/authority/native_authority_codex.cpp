@@ -135,6 +135,10 @@ namespace uos::authority::native_authority_codex {
     const auto cohort = native_codex::selectCodex({rows.active.value.value_or(nullptr), rows.routing.value.value_or(nullptr), rows.capacity.value.value_or(nullptr), rows.pool.identities, rows.pool.selectedAccountHashes, _policies(rows.pool, validated.model), rows.revisions}, now, validated.model);
     const auto* blocked = cohort ? std::get_if<CodexRouteSelectionQuotaBlocked>(&cohort->selection) : nullptr;
     if (!blocked || !blocked->fullCohortExhausted) return {{"kind", "refused"}, {"detail", "cohort_not_quota_exhausted"}};
+    const auto quotaClass = capacity::quotaClass(account.requestedModel);
+    const auto scope = capacity::quotaBlockKeyForClass(*slot, quotaClass, capacity::requestedModelView(account.requestedModel));
+    if (scope && isCodexCapacityModelScope(*scope) && !capacity::codexQuotaScopeApplies(*scope, capacity::requestedModelView(proof->account.requestedModel)))
+      return {{"kind", "refused"}, {"detail", "reset_model_class_mismatch"}};
     const auto active = parseCodexActiveAccountSelection(rows.active.value.value_or(nullptr)); const auto next = native_codex::activeSelectionForAccount(account, rows.poolRevision, mutation::nextResetElectionGeneration(active, account), now, std::string("quota_exhausted"));
     if (!next) return {{"kind", "refused"}};
     auto election = native_codex::planCodexResetElection(rows.revisions, rows.parsed ? &*rows.parsed : nullptr, rows.normalized, *next);
@@ -142,7 +146,8 @@ namespace uos::authority::native_authority_codex {
     if (rows.routing.value && !rows.normalized.slots.empty()) election.writes.routing = rows.normalized;
     if (election.writes.routing) _sql.write("codex_routing", CODEX_ACCOUNT_ROUTING_KV_KEY, toJson(*election.writes.routing));
     _sql.write("codex_active", CODEX_ACTIVE_ACCOUNT_SELECTION_KV_KEY, toJson(election.writes.active));
-    const CodexProbeLease lease{rt::crypto::randomUUID(), now + CODEX_HALF_OPEN_LEASE_MS, slot->generation + 1, "quota", capacity::quotaClass(account.requestedModel)};
+    const CodexProbeLease lease{rt::crypto::randomUUID(), now + CODEX_HALF_OPEN_LEASE_MS, slot->generation + 1, "quota",
+                                scope && isCodexCapacityModelScope(*scope) ? *scope : quotaClass};
     const auto recovered = mutation::recoveryProbeTransition(rows.normalized, account, lease, now); _sql.write("codex_routing", CODEX_ACCOUNT_ROUTING_KV_KEY, toJson(recovered));
     account.routingGeneration = lease.generation; account.activeGeneration = next->generation; account.activePoolVersionstamp = next->pool_versionstamp; account.activeTransitionReason = rt::orNull(next->transition_reason); account.probeRequired = false; account.probeGeneration = lease.generation; account.probeToken = lease.token; account.probeCircuit = lease.circuit;
     const auto owner = checkedOwner(_sql, account, now); request.codex = account; request.ownerFence = owner.value;

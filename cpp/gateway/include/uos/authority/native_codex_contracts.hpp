@@ -43,6 +43,14 @@ namespace uos::authority::native_codex_contracts {
   using CodexQuotaBlockSource = std::string;  // "body_resets_at" | "header_retry_after"
   using CodexProbeCircuit = std::string;      // "quota" | "upstream_timeout"
   using CodexQuotaClass = std::string;        // "spark" | "gpt_oss_120b" | "reserve" | "standard" | "unknown"
+  inline constexpr std::string_view CODEX_CAPACITY_MODEL_SCOPE_PREFIX = "model:";
+  inline bool isCodexCapacityModelScope(std::string_view key) {
+    if (!key.starts_with(CODEX_CAPACITY_MODEL_SCOPE_PREFIX)) return false;
+    key.remove_prefix(CODEX_CAPACITY_MODEL_SCOPE_PREFIX.size());
+    if (key.empty()) return false;
+    for (const char ch : key) if ((ch < 'a' || ch > 'z') && (ch < '0' || ch > '9')) return false;
+    return true;
+  }
   // "quota_exhausted" | "credential_invalid" | "account_removed_or_replaced" | "model_unavailable" | "manual_reset"
   using CodexActiveAccountTransitionReason = std::string;
 

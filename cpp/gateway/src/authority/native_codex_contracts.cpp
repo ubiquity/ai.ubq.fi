@@ -83,7 +83,8 @@ namespace uos::authority::native_codex_contracts {
     std::optional<CodexQuotaClass> parseProbeQuotaClass(const json::value* value) {
       for (const char* known : {"spark", "gpt_oss_120b", "reserve", "standard", "unknown"})
         if (stringIs(value, known)) return CodexQuotaClass(known);
-      return std::nullopt;
+      const auto scope = stringOf(value);
+      return scope && isCodexCapacityModelScope(*scope) ? scope : std::nullopt;
     }
 
     std::optional<CodexProbeLease> parseProbeLease(const json::value* lease, const std::optional<CodexProbeCircuit>& leaseCircuit) {
@@ -178,6 +179,12 @@ namespace uos::authority::native_codex_contracts {
         if (!isRecord(block)) continue;
         std::optional<CodexQuotaClassBlock> parsedBlock = parseSlotClassBlock(block, quotaClassKey, unmarkedSyntheticLegacyUnknown, slotFields);
         if (parsedBlock) quotaBlocksByClass.set(quotaClassKey, std::move(*parsedBlock));
+      }
+      for (const auto& entry : rawClassBlocks->get_object()) {
+        const std::string_view scope(entry.key().data(), entry.key().size());
+        if (!isCodexCapacityModelScope(scope) || !entry.value().is_object()) continue;
+        auto block = parseSlotClassBlock(&entry.value(), scope, false, {});
+        if (block) quotaBlocksByClass.set(std::string(scope), std::move(*block));
       }
       return quotaBlocksByClass;
     }

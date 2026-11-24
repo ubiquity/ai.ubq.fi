@@ -58,7 +58,7 @@ namespace uos::authority::native_codex_mutations {
   std::optional<CodexAccountRoutingState> releaseCodexRoutingProbe(const CodexAccountRoutingState& state, const CodexRoutingAccount& account, double updatedAtMs) {
     const CodexRoutingSlot current = slotFor(state, account);
     if (!slotMatchesCodexRoutingAccount(current, account) || !probeLeaseMatchesCodexRoutingAccount(current, account)) return std::nullopt;
-    CodexRoutingSlot next = routingProbeCircuit(account) == "quota" ? releaseQuotaClassProbe(current, quotaClass(account.requestedModel)) : current;
+    CodexRoutingSlot next = routingProbeCircuit(account) == "quota" ? releaseQuotaClassProbe(current, quotaClass(account.requestedModel), requestedModelView(account.requestedModel)) : current;
     next.account_id_hash = account.accountIdHash;
     next.upstream_timeout_blocked_until_ms =
       routingProbeCircuit(account) == "upstream_timeout" ? rt::Nullable<double>(nullptr) : current.upstream_timeout_blocked_until_ms;
@@ -73,7 +73,7 @@ namespace uos::authority::native_codex_mutations {
     const CodexRoutingSlot released = [&account, &current, &classAwareCurrent] {
       if (routingProbeCircuit(account) != "quota") return current;
       const CodexQuotaClass requestedQuotaClass = quotaClass(account.requestedModel);
-      const std::optional<CodexQuotaClass> releasedKey = quotaBlockKeyForClass(classAwareCurrent, requestedQuotaClass);
+      const std::optional<CodexQuotaClass> releasedKey = quotaBlockKeyForClass(classAwareCurrent, requestedQuotaClass, requestedModelView(account.requestedModel));
       return withoutQuotaClass(classAwareCurrent, releasedKey ? *releasedKey : requestedQuotaClass);
     }();
     const bool hasOtherQuotaClasses = released.quota_blocks_by_class && released.quota_blocks_by_class->size() > 0;
@@ -112,7 +112,7 @@ namespace uos::authority::native_codex_mutations {
     if (!isSafeMs(quotaResetAtMs) || !rt::Number::isSafeInteger(routingGeneration) || routingGeneration < 0) return false;
     const std::optional<CodexAccountRoutingState> state = parseCodexAccountRoutingState(value);
     const CodexRoutingSlot* current = state ? rt::element(state->slots, account.slot) : nullptr;
-    const std::optional<CodexQuotaClassBlock> classBlock = current != nullptr ? quotaBlockForClass(*current, quotaClass(account.requestedModel)) : std::nullopt;
+    const std::optional<CodexQuotaClassBlock> classBlock = current != nullptr ? quotaBlockForClass(*current, quotaClass(account.requestedModel), requestedModelView(account.requestedModel)) : std::nullopt;
     return !hasUnresolvedLegacyResetIdentity(state ? &*state : nullptr) && current != nullptr && current->credential_version == account.credentialVersion &&
            current->account_id_hash == account.accountIdHash && current->generation == routingGeneration && classBlock.has_value() &&
            classBlock->observed_reset_at_ms == quotaResetAtMs && classBlock->observed_reset_at_is_stable && !classBlock->banked_reset_generation_ambiguous &&
@@ -132,8 +132,8 @@ namespace uos::authority::native_codex_mutations {
     const CodexQuotaClass requestedQuotaClass = quotaClass(account.requestedModel);
     const double nextGeneration = recoveryLease.generation;
     const CodexRoutingSlot classAwareCurrent = withLegacyQuotaClassMap(current);
-    const std::optional<CodexQuotaClassBlock> releasedClassBlock = quotaBlockForClass(classAwareCurrent, requestedQuotaClass);
-    const std::optional<CodexQuotaClass> releasedKey = quotaBlockKeyForClass(classAwareCurrent, requestedQuotaClass);
+    const std::optional<CodexQuotaClassBlock> releasedClassBlock = quotaBlockForClass(classAwareCurrent, requestedQuotaClass, requestedModelView(account.requestedModel));
+    const std::optional<CodexQuotaClass> releasedKey = quotaBlockKeyForClass(classAwareCurrent, requestedQuotaClass, requestedModelView(account.requestedModel));
     const CodexRoutingSlot released = withoutQuotaClass(classAwareCurrent, releasedKey ? *releasedKey : requestedQuotaClass);
     CodexRoutingSlot recovered = released;
     // The verified reset makes normal routing eligible, but an absolute
@@ -156,7 +156,7 @@ namespace uos::authority::native_codex_mutations {
     const CodexRoutingSlot current = slotFor(base, account);
     const CodexProbeCircuit circuit = routingProbeCircuit(account);
     const CodexQuotaClass requestedQuotaClass = quotaClass(account.requestedModel);
-    const std::optional<CodexQuotaClassBlock> classBlock = quotaBlockForClass(current, requestedQuotaClass);
+    const std::optional<CodexQuotaClassBlock> classBlock = quotaBlockForClass(current, requestedQuotaClass, requestedModelView(account.requestedModel));
     std::optional<double> circuitDeadline;
     if (circuit == "upstream_timeout") {
       circuitDeadline = current.upstream_timeout_blocked_until_ms.toOptional();
@@ -179,7 +179,10 @@ namespace uos::authority::native_codex_mutations {
     lease.expires_at_ms = now + CODEX_HALF_OPEN_LEASE_MS;
     lease.generation = current.generation;
     lease.circuit = circuit;
-    lease.quota_class = circuit == "quota" ? rt::Nullable<CodexQuotaClass>(requestedQuotaClass) : rt::Nullable<CodexQuotaClass>(nullptr);
+    const auto scope = quotaBlockKeyForClass(current, requestedQuotaClass, requestedModelView(account.requestedModel));
+    lease.quota_class = circuit == "quota"
+      ? rt::Nullable<CodexQuotaClass>(scope && isCodexCapacityModelScope(*scope) ? *scope : requestedQuotaClass)
+      : rt::Nullable<CodexQuotaClass>(nullptr);
     CodexRoutingSlot claimed = current;
     claimed.account_id_hash = account.accountIdHash;
     claimed.probe_lease = lease;
@@ -193,7 +196,7 @@ namespace uos::authority::native_codex_mutations {
            current.generation == input.routingGeneration && current.invalid_credential_version != account.credentialVersion &&
            [&current, &account, &input] {
              const CodexQuotaClass requestedClass = quotaClass(account.requestedModel);
-             const std::optional<CodexQuotaClassBlock> classBlock = quotaBlockForClass(current, requestedClass);
+             const std::optional<CodexQuotaClassBlock> classBlock = quotaBlockForClass(current, requestedClass, requestedModelView(account.requestedModel));
              const double legacyDeadline = requestedClass == "unknown" ? current.quota_blocked_until_ms.value_or(0.0) : 0.0;
              return classBlock.has_value() && rt::Math::max(classBlock->blocked_until_ms, legacyDeadline) >= input.quotaResetAtMs &&
                     classBlock->observed_reset_at_ms == input.quotaResetAtMs && classBlock->observed_reset_at_is_stable;
@@ -219,7 +222,7 @@ namespace uos::authority::native_codex_mutations {
     const std::optional<CodexAccountRoutingState> state = parseCodexAccountRoutingState(value);
     const CodexRoutingSlot* current = state ? rt::at(state->slots, account.slot) : nullptr;
     if (current == nullptr) return false;
-    const std::optional<CodexQuotaClassBlock> classBlock = quotaBlockForClass(*current, quotaClass(account.requestedModel));
+    const std::optional<CodexQuotaClassBlock> classBlock = quotaBlockForClass(*current, quotaClass(account.requestedModel), requestedModelView(account.requestedModel));
     return current->account_id_hash == account.accountIdHash && current->credential_version == account.credentialVersion &&
            current->generation == account.routingGeneration && current->invalid_credential_version != account.credentialVersion && classBlock.has_value() &&
            classBlock->observed_reset_at_ms == quotaResetAtMs && classBlock->observed_reset_at_is_stable;

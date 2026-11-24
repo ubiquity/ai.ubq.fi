@@ -20,10 +20,6 @@ namespace uos::codex::banked_reset {
     using ::uos::types::CodexResetShadowDecisionRecord;
   }
 
-  rt::KvKey codexResetRedemptionKey(const std::string& accountIdHash, const std::string& quotaGeneration) {
-    return rt::KvKey{CODEX_RESET_REDEMPTION_KV_PREFIX, accountIdHash, quotaGeneration};
-  }
-
   rt::KvKey codexResetGlobalDailyKey(const std::string& day) { return rt::KvKey{CODEX_RESET_GLOBAL_DAILY_KV_PREFIX, day}; }
 
   rt::KvKey codexResetAccountDailyKey(const std::string& accountIdHash, const std::string& day) {
