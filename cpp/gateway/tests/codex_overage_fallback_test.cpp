@@ -57,6 +57,7 @@ namespace {
     bool includeSibling = false;
     bool siblingSubmitUnknown = false;
     bool parallel = false;
+    std::function<rt::Response()> inferenceResponse;
     bool allows(std::size_t index) const {
       if (const auto* allow = std::get_if<bool>(&allowOverage)) return *allow;
       const auto& allow = std::get<std::vector<bool>>(allowOverage); return index < allow.size() ? allow[index] : false;
@@ -102,7 +103,10 @@ namespace {
     }
     rt::GlobalFetchOverride fetch(rt::Fetch([&](rt::RequestInfo info, rt::RequestInit init) {
       const auto url = requestUrl(info); const auto account = init.headers.value_or(rt::Headers{}).get("chatgpt-account-id").value_or("");
-      if (rt::endsWith(url, "/backend-api/codex/responses")) { calls.push_back({"inference", account}); return jsonResponse(json::object{{"id", "response-" + account}}); }
+      if (rt::endsWith(url, "/backend-api/codex/responses")) {
+        calls.push_back({"inference", account});
+        return options.inferenceResponse ? options.inferenceResponse() : jsonResponse(json::object{{"id", "response-" + account}});
+      }
       if (rt::endsWith(url, "/backend-api/wham/rate-limit-reset-credits")) {
         calls.push_back({"inventory", account});
         return options.includeSibling && account == "account-one" ? emptyInventory() : inventoryResponse();
@@ -209,4 +213,19 @@ ASYNC_TEST("a redeemable credit is consumed before overage") {
   EXPECT_EQ(callsOf(run, "consume"), (std::vector<UpstreamCall>{{"consume", "account-one"}}));
   EXPECT_EQ(accountsOf(run, "inference"), (std::vector<std::string>{"account-one"})); EXPECT(logged(run, "codex_reset_verified"));
   EXPECT_EQ(logged(run, "codex_overage_served"), false);
+}
+
+ASYNC_TEST("a transient upstream overage failure cannot authorize paid fallback") {
+  RunOptions options;
+  options.allowOverage = true;
+  options.inferenceResponse = [] { return rt::Response("subscription upstream unavailable", rt::ResponseInit{.status = 503}); };
+  const std::vector<std::string> ids{"overage-transient-failure"};
+  AWAIT(run, runBlockedSequence(ids, emptyInventory, options));
+  ASSERT(run.responses.size() == 1);
+  EXPECT_EQ(run.responses.front().status(), 503);
+  EXPECT(!ca::getCodexRoutingError(run.responses.front()));
+  AWAIT(body, run.responses.front().text());
+  EXPECT_EQ(body, "subscription upstream unavailable");
+  EXPECT_EQ(accountsOf(run, "inference"), (std::vector<std::string>{"account-one"}));
+  EXPECT(!logged(run, "codex_overage_served"));
 }

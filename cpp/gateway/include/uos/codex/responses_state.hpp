@@ -75,8 +75,8 @@ namespace uos::codex::responses_state {
 
   struct PendingOverageFallback {
     std::string reason;
-    auth::CodexDispatchAccountEntry accountEntry;
-    routing_state::RoutingAccount routing;
+    routing_state::CodexBlockedRoutingAccount routing;
+    routing_state::CodexActiveAccountSnapshot activeSnapshot;
   };
 
   struct EvaluatedBlockedReset {
