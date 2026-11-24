@@ -105,13 +105,13 @@ Exact commands, original failures, source changes, limitations and terminal coun
 
 ## GitHub Actions
 
-The C++ gateway workflow runs on pushes to `claude/cpp-gateway-port`, `pool-merge/**` and `agent-jobs/**`, on pull requests targeting `claude/cpp-gateway-port`, and on manual dispatch. A newer run for the same ref cancels the older run. All jobs run on `ubuntu-26.04-arm` with read-only repository access and checkout credential persistence disabled. [Workflow](../../../.github/workflows/cpp-gateway-ci.yml)
+Open gateway pull requests against `development`, the default branch. The workflow runs on pushes to `development`, `main`, `claude/cpp-gateway-port`, `pool-merge/**` and `agent-jobs/**`. It also runs on pull requests targeting `development`, `main` or `claude/cpp-gateway-port` and on manual dispatch. A newer run for the same ref cancels the older run. All jobs run on `ubuntu-26.04-arm` with read-only repository access and checkout credential persistence disabled. [Workflow](../../../.github/workflows/cpp-gateway-ci.yml)
 
 | Check              | Jobs                           | Coverage                                                             |
 | ------------------ | ------------------------------ | -------------------------------------------------------------------- |
 | Release suite      | Four round-robin shards        | Every registered test with Clang `--config release`                  |
 | Sanitizer suite    | Four round-robin shards        | The same tests with Clang `--config asan` and ASan, UBSan and LSan   |
-| Library robustness | One job per registered harness | Five minutes per harness, or 40 minutes on pushes to the port branch |
+| Library robustness | One job per registered harness | Every harness registered in `fuzz/targets.json`                      |
 
 Each suite shard has a 240-minute job limit and four workers. It builds the production objects and vendors, then links and runs its share of the sorted test inventory. The `ci-<config>-shard-<i>` artifact contains the job summary and any `receipt.json`, `results.tsv`, and driver, compiler, namespace, link and run logs. The summary counts successful links, passed and failed targets, and reported cases. It lists unsuccessful targets, including build failures and timeouts.
 
@@ -119,7 +119,7 @@ Both configurations split the stage 2a inventory into 111, 111, 111 and 110 test
 
 Release shard 1 also seals the gateway from its existing Release objects and checks session memory on a fresh production-shaped SQLite fixture. It runs 20 sessions with the native Codex CLI when the image supplies it, and uses the same programmed-reply workload with the scripted client otherwise. It also runs 20 scripted rounds on eight concurrent connections and checks free arena bytes and idle anonymous RSS above allocator live bytes. A third check measures live allocator growth across 300 streamed Lithos Responses and 300 exact-version catalog fetches after warm-up. All traffic uses the local mocks. The job saves the three memory receipts with the package identity and sampled values. [Memory harness](../bench/codex_real/README.md)
 
-The robustness matrix uses all entries in `fuzz/targets.json`. The discovery job publishes the selected targets. Each harness job has a 120-minute limit and runs libFuzzer with four workers in a private Linux network namespace, using a fresh home and temporary directory and a credential-free environment. The `fuzz-<target>` artifact contains its build and campaign logs, summary, and any finding inputs. Slow `regex` inputs and the empty crash artifact from the known ARM64 libFuzzer fork-parent exit leak stay in the evidence and are counted separately. Genuine findings and incomplete campaigns fail the job.
+Robustness campaigns run for 40 minutes on pushes to `development`, `main` and the port branch, and for five minutes on other runs. The discovery job publishes the selected targets. Each harness job has a 120-minute limit and runs libFuzzer with four workers in a private Linux network namespace, using a fresh home and temporary directory and a credential-free environment. The `fuzz-<target>` artifact contains its build and campaign logs, summary, and any finding inputs. Slow `regex` inputs and the empty crash artifact from the known ARM64 libFuzzer fork-parent exit leak stay in the evidence and are counted separately. Genuine findings and incomplete campaigns fail the job.
 
 The same command runs the five-minute JSON harness on a disposable Linux host with passwordless sudo. With staged dependencies, set `CPLUS_INCLUDE_PATH` for the headers and pass the matching library directories through `LDFLAGS` inside the clean environment. Include an RPATH or set `LD_LIBRARY_PATH` for staged shared libraries.
 
