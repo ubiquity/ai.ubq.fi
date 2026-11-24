@@ -1,6 +1,6 @@
 # Native runtime and package
 
-The C++20 gateway serves on Linux ARM64. The portable archive targets ARMv8-A with glibc 2.36 or newer.
+The C++20 gateway lives on `development` and `main` and serves on Linux ARM64. The portable archive targets ARMv8-A with glibc 2.36 or newer.
 The Apple Silicon archive supplies the offline version check and native development build. [Release packages](RELEASES.md)
 
 ## Build and package

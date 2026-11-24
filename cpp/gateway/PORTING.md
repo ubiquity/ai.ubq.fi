@@ -1,6 +1,6 @@
 # TypeScript to C++ gateway port: rules for every porter
 
-This tree (`cpp/gateway/`) ports the first-party TypeScript gateway (`src/`, `serve.ts`, `lib/jev_compaction/`) to C++20. The TypeScript and the gateway's fixtures define required application behavior. Use pinned standard or mature open-source libraries for generic runtime operations. The bounded pilot elsewhere under `cpp/` has its own qualification and ownership.
+The C++20 gateway lives in `cpp/gateway/` on `development` and `main`. The original TypeScript gateway (`src/`, `serve.ts`, `lib/jev_compaction/`) and the gateway's fixtures define required application behavior. Use pinned standard or mature open-source libraries for generic runtime operations. [Final TypeScript snapshots](../../README.md)
 
 Runtime references, mandatory reading before porting: `docs/rt/values.md`, `text.md`,
 `async.md`, `web.md`, `regex.md`, `kv.md`, `platform.md`, `record.md`, `websocket.md`, `sqlite.md` and `gzip.md` (when your modules use WebSocket, SQLite or gzip), and `docs/PORT-NOTES.md`
@@ -10,7 +10,7 @@ Runtime references, mandatory reading before porting: `docs/rt/values.md`, `text
 C++ paths. `tools/cmake-sources.py` checks the historical modules against
 `PORTED.txt`, includes the native adapters and validates the complete source list.
 
-## Host safety (this machine serves production)
+## Original port host restrictions
 
 - The live gateway runs on this host from another checkout. Never touch
   `.data/` of the repository root, `.env*`, any `kv*.sqlite3`, systemd units,

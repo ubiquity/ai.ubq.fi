@@ -4,9 +4,9 @@ run-name: C++ gateway CI ${{ github.sha }}
 # The full gateway suite and the registered library robustness harnesses run on ARM64.
 on:
   push:
-    branches: [claude/cpp-gateway-port, "pool-merge/**", "agent-jobs/**"]
+    branches: [development, main, claude/cpp-gateway-port, "pool-merge/**", "agent-jobs/**"]
   pull_request:
-    branches: [claude/cpp-gateway-port]
+    branches: [development, main, claude/cpp-gateway-port]
   workflow_dispatch:
 
 concurrency:
@@ -232,7 +232,12 @@ jobs:
             ccache-ubuntu-26.04-arm-fuzz-${{ steps.fingerprint.outputs.hash }}-
       - name: Build and fuzz
         env:
-          FUZZ_SECONDS: ${{ github.event_name == 'push' && github.ref == 'refs/heads/claude/cpp-gateway-port' && '2400' || '300' }}
+          FUZZ_SECONDS: >-
+            ${{ github.event_name == 'push'
+              && (github.ref == 'refs/heads/development'
+                || github.ref == 'refs/heads/main'
+                || github.ref == 'refs/heads/claude/cpp-gateway-port')
+              && '2400' || '300' }}
           FUZZ_TARGET: ${{ matrix.target }}
         run: |
           fuzz_out="$RUNNER_TEMP/fuzz"
