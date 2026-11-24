@@ -74,7 +74,8 @@ namespace uos::authority::native_codex_mutations {
       if (routingProbeCircuit(account) != "quota") return current;
       const CodexQuotaClass requestedQuotaClass = quotaClass(account.requestedModel);
       const auto claimed = current.probe_lease->quota_class.toOptional();
-      const auto releasedKey = claimed ? *claimed : quotaBlockKeyForClass(classAwareCurrent, requestedQuotaClass).value_or(requestedQuotaClass);
+      const bool namedClaim = claimed && isCodexCapacityModelScope(*claimed);
+      const auto releasedKey = namedClaim ? *claimed : quotaBlockKeyForClass(classAwareCurrent, requestedQuotaClass).value_or(requestedQuotaClass);
       return withoutQuotaClass(classAwareCurrent, releasedKey);
     }();
     const bool hasOtherQuotaClasses = released.quota_blocks_by_class && released.quota_blocks_by_class->size() > 0;
@@ -134,10 +135,13 @@ namespace uos::authority::native_codex_mutations {
     const double nextGeneration = recoveryLease.generation;
     const CodexRoutingSlot classAwareCurrent = withLegacyQuotaClassMap(current);
     const auto claimed = recoveryLease.quota_class.toOptional();
-    const auto releasedKey = claimed ? *claimed : quotaBlockKeyForClass(classAwareCurrent, requestedQuotaClass).value_or(requestedQuotaClass);
-    const auto* releasedClassBlock = classAwareCurrent.quota_blocks_by_class ? classAwareCurrent.quota_blocks_by_class->get(releasedKey) : nullptr;
-    const auto legacyBlock = !claimed && !releasedClassBlock ? quotaBlockForClass(classAwareCurrent, requestedQuotaClass) : std::nullopt;
-    if (legacyBlock) releasedClassBlock = &*legacyBlock;
+    // A named lease pins its exact window. A class lease can cover a migrated slot-wide block.
+    const bool namedClaim = claimed && isCodexCapacityModelScope(*claimed);
+    const auto releasedKey = namedClaim ? *claimed : quotaBlockKeyForClass(classAwareCurrent, requestedQuotaClass).value_or(requestedQuotaClass);
+    const auto* releasedClassBlock = namedClaim && classAwareCurrent.quota_blocks_by_class
+      ? classAwareCurrent.quota_blocks_by_class->get(releasedKey) : nullptr;
+    const auto classBlock = namedClaim ? std::nullopt : quotaBlockForClass(classAwareCurrent, requestedQuotaClass);
+    if (classBlock) releasedClassBlock = &*classBlock;
     const CodexRoutingSlot released = withoutQuotaClass(classAwareCurrent, releasedKey);
     CodexRoutingSlot recovered = released;
     // The verified reset makes normal routing eligible, but an absolute

@@ -262,6 +262,46 @@ TEST("differential: native codex mutations over recorded inputs") {
   EXPECT_EQ(replay.mismatches, 0);
 }
 
+TEST("a class recovery lease preserves the shorter class and independent model blocks") {
+  const json::value inputs = rt::jsonParse(kMutationInputs);
+  auto state = parseCodexAccountRoutingState((*rt::getArray(inputs, "rawStates"))[7]);
+  ASSERT(state);
+  CodexRoutingAccount account = accountFrom((*rt::getArray(inputs, "accounts"))[0]);
+  const CodexProbeLease lease = leaseFrom((*rt::getArray(inputs, "recoveryLeases"))[0]);
+  CodexRoutingSlot& slot = state->slots.front();
+  ASSERT(slot.quota_blocks_by_class);
+  const auto* standard = slot.quota_blocks_by_class->get("standard");
+  ASSERT(standard);
+  auto named = *standard;
+  named.blocked_until_ms = 1'700'000'090'000;
+  slot.quota_blocks_by_class->set("model:gpttest", named);
+
+  const auto expectOtherBlocks = [](const CodexRoutingSlot& updated) {
+    ASSERT(updated.quota_blocks_by_class);
+    EXPECT(!updated.quota_blocks_by_class->has("unknown"));
+    EXPECT(updated.quota_blocks_by_class->has("standard"));
+    EXPECT(updated.quota_blocks_by_class->has("model:gpttest"));
+  };
+
+  const double now = 1'700'000'000'023;
+  const auto recovered = recoveryProbeTransition(*state, account, lease, now);
+  expectOtherBlocks(recovered.slots.front());
+  ASSERT(recovered.slots.front().observed_reset_at_ms);
+  EXPECT_EQ(*recovered.slots.front().observed_reset_at_ms, 1'700'000'070'000.0);
+
+  slot.generation = lease.generation;
+  slot.probe_lease = lease;
+  account.probeGeneration = lease.generation;
+  account.probeToken = lease.token;
+  account.probeCircuit = lease.circuit;
+  const auto succeeded = markCodexSuccess(*state, account, now);
+  const auto released = releaseCodexRoutingProbe(*state, account, now);
+  ASSERT(succeeded);
+  ASSERT(released);
+  expectOtherBlocks(succeeded->slots.front());
+  expectOtherBlocks(released->slots.front());
+}
+
 TEST("recoveryProbeTransition throws the TS TypeError for a slot index the state does not hold") {
   CodexAccountRoutingState state;
   state.v = 2;
