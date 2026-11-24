@@ -363,7 +363,7 @@ namespace uos::authority::native_codex_429 {
     if (!account.probeGeneration || !rt::truthy(account.probeToken)) return std::nullopt;
     const CodexRoutingSlot current = slotFor(state, account);
     if (!slotMatchesCodexRoutingAccount(current, account) || !probeLeaseMatchesCodexRoutingAccount(current, account)) return std::nullopt;
-    const CodexRoutingSlot released = routingProbeCircuit(account) == "quota" ? releaseQuotaClassProbe(current, quotaClass(account.requestedModel)) : current;
+    const CodexRoutingSlot released = routingProbeCircuit(account) == "quota" ? releaseQuotaClassProbe(current, quotaClass(account.requestedModel), requestedModelView(account.requestedModel)) : current;
     CodexRoutingSlot next = released;
     next.account_id_hash = account.accountIdHash;
     next.upstream_timeout_blocked_until_ms =
@@ -376,11 +376,11 @@ namespace uos::authority::native_codex_429 {
 
   namespace {
     /** A quota lease that belongs to another account's claim must survive an ordinary request. */
-    bool isForeignQuotaProbeLease(const CodexRoutingSlot& current, const CodexRoutingAccount& account, const CodexQuotaClass& blockedQuotaClass) {
+    bool isForeignQuotaProbeLease(const CodexRoutingSlot& current, const CodexRoutingAccount& account) {
       const std::optional<CodexProbeLease>& lease = current.probe_lease;
       if (account.probeGeneration || !lease || lease->circuit != "quota") return false;
       if (lease->quota_class.isNullish()) return false;
-      return *lease->quota_class != blockedQuotaClass;
+      return !codexQuotaScopeApplies(*lease->quota_class, requestedModelView(account.requestedModel));
     }
 
     struct CodexQuotaClassResetIdentity {
@@ -444,7 +444,8 @@ namespace uos::authority::native_codex_429 {
       classAwareCurrent.quota_blocks_by_class = quotaBlocksBeforeUpdate;
       const std::optional<CodexQuotaClassBlock> priorClassBlock = quotaBlockForClass(classAwareCurrent, blockedQuotaClass);
       const double priorDeadline = priorClassBlock ? priorClassBlock->blocked_until_ms : 0;
-      const bool hasClassBlocks = quotaBlocksBeforeUpdate.size() > 0;
+      const bool hasClassBlocks = std::any_of(quotaBlocksBeforeUpdate.begin(), quotaBlocksBeforeUpdate.end(),
+                                               [](const auto& entry) { return !isCodexCapacityModelScope(entry.first); });
       const double priorTimeout = current.upstream_timeout_blocked_until_ms.valueOr(0);
       const bool boundedRecoveryProbe = recoveryProbe || (current.banked_reset_recovery_probe_pending && account.probeGeneration.has_value());
       const double deadline = boundedRecoveryProbe ? now + CODEX_HALF_OPEN_LEASE_MS : rt::Math::max(priorDeadline, retryAtMs);
@@ -470,6 +471,7 @@ namespace uos::authority::native_codex_429 {
       bool generationAmbiguous = false;
       bool recoveryProbePending = false;
       for (const auto& [key, block] : quotaBlocksByClass) {
+        if (isCodexCapacityModelScope(key)) continue;
         if (block.blocked_until_ms > latestClassBlock.blocked_until_ms) latestClassBlock = block;
         quotaBlockedClasses.push_back(key);
         generationAmbiguous = generationAmbiguous || block.banked_reset_generation_ambiguous;
@@ -504,7 +506,7 @@ namespace uos::authority::native_codex_429 {
     if (!retryAtMs || !quotaBlockSource) return std::nullopt;
     const CodexRoutingSlot current = slotFor(state, account);
     if (!slotMatchesCodexRoutingAccount(current, account)) return std::nullopt;
-    const bool foreignQuotaProbe = isForeignQuotaProbeLease(current, account, quotaClass(account.requestedModel));
+    const bool foreignQuotaProbe = isForeignQuotaProbeLease(current, account);
     if (!account.probeGeneration && current.probe_lease && !foreignQuotaProbe) return std::nullopt;
     if (account.probeGeneration && !probeLeaseMatchesCodexRoutingAccount(current, account)) return std::nullopt;
     return buildQuotaBlockedSlot(current, account, parsed, *quotaBlockSource, *retryAtMs, now, recoveryProbe, foreignQuotaProbe);

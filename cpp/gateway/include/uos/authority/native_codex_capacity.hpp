@@ -67,22 +67,28 @@ namespace uos::authority::native_codex_capacity {
   // `model: string | null | undefined`
   native_codex_contracts::CodexQuotaClass quotaClass(std::optional<std::string_view> model);
   native_codex_contracts::CodexQuotaClass quotaClass(const rt::Nullable<std::string>& model);
+  std::optional<std::string_view> requestedModelView(const rt::Nullable<std::string>& model);
+  bool codexQuotaScopeApplies(std::string_view scope, std::optional<std::string_view> model);
 
-  std::optional<native_codex_contracts::CodexQuotaClassBlock> quotaBlockForClass(const native_codex_contracts::CodexRoutingSlot& slot, std::string_view quotaClassKey);
+  std::optional<native_codex_contracts::CodexQuotaClassBlock> quotaBlockForClass(const native_codex_contracts::CodexRoutingSlot& slot, std::string_view quotaClassKey,
+                                                                                 std::optional<std::string_view> model = std::nullopt);
 
   native_codex_contracts::CodexQuotaBlocksByClass quotaBlocksIncludingLegacy(const native_codex_contracts::CodexRoutingSlot& slot);
 
   native_codex_contracts::CodexRoutingSlot withLegacyQuotaClassMap(const native_codex_contracts::CodexRoutingSlot& slot);
 
-  std::optional<double> quotaSignalObservedAtForClass(const native_codex_contracts::CodexRoutingSlot& slot, std::string_view quotaClassKey);
+  std::optional<double> quotaSignalObservedAtForClass(const native_codex_contracts::CodexRoutingSlot& slot, std::string_view quotaClassKey,
+                                                      std::optional<std::string_view> model = std::nullopt);
 
-  std::optional<native_codex_contracts::CodexQuotaClass> quotaBlockKeyForClass(const native_codex_contracts::CodexRoutingSlot& slot, std::string_view quotaClassKey);
+  std::optional<native_codex_contracts::CodexQuotaClass> quotaBlockKeyForClass(const native_codex_contracts::CodexRoutingSlot& slot, std::string_view quotaClassKey,
+                                                                               std::optional<std::string_view> model = std::nullopt);
 
   native_codex_contracts::CodexRoutingSlot withoutQuotaClass(const native_codex_contracts::CodexRoutingSlot& slot, std::string_view quotaClassKey);
 
   native_codex_contracts::CodexRoutingSlot recheckQuotaClasses(const native_codex_contracts::CodexRoutingSlot& slot, double recheckAtMs);
 
-  native_codex_contracts::CodexRoutingSlot releaseQuotaClassProbe(const native_codex_contracts::CodexRoutingSlot& slot, std::string_view quotaClassKey);
+  native_codex_contracts::CodexRoutingSlot releaseQuotaClassProbe(const native_codex_contracts::CodexRoutingSlot& slot, std::string_view quotaClassKey,
+                                                                  std::optional<std::string_view> model = std::nullopt);
 
   // `model: string | null`
   std::optional<double> capacityHeadroomForObservation(const native_codex_contracts::CodexCapacityRoutingObservation& observation, std::optional<std::string_view> model);

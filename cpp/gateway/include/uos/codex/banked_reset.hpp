@@ -9,6 +9,7 @@
 #include "uos/rt/abort.hpp"
 #include "uos/rt/async.hpp"
 #include "uos/rt/kv.hpp"
+#include "uos/rt/number.hpp"
 #include "uos/rt/prelude.hpp"
 #include "uos/types.hpp"
 
@@ -28,6 +29,14 @@ namespace uos::codex::banked_reset {
    * describing a provider-side redemption that may still need reconciliation.
    */
   inline const rt::KvKey CODEX_RESET_REDEMPTION_KV_PREFIX{"uos_ai", "codex_reset_redemption", "v1"};
+
+  inline std::string codexResetQuotaGenerationInput(std::string_view accountIdHash, double resetAtMs) {
+    return std::string("uos_ai") + '\0' + "codex_reset_generation" + '\0' + std::string(accountIdHash) + '\0' + rt::numberToString(resetAtMs);
+  }
+
+  inline rt::KvKey codexResetRedemptionKey(const std::string& accountIdHash, const std::string& quotaGeneration) {
+    return rt::KvKey{CODEX_RESET_REDEMPTION_KV_PREFIX, accountIdHash, quotaGeneration};
+  }
   /** Retained for rollback and audit only: the submission budget never reads this key after the per-account cutover. */
   inline const rt::KvKey CODEX_RESET_GLOBAL_DAILY_KV_PREFIX{"uos_ai", "codex_reset_redemption", "global_day", "v1"};
   inline const rt::KvKey CODEX_RESET_ACCOUNT_DAILY_KV_PREFIX{"uos_ai", "codex_reset_redemption", "account_day", "v1"};
@@ -39,7 +48,6 @@ namespace uos::codex::banked_reset {
   inline constexpr double CODEX_BANKED_RESET_INVENTORY_TIMEOUT_MS = 5'000;
   inline constexpr double MAX_CAS_ATTEMPTS = 4;
 
-  rt::KvKey codexResetRedemptionKey(const std::string& accountIdHash, const std::string& quotaGeneration);
 
   /** Retained for rollback and audit only; never enforced after the per-account cutover. */
   rt::KvKey codexResetGlobalDailyKey(const std::string& day);

@@ -9,12 +9,16 @@
 // `reconciled.slots[1] === base.slots[1]`) are value comparisons here: the C++ results are copies.
 #include "uos/codex/capacity_routing.hpp"
 
+#include "uos/authority/native_codex_evaluation.hpp"
+#include "uos/codex/banked_reset.hpp"
+
 #include "uos/kv.hpp"
 #include "uos/provider/capacity_contract.hpp"
 #include "uos/rt/json.hpp"
 #include "uos/rt/number.hpp"
 #include "uos/rt/string.hpp"
 #include "uos/rt/test_async.hpp"
+#include "uos/utils.hpp"
 
 #include <exception>
 #include <memory>
@@ -798,6 +802,110 @@ namespace {
   /* ------------------------------------- observation persistence and merging */
 
   const double NOW_MS = 1'790'000'000'000;
+
+  rt::Task<void> protectOldPrimaryReset(std::shared_ptr<ScriptedKv> kv) {
+    constexpr double day = 86'400'000;
+    const auto auth = account("one");
+    auto readingAccount = routingAccountOf(auth, 0);
+    auto routed = co_await std::move(readingAccount);
+    routed.requestedModel = std::string("gpt-6-astra");
+    auto sample = observationOf(0, routed.accountIdHash);
+    sample.windows.primary = window(18'000, 25, NOW_MS + 60'000);
+    sample.windows.secondary = window(604'800, 100, NOW_MS + 5 * day);
+    const auto accountHash = co_await uos::utils::sha256Hex(auth.account_id);
+    namespace reset = uos::codex::banked_reset;
+
+    for (const auto& [state, oldDeadline] : std::vector<std::pair<std::string, double>>{
+           {"submitted", NOW_MS + 60'000}, {"unknown", NOW_MS - 60'000}}) {
+      auto primary = quotaBlock(oldDeadline);
+      primary.quota_signal_observed_at_ms = NOW_MS - day;
+      primary.observed_reset_at_ms = oldDeadline;
+      primary.observed_reset_at_is_stable = true;
+      auto slot = slotWithClassBlock("standard", primary);
+      slot.account_id_hash = routed.accountIdHash;
+      slot.observed_reset_at_ms = oldDeadline;
+      slot.observed_reset_at_is_stable = true;
+      const json::value oldRouting = stateJson(stateWith({slot}));
+      auto settingRouting = setRow(kv, routing_state::CODEX_ACCOUNT_ROUTING_KV_KEY, oldRouting);
+      co_await std::move(settingRouting);
+      const auto generationHash = co_await uos::utils::sha256Hex(reset::codexResetQuotaGenerationInput(accountHash, oldDeadline));
+      const auto ledgerKey = reset::codexResetRedemptionKey(accountHash, "v1:" + generationHash);
+      const json::object oldLedger{{"v", 1}, {"account_id_hash", accountHash}, {"quota_generation", "v1:" + generationHash},
+                                   {"state", state}, {"submitted_at_ms", NOW_MS - day}};
+      auto settingLedger = setRow(kv, ledgerKey, oldLedger);
+      co_await std::move(settingLedger);
+      const auto writesBefore = kv->commitAttempts.size();
+
+      const bool materialized = co_await capacity_routing::reconcileCapacityQuotaBlock(routed, sample, NOW_MS + 1);
+      EXPECT(!materialized);
+      EXPECT_EQ(kv->commitAttempts.size(), writesBefore);
+      EXPECT(rt::deepEqual(kv->values.get(keyOf(routing_state::CODEX_ACCOUNT_ROUTING_KV_KEY))->toJson(), oldRouting));
+      EXPECT(rt::deepEqual(kv->values.get(keyOf(ledgerKey))->toJson(), json::value(oldLedger)));
+
+      kv->apply("delete", ledgerKey, rt::KvValue(nullptr));
+      const bool unspent = co_await capacity_routing::reconcileCapacityQuotaBlock(routed, sample, NOW_MS + 1);
+      EXPECT(unspent);
+    }
+  }
+
+  ASYNC_TEST("weekly capacity cannot replace a submitted or unknown primary reset across UTC days") {
+    auto running = runScripted(&protectOldPrimaryReset);
+    co_await std::move(running);
+  }
+
+  rt::Task<void> preserveNamedQuotaScope(std::shared_ptr<ScriptedKv> kv) {
+    namespace decisions = uos::authority::native_codex_capacity;
+    namespace evaluation = uos::authority::native_codex_evaluation;
+    const auto auth = account("one");
+    auto readingAccount = routingAccountOf(auth, 0);
+    auto routed = co_await std::move(readingAccount);
+    const std::string named = "gpt-6-astra";
+    const std::string other = "gpt-6-luna";
+    routed.requestedModel = named;
+    const auto slot = capacity_routing::neutralSlot(routed.credentialVersion, routed.accountIdHash);
+    auto settingRouting = setRow(kv, routing_state::CODEX_ACCOUNT_ROUTING_KV_KEY, stateJson(stateWith({slot})));
+    co_await std::move(settingRouting);
+
+    auto sample = observationOf(0, routed.accountIdHash);
+    const double weekly = NOW_MS + 604'800'000;
+    sample.windows.primary = window(18'000, 25, NOW_MS + 60'000);
+    sample.additional_rate_limits.push_back({named, std::nullopt, {std::nullopt, window(604'800, 100, weekly)}});
+    rt::OrderedMap<std::string, CodexCapacityRoutingObservation> observations;
+    observations.set(routed.accountIdHash, sample);
+    const routing_state::CodexRoutingIdentity identity{.slot = 0, .accountIdHash = routed.accountIdHash,
+                                                        .credentialVersion = routed.credentialVersion};
+    auto evaluate = [&](const CodexAccountRoutingState& state, const std::string& model) {
+      return evaluation::evaluateCodexRoutingAccount(state, identity, model, observations, NOW_MS + 1, {});
+    };
+    const auto before = evaluate(stateWith({slot}), named);
+    ASSERT(before.blockedAccount);
+    EXPECT_EQ(before.blockedAccount->quotaResetAtMs, weekly);
+    const bool materialized = co_await capacity_routing::reconcileCapacityQuotaBlock(routed, sample, NOW_MS + 1);
+    ASSERT(materialized);
+    const auto* stored = kv->values.get(keyOf(routing_state::CODEX_ACCOUNT_ROUTING_KV_KEY));
+    ASSERT(stored);
+    const auto durable = routing_state::parseCodexAccountRoutingState(stored->toJson());
+    ASSERT(durable);
+    EXPECT(!durable->slots[0].quota_blocked_until_ms);
+    EXPECT(!decisions::quotaBlockForClass(durable->slots[0], "standard"));
+    const auto healthy = evaluate(*durable, other);
+    ASSERT(healthy.routedAccount);
+    EXPECT(!healthy.routedAccount->probeRequired);
+    EXPECT_EQ(healthy.routedAccount->quotaHeadroom, std::optional<double>(75));
+    const auto repeated = evaluate(*durable, named);
+    ASSERT(repeated.blockedAccount);
+    EXPECT_EQ(repeated.blockedAccount->quotaResetAtMs, weekly);
+    const auto namedBlock = decisions::quotaBlockForClass(durable->slots[0], "standard", named);
+    ASSERT(namedBlock);
+    EXPECT_EQ(namedBlock->observed_reset_at_ms, std::optional<double>(weekly));
+    EXPECT(namedBlock->observed_reset_at_is_stable);
+    EXPECT(!namedBlock->banked_reset_generation_ambiguous);
+  }
+
+  ASYNC_TEST("named exhaustion keeps an exact reset fence without blocking a healthy same-class model") {
+    auto running = runScripted(&preserveNamedQuotaScope);
+    co_await std::move(running);
+  }
 
   CodexCapacityRoutingObservationInput observationInputOf(double slot, const std::string& accountId) {
     CodexCapacityRoutingObservationInput input;

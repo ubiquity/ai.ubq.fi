@@ -32,7 +32,9 @@ namespace uos::authority::native_codex_capacity {
 
     std::vector<std::string> keysOf(const CodexQuotaBlocksByClass& blocks) {
       std::vector<std::string> keys;
-      for (const auto& [key, block] : blocks) keys.push_back(key);
+      for (const auto& [key, block] : blocks) {
+        if (!isCodexCapacityModelScope(key)) keys.push_back(key);
+      }
       return keys;
     }
 
@@ -137,6 +139,11 @@ namespace uos::authority::native_codex_capacity {
       return value ? rt::replace(rt::toLowerCase(*value), NON_ALPHANUMERIC, "") : std::string();
     }
 
+    CodexQuotaClass capacityModelScope(std::optional<std::string_view> model) {
+      const std::string key = normalizeQuotaLabel(model);
+      return key.empty() ? CodexQuotaClass{} : std::string(CODEX_CAPACITY_MODEL_SCOPE_PREFIX) + key;
+    }
+
     std::vector<const CodexCapacityRoutingWindows*> capacityWindowsForModel(const CodexCapacityRoutingObservation& observation,
                                                                              std::optional<std::string_view> model) {
       const std::string modelKey = normalizeQuotaLabel(model);
@@ -167,13 +174,14 @@ namespace uos::authority::native_codex_capacity {
 
     // quotaBlockForClass's candidates are, in order, the class's own entry, the shared unknown
     // entry and the legacy slot-wide deadline; quotaBlockKeyForClass asks which one won.
-    enum class BlockOrigin { exact, unknown, legacy };
+    enum class BlockOrigin { exact, model, unknown, legacy };
     struct ClassBlockChoice {
       CodexQuotaClassBlock block;
       BlockOrigin origin;
     };
 
-    std::optional<ClassBlockChoice> chooseQuotaBlockForClass(const CodexRoutingSlot& slot, std::string_view quotaClassKey) {
+    std::optional<ClassBlockChoice> chooseQuotaBlockForClass(const CodexRoutingSlot& slot, std::string_view quotaClassKey,
+                                                           std::optional<std::string_view> model) {
       const CodexQuotaClassBlock* exact = slot.quota_blocks_by_class ? slot.quota_blocks_by_class->get(quotaClassKey) : nullptr;
       const CodexQuotaClassBlock* unknown = quotaClassKey == "unknown" || !slot.quota_blocks_by_class ? nullptr : slot.quota_blocks_by_class->get("unknown");
       const std::vector<std::string> legacyClasses = slot.quota_blocked_classes.value_or(std::vector<std::string>{});
@@ -194,15 +202,24 @@ namespace uos::authority::native_codex_capacity {
       if (exact != nullptr) consider(*exact, BlockOrigin::exact);
       if (unknown != nullptr) consider(*unknown, BlockOrigin::unknown);
       if (legacy) consider(*legacy, BlockOrigin::legacy);
+      if (model && slot.quota_blocks_by_class) {
+        const auto* scoped = slot.quota_blocks_by_class->get(capacityModelScope(model));
+        if (scoped && (!latest || scoped->quota_signal_observed_at_ms > latest->block.quota_signal_observed_at_ms))
+          consider(*scoped, BlockOrigin::model);
+      }
       return latest;
     }
 
     // The TS also drops the unknown entry when it is the very same object as the class entry;
     // the only reader takes the maximum signal, which that cannot change.
-    std::vector<CodexQuotaClassBlock> quotaBlocksForClass(const CodexRoutingSlot& slot, std::string_view quotaClassKey) {
+    std::vector<CodexQuotaClassBlock> quotaBlocksForClass(const CodexRoutingSlot& slot, std::string_view quotaClassKey,
+                                                         std::optional<std::string_view> model) {
       const CodexRoutingSlot classAwareSlot = withLegacyQuotaClassMap(slot);
       std::vector<CodexQuotaClassBlock> candidates;
       if (classAwareSlot.quota_blocks_by_class) {
+        if (model) {
+          if (const auto* scoped = classAwareSlot.quota_blocks_by_class->get(capacityModelScope(model))) candidates.push_back(*scoped);
+        }
         if (const CodexQuotaClassBlock* exact = classAwareSlot.quota_blocks_by_class->get(quotaClassKey)) candidates.push_back(*exact);
         if (quotaClassKey != "unknown") {
           if (const CodexQuotaClassBlock* unknown = classAwareSlot.quota_blocks_by_class->get("unknown")) candidates.push_back(*unknown);
@@ -416,7 +433,7 @@ namespace uos::authority::native_codex_capacity {
     if (lease->generation != *account.probeGeneration || !account.probeToken || lease->token != *account.probeToken) return false;
     if (lease->circuit != routingProbeCircuit(account)) return false;
     if (routingProbeCircuit(account) != "quota") return true;
-    return lease->quota_class.isNullish() || *lease->quota_class == quotaClass(account.requestedModel);
+    return lease->quota_class.isNullish() || codexQuotaScopeApplies(*lease->quota_class, requestedModelView(account.requestedModel));
   }
 
   CodexAccountRoutingState withSlot(const CodexAccountRoutingState& state, double index, const CodexRoutingSlot& slot, double updatedAtMs) {
@@ -488,8 +505,16 @@ namespace uos::authority::native_codex_capacity {
     return model.hasValue() ? quotaClass(std::optional<std::string_view>(*model)) : quotaClass(std::optional<std::string_view>());
   }
 
-  std::optional<CodexQuotaClassBlock> quotaBlockForClass(const CodexRoutingSlot& slot, std::string_view quotaClassKey) {
-    std::optional<ClassBlockChoice> choice = chooseQuotaBlockForClass(slot, quotaClassKey);
+  std::optional<std::string_view> requestedModelView(const rt::Nullable<std::string>& model) {
+    return model.hasValue() ? std::optional<std::string_view>(*model) : std::nullopt;
+  }
+
+  bool codexQuotaScopeApplies(std::string_view scope, std::optional<std::string_view> model) {
+    return isCodexCapacityModelScope(scope) ? scope == capacityModelScope(model) : scope == quotaClass(model);
+  }
+
+  std::optional<CodexQuotaClassBlock> quotaBlockForClass(const CodexRoutingSlot& slot, std::string_view quotaClassKey, std::optional<std::string_view> model) {
+    std::optional<ClassBlockChoice> choice = chooseQuotaBlockForClass(slot, quotaClassKey, model);
     if (!choice) return std::nullopt;
     return std::move(choice->block);
   }
@@ -522,9 +547,9 @@ namespace uos::authority::native_codex_capacity {
     return next;
   }
 
-  std::optional<double> quotaSignalObservedAtForClass(const CodexRoutingSlot& slot, std::string_view quotaClassKey) {
+  std::optional<double> quotaSignalObservedAtForClass(const CodexRoutingSlot& slot, std::string_view quotaClassKey, std::optional<std::string_view> model) {
     std::vector<double> signals;
-    for (const CodexQuotaClassBlock& block : quotaBlocksForClass(slot, quotaClassKey)) {
+    for (const CodexQuotaClassBlock& block : quotaBlocksForClass(slot, quotaClassKey, model)) {
       const std::optional<double> signal = block.quota_signal_observed_at_ms ? block.quota_signal_observed_at_ms : slot.quota_signal_observed_at_ms;
       if (signal) signals.push_back(*signal);
     }
@@ -532,9 +557,10 @@ namespace uos::authority::native_codex_capacity {
     return rt::Math::max(std::span<const double>(signals));
   }
 
-  std::optional<CodexQuotaClass> quotaBlockKeyForClass(const CodexRoutingSlot& slot, std::string_view quotaClassKey) {
-    const std::optional<ClassBlockChoice> choice = chooseQuotaBlockForClass(slot, quotaClassKey);
+  std::optional<CodexQuotaClass> quotaBlockKeyForClass(const CodexRoutingSlot& slot, std::string_view quotaClassKey, std::optional<std::string_view> model) {
+    const std::optional<ClassBlockChoice> choice = chooseQuotaBlockForClass(slot, quotaClassKey, model);
     if (!choice) return std::nullopt;
+    if (choice->origin == BlockOrigin::model) return capacityModelScope(model);
     if (choice->origin == BlockOrigin::exact) return CodexQuotaClass(quotaClassKey);
     // An independent unknown fence protects every model class. A known-class
     // recovery can release the shared fallback only when migration marked it as
@@ -548,7 +574,8 @@ namespace uos::authority::native_codex_capacity {
     // and an unknown-class legacy fallback is dropped with the requested class.
     const CodexQuotaBlocksByClass currentBlocks = slot.quota_blocks_by_class.value_or(CodexQuotaBlocksByClass{});
     const CodexQuotaClassBlock* currentUnknown = currentBlocks.get("unknown");
-    const bool dropUnknownLegacyFallback = quotaClassKey != "unknown" && currentUnknown != nullptr && currentUnknown->legacy_fallback;
+    const bool dropUnknownLegacyFallback = !isCodexCapacityModelScope(quotaClassKey) && quotaClassKey != "unknown" &&
+                                           currentUnknown != nullptr && currentUnknown->legacy_fallback;
     CodexQuotaBlocksByClass quotaBlocksByClass;
     for (const auto& [key, block] : currentBlocks) {
       if (key != quotaClassKey && !(dropUnknownLegacyFallback && key == "unknown")) quotaBlocksByClass.set(key, block);
@@ -558,6 +585,7 @@ namespace uos::authority::native_codex_capacity {
     bool ambiguous = false;
     bool pending = false;
     for (const auto& [key, block] : quotaBlocksByClass) {
+      if (isCodexCapacityModelScope(key)) continue;
       keepLatest(latest, block);
       if (block.quota_signal_observed_at_ms) observedQuotaSignals.push_back(*block.quota_signal_observed_at_ms);
       ambiguous = ambiguous || block.banked_reset_generation_ambiguous;
@@ -596,7 +624,9 @@ namespace uos::authority::native_codex_capacity {
       quotaBlocksByClass.set(key, rechecked);
     }
     std::optional<CodexQuotaClassBlock> latest;
-    for (const auto& [key, block] : quotaBlocksByClass) keepLatest(latest, block);
+    for (const auto& [key, block] : quotaBlocksByClass) {
+      if (!isCodexCapacityModelScope(key)) keepLatest(latest, block);
+    }
     CodexRoutingSlot next = slot;
     next.quota_blocked_until_ms = latest ? std::optional<double>(latest->blocked_until_ms)
                                          : (rt::truthy(slot.quota_blocked_until_ms) ? std::optional<double>(recheckAtMs) : std::nullopt);
@@ -608,10 +638,10 @@ namespace uos::authority::native_codex_capacity {
     return next;
   }
 
-  CodexRoutingSlot releaseQuotaClassProbe(const CodexRoutingSlot& slot, std::string_view quotaClassKey) {
+  CodexRoutingSlot releaseQuotaClassProbe(const CodexRoutingSlot& slot, std::string_view quotaClassKey, std::optional<std::string_view> model) {
     const CodexRoutingSlot classAwareSlot = withLegacyQuotaClassMap(slot);
-    const std::optional<CodexQuotaClassBlock> block = quotaBlockForClass(classAwareSlot, quotaClassKey);
-    const std::optional<CodexQuotaClass> key = quotaBlockKeyForClass(classAwareSlot, quotaClassKey);
+    const std::optional<CodexQuotaClassBlock> block = quotaBlockForClass(classAwareSlot, quotaClassKey, model);
+    const std::optional<CodexQuotaClass> key = quotaBlockKeyForClass(classAwareSlot, quotaClassKey, model);
     CodexRoutingSlot released = withoutQuotaClass(classAwareSlot, key ? std::string_view(*key) : quotaClassKey);
     if (!classAwareSlot.banked_reset_recovery_probe_pending) return released;
     const bool pending = released.banked_reset_recovery_probe_pending;
@@ -709,24 +739,34 @@ namespace uos::authority::native_codex_capacity {
     if (!slotMatchesCodexRoutingAccount(current, account) || current.probe_lease) return std::nullopt;
     const CodexQuotaClass requestedQuotaClass = quotaClass(account.requestedModel);
     const CodexRoutingSlot classAwareCurrent = withLegacyQuotaClassMap(current);
-    const std::optional<CodexQuotaClassBlock> priorBlock = quotaBlockForClass(classAwareCurrent, requestedQuotaClass);
-    const std::optional<double> priorSignalObservedAtMs = quotaSignalObservedAtForClass(classAwareCurrent, requestedQuotaClass);
+    const bool named = requestedModel && capacityWindowsForModel(observation, requestedModel).front() != &observation.windows;
+    const CodexQuotaClass scope = named ? capacityModelScope(requestedModel) : requestedQuotaClass;
+    const std::optional<double> priorSignalObservedAtMs = quotaSignalObservedAtForClass(classAwareCurrent, requestedQuotaClass, requestedModel);
     // A request that reached the provider after the sample may have established
     // a newer authoritative circuit. The older sample cannot replace it.
     if (priorSignalObservedAtMs && *priorSignalObservedAtMs > observation.snapshot_at_ms) return std::nullopt;
-    const bool recoveryProbePending = current.banked_reset_recovery_probe_pending || (priorBlock ? priorBlock->banked_reset_recovery_probe_pending : false);
+    CodexQuotaBlocksByClass quotaBlocksByClass = quotaBlocksIncludingLegacy(current);
+    const auto* priorBlock = quotaBlocksByClass.get(scope);
+    const bool recoveryProbePending = current.banked_reset_recovery_probe_pending || (priorBlock && priorBlock->banked_reset_recovery_probe_pending);
     const CodexQuotaClassBlock nextBlock{*resetAtMs, "header_retry_after", false, observation.snapshot_at_ms, *resetAtMs, true, false, recoveryProbePending};
     if (priorBlock && priorBlock->blocked_until_ms == nextBlock.blocked_until_ms && priorBlock->source == nextBlock.source &&
         priorBlock->observed_reset_at_ms == nextBlock.observed_reset_at_ms && priorBlock->observed_reset_at_is_stable && !priorBlock->banked_reset_generation_ambiguous &&
         priorBlock->banked_reset_recovery_probe_pending == recoveryProbePending)
       return std::nullopt;
-    CodexQuotaBlocksByClass quotaBlocksByClass = quotaBlocksIncludingLegacy(current);
-    quotaBlocksByClass.set(requestedQuotaClass, nextBlock);
+    quotaBlocksByClass.set(scope, nextBlock);
+    // Named observations are exact to a model. Do not project them into the slot-wide legacy fields.
+    if (named) {
+      auto blocked = current;
+      blocked.quota_blocks_by_class = std::move(quotaBlocksByClass);
+      blocked.generation = current.generation + 1;
+      return withSlot(state, account.slot, blocked, updatedAtMs);
+    }
     CodexQuotaClassBlock latest = nextBlock;
     std::vector<double> observedSignals;
     bool ambiguous = false;
     bool pending = false;
     for (const auto& [key, block] : quotaBlocksByClass) {
+      if (isCodexCapacityModelScope(key)) continue;
       if (block.blocked_until_ms > latest.blocked_until_ms) latest = block;
       if (block.quota_signal_observed_at_ms) observedSignals.push_back(*block.quota_signal_observed_at_ms);
       ambiguous = ambiguous || block.banked_reset_generation_ambiguous;
@@ -765,12 +805,12 @@ namespace uos::authority::native_codex_capacity {
     const bool capacityPositive = fresh && capacityHasAnyPositiveHeadroom(observation, model);
     const CodexQuotaClass requestedQuotaClass = quotaClass(model);
     const CodexRoutingSlot classAwareCurrent = withLegacyQuotaClassMap(current);
-    const std::optional<double> classQuotaSignalObservedAtMs = quotaSignalObservedAtForClass(classAwareCurrent, requestedQuotaClass);
+    const std::optional<double> classQuotaSignalObservedAtMs = quotaSignalObservedAtForClass(classAwareCurrent, requestedQuotaClass, model);
     const bool newerQuotaSignal = classQuotaSignalObservedAtMs && *classQuotaSignalObservedAtMs >= observation.snapshot_at_ms;
     const bool clearCircuit = capacityPositive && !newerQuotaSignal;
     std::optional<CodexRoutingSlot> capacityClearedSlot;
     if (clearCircuit) {
-      const std::optional<CodexQuotaClass> key = quotaBlockKeyForClass(classAwareCurrent, requestedQuotaClass);
+      const std::optional<CodexQuotaClass> key = quotaBlockKeyForClass(classAwareCurrent, requestedQuotaClass, model);
       capacityClearedSlot = withoutQuotaClass(classAwareCurrent, key ? std::string_view(*key) : std::string_view(requestedQuotaClass));
     }
     const CodexRoutingSlot nextSlot = capacityObservedSlot(current, capacityClearedSlot ? *capacityClearedSlot : current, observation, clearCircuit);

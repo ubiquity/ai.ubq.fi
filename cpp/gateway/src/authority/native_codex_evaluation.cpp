@@ -77,7 +77,7 @@ namespace uos::authority::native_codex_evaluation {
       const CodexCapacityRoutingObservation* freshObservation = freshCapacityObservation(observation, now);
       const std::optional<double> observedCapacityHeadroom =
         freshObservation == nullptr ? std::nullopt : capacityHeadroomForObservation(*freshObservation, modelView(model));
-      const std::optional<double> classQuotaSignalObservedAtMs = quotaSignalObservedAtForClass(classAwareSlot, requestedQuotaClass);
+      const std::optional<double> classQuotaSignalObservedAtMs = quotaSignalObservedAtForClass(classAwareSlot, requestedQuotaClass, modelView(model));
       const std::optional<double> snapshotAtMs = freshObservation != nullptr ? std::optional<double>(freshObservation->snapshot_at_ms) : std::nullopt;
       const bool quotaSignalNewer = snapshotAtMs.has_value() && classQuotaSignalObservedAtMs.has_value() && *classQuotaSignalObservedAtMs >= *snapshotAtMs;
       const bool capacityOverride = freshObservation != nullptr && observedCapacityHeadroom.has_value() && *observedCapacityHeadroom > 0 && !quotaSignalNewer;
@@ -114,11 +114,11 @@ namespace uos::authority::native_codex_evaluation {
      * recovery-probe lease. Ordinary routing stays unavailable until that exact
      * fenced probe succeeds, fails, or expires.
      */
-    std::optional<LeaseSkip> probeLeaseSkipFor(const CodexRoutingSlot& slot, const CodexQuotaClass& requestedQuotaClass, double now) {
+    std::optional<LeaseSkip> probeLeaseSkipFor(const CodexRoutingSlot& slot, std::optional<std::string_view> model, double now) {
       const std::optional<CodexProbeLease>& lease = slot.probe_lease;
       if (!lease || lease->expires_at_ms <= now) return std::nullopt;
       const bool leaseBlocksRequest =
-        lease->circuit != "upstream_timeout" && (lease->quota_class.isNullish() || *lease->quota_class == requestedQuotaClass);
+        lease->circuit != "upstream_timeout" && (lease->quota_class.isNullish() || codexQuotaScopeApplies(*lease->quota_class, model));
       if (!leaseBlocksRequest) return std::nullopt;
       return LeaseSkip{.circuit = lease->circuit, .retryAtMs = lease->expires_at_ms};
     }
@@ -146,7 +146,7 @@ namespace uos::authority::native_codex_evaluation {
     const CodexRoutingSlot slot = slotMatchesCodexRoutingAccount(storedSlot, account) ? storedSlot : neutralSlot(account.credentialVersion, account.accountIdHash);
     const CodexQuotaClass requestedQuotaClass = quotaClass(modelView(model));
     const CodexRoutingSlot classAwareSlot = withLegacyQuotaClassMap(slot);
-    const std::optional<CodexQuotaClassBlock> requestedClassBlock = quotaBlockForClass(classAwareSlot, requestedQuotaClass);
+    const std::optional<CodexQuotaClassBlock> requestedClassBlock = quotaBlockForClass(classAwareSlot, requestedQuotaClass, modelView(model));
     const CodexCapacityRoutingObservation* observation = observationsByAccount.get(account.accountIdHash);
     const CapacityDecision capacity = resolveCodexCapacityDecision(slot, classAwareSlot, requestedQuotaClass, observation, model, now);
     CodexRoutedAccount routedAccount = account;
@@ -168,7 +168,7 @@ namespace uos::authority::native_codex_evaluation {
     if (quotaSkip) {
       return skippedRoutingAccount(routedAccount, mapped.slot + 1, "quota", quotaSkip->retryAtMs, quotaSkip->blockedAccount, "quota_exhausted");
     }
-    const std::optional<LeaseSkip> leaseSkip = probeLeaseSkipFor(slot, requestedQuotaClass, now);
+    const std::optional<LeaseSkip> leaseSkip = probeLeaseSkipFor(slot, modelView(model), now);
     if (leaseSkip) return skippedRoutingAccount(routedAccount, mapped.slot + 1, leaseSkip->circuit, leaseSkip->retryAtMs, std::nullopt);
     if (capacity.capacityExhausted) {
       // A fully used capacity observation with a future reset deadline is the
