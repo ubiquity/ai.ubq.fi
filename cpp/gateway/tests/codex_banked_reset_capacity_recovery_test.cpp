@@ -231,17 +231,26 @@ ASYNC_TEST("a capacity observation that is not fresh never fabricates a probe id
   EXPECT(!accounts(selected)[0].probeRequired); EXPECT(accounts(selected)[0].probeCircuit == nullptr);
 }
 
-ASYNC_TEST("an overage-allowed account serves capacity exhaustion without a reset probe lease") {
+ASYNC_TEST("an overage-allowed account stays quota blocked on its exhausted weekly window") {
   Fixture fixture; auto kv = fixture.kv; const double now = 1'700'000'000'000; const auto auth = harnessAuth(now); RUN(seedAuthPool(kv, auth, now));
   const json::object overrides{{"primary_used_percent", 100}, {"observed_reset_at_ms", now - 7 * DAY_MS}, {"observed_reset_at_is_stable", true}, {"banked_reset_generation_ambiguous", true}};
-  RUN(seedRoutingState(kv, auth, now, overrides)); const double resetAtMs = now + 7 * DAY_MS; RUN(seedCapacityObservation(now + 1, resetAtMs));
+  RUN(seedRoutingState(kv, auth, now, overrides));
+  const double resetAtMs = now + 7 * DAY_MS;
+  auto sample = capacitySample(0, "one", now + 1, now + 60'000, 24);
+  sample.windows.secondary = routing::CodexCapacityRoutingWindow{WEEKLY_WINDOW_SECONDS, 100, resetAtMs};
+  const std::vector samples{sample};
+  RUN(recordCodexCapacityRoutingObservations(samples, now + 1));
   AWAIT(plainHash, uos::utils::sha256Hex(auth.account_id)); RUN(overage::writeOverageUsage(kv, plainHash, true)); overage::resetOverageUsageCacheForTest();
   RUN(overage::loadOverageUsageSettings(singlePool, true)); AWAIT(routingHash, routingAccountIdHash(auth.account_id)); EXPECT(overage::overageUsageAllowedSync(routingHash));
-  STRONG(selected, singlePool, now + 2); ASSERT_EQ(kind(selected), "eligible"); const auto probeAccount = accounts(selected)[0];
-  EXPECT(!probeAccount.probeRequired); EXPECT(probeAccount.probeCircuit == nullptr); EXPECT_EQ(probeAccount.quotaHeadroom, 0);
-  const auto persisted = state(kv); EXPECT(!persisted.slots[0].quota_blocks_by_class || !persisted.slots[0].quota_blocks_by_class->has("standard"));
-  AWAIT(fence, getCodexQuotaBlockFence(probeAccount, resetAtMs)); EXPECT(!fence); AWAIT(claimed, claimCodexRoutingProbe(singlePool, probeAccount, now + 5));
-  ASSERT(claimed); EXPECT(!claimed->probeRequired); EXPECT(claimed->probeCircuit == nullptr);
+  STRONG(selected, singlePool, now + 2); ASSERT_EQ(kind(selected), "quota_blocked");
+  const auto& blocked = std::get<routing::RouteSelectionQuotaBlocked>(selected);
+  EXPECT(blocked.fullCohortExhausted); ASSERT_EQ(blocked.blockedAccounts.size(), 1U);
+  const auto& blockedAccount = blocked.blockedAccounts.front();
+  EXPECT_EQ(blockedAccount.quotaResetAtMs, resetAtMs);
+  AWAIT(observations, capacity::loadCodexCapacityRoutingObservations(singlePool, true)); ASSERT_EQ(observations.size(), 1U);
+  AWAIT(materialized, capacity::reconcileCapacityQuotaBlock(blockedAccount, observations.front(), now + 2)); EXPECT(materialized);
+  AWAIT(fence, getCodexQuotaBlockFence(blockedAccount, resetAtMs)); EXPECT(fence);
+  AWAIT(primaryFence, getCodexQuotaBlockFence(blockedAccount, now + 60'000)); EXPECT(!primaryFence);
 }
 
 ASYNC_TEST("one subscription's overage allowance never changes its sibling's blocked identity") {
@@ -254,8 +263,36 @@ ASYNC_TEST("one subscription's overage allowance never changes its sibling's blo
     capacitySample(0, "one", now + 1, resetAtMs), capacitySample(1, "two", now + 1, resetAtMs)}; RUN(recordCodexCapacityRoutingObservations(samples, now + 1));
   AWAIT(plainHash, uos::utils::sha256Hex(std::string("one"))); RUN(overage::writeOverageUsage(kv, plainHash, true));
   overage::resetOverageUsageCacheForTest(); RUN(overage::loadOverageUsageSettings(twoPool, true));
-  STRONG(selected, twoPool, now + 2); ASSERT_EQ(kind(selected), "eligible"); ASSERT_EQ(accounts(selected).size(), std::size_t{1});
-  EXPECT_EQ(accounts(selected)[0].auth.account_id, "one"); EXPECT(!accounts(selected)[0].probeRequired);
-  const auto& blocked = std::get<routing::RouteSelectionEligible>(selected).blockedAccounts; ASSERT_EQ(blocked.size(), std::size_t{1});
-  EXPECT_EQ(blocked[0].auth.account_id, "two"); EXPECT_EQ(blocked[0].quotaResetAtMs, resetAtMs);
+  STRONG(selected, twoPool, now + 2); ASSERT_EQ(kind(selected), "quota_blocked");
+  const auto& blocked = std::get<routing::RouteSelectionQuotaBlocked>(selected).blockedAccounts; ASSERT_EQ(blocked.size(), std::size_t{2});
+  EXPECT_EQ(blocked[0].auth.account_id, "one"); EXPECT_EQ(blocked[0].quotaResetAtMs, resetAtMs);
+  EXPECT_EQ(blocked[1].auth.account_id, "two"); EXPECT_EQ(blocked[1].quotaResetAtMs, resetAtMs);
+  const std::vector recovered{capacitySample(1, "two", now + 3, resetAtMs, 50)};
+  RUN(recordCodexCapacityRoutingObservations(recovered, now + 3));
+  STRONG(withHeadroom, twoPool, now + 4); ASSERT_EQ(kind(withHeadroom), "eligible");
+  ASSERT_EQ(accounts(withHeadroom).size(), 1U); EXPECT_EQ(accounts(withHeadroom).front().auth.account_id, "two");
+}
+
+TEST("capacity reset identity follows the exact model and expires with the exhausted window") {
+  namespace decisions = uos::authority::native_codex_capacity;
+  const double now = 1'700'000'000'000;
+  routing::CodexCapacityRoutingObservation observation;
+  observation.state = "available";
+  observation.snapshot_at_ms = now;
+  observation.windows.primary = routing::CodexCapacityRoutingWindow{18'000, 100, now - 1};
+  observation.windows.secondary = routing::CodexCapacityRoutingWindow{WEEKLY_WINDOW_SECONDS, 12, now + 7 * DAY_MS};
+  const double scopedReset = now + DAY_MS;
+  observation.additional_rate_limits.push_back({"gpt-scoped", std::nullopt, {
+    routing::CodexCapacityRoutingWindow{18'000, 100, now + 60'000},
+    routing::CodexCapacityRoutingWindow{WEEKLY_WINDOW_SECONDS, 100, scopedReset},
+  }});
+  EXPECT_EQ(decisions::capacityExhaustedResetAtMs(observation, std::nullopt, now), std::nullopt);
+  EXPECT_EQ(decisions::capacityExhaustedResetAtMs(observation, "gpt-scoped", now), scopedReset);
+  auto conflicting = observation.additional_rate_limits.front();
+  conflicting.windows.secondary->reset_at_ms = scopedReset + DAY_MS;
+  observation.additional_rate_limits.push_back(conflicting);
+  EXPECT_EQ(decisions::capacityExhaustedResetAtMs(observation, "gpt-scoped", now), std::nullopt);
+  observation.additional_rate_limits.pop_back();
+  observation.additional_rate_limits.front().windows.primary->reset_at_ms = std::nullopt;
+  EXPECT_EQ(decisions::capacityExhaustedResetAtMs(observation, "gpt-scoped", now), std::nullopt);
 }

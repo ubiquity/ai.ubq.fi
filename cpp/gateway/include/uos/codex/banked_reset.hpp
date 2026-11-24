@@ -192,6 +192,7 @@ namespace uos::codex::banked_reset {
     std::string reason;
     std::optional<CodexBankedResetPoolCandidate> selected;
     std::optional<CodexBankedResetOutcome> reset;
+    bool allCandidatesExplicitlyDisabled = false;
   };
 
   // `type ResetContext` (exported through the type list).

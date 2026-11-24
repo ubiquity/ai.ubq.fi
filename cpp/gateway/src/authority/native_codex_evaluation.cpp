@@ -167,27 +167,15 @@ namespace uos::authority::native_codex_evaluation {
     if (quotaSkip) {
       return skippedRoutingAccount(routedAccount, mapped.slot + 1, "quota", quotaSkip->retryAtMs, quotaSkip->blockedAccount, "quota_exhausted");
     }
+    const std::optional<LeaseSkip> leaseSkip = probeLeaseSkipFor(slot, requestedQuotaClass, now);
+    if (leaseSkip) return skippedRoutingAccount(routedAccount, mapped.slot + 1, leaseSkip->circuit, leaseSkip->retryAtMs, std::nullopt);
     if (capacity.capacityExhausted) {
-      // The operator explicitly allows overage spending for this subscription:
-      // keep it half-open so the request may serve through the paid backup
-      // balance instead of waiting for a banked-reset redemption.
-      if (policy.overageUsageAllowed) {
-        CodexRoutedAccount overage = routedAccount;
-        overage.probeRequired = false;
-        overage.probeCircuit = nullptr;
-        CodexRoutingAccountEvaluation routed = routedRoutingAccount(overage);
-        routed.capacityExhausted = true;
-        return routed;
-      }
       // A fully used capacity observation with a future reset deadline is the
       // authoritative quota block for that window: it must feed the blocked
-      // cohort so the automatic banked-reset flow can redeem (the deploy
-      // materializes the durable class block). Without a deadline, keep the
-      // subscription half-open so a bounded probe can re-observe the account.
-      const CodexCapacityRoutingObservation* freshObservation = freshCapacityObservation(observation, now);
-      std::optional<double> observationResetAtMs;
-      if (freshObservation != nullptr && freshObservation->windows.primary) observationResetAtMs = freshObservation->windows.primary->reset_at_ms;
-      if (observationResetAtMs.has_value() && rt::Number::isSafeInteger(*observationResetAtMs) && *observationResetAtMs > now) {
+      // cohort so the request can consider a reset before attempting overage.
+      // Without a deadline, a bounded probe can re-observe the account.
+      const auto observationResetAtMs = capacityExhaustedResetAtMs(*observation, modelView(model), now);
+      if (observationResetAtMs) {
         CodexRoutingAccountEvaluation skipped = skippedRoutingAccount(routedAccount, mapped.slot + 1, "quota", *observationResetAtMs,
                                                                       blockedAccountFor(routedAccount, *observationResetAtMs), "quota_exhausted");
         skipped.capacityExhausted = true;
@@ -200,8 +188,6 @@ namespace uos::authority::native_codex_evaluation {
       routed.capacityExhausted = true;
       return routed;
     }
-    const std::optional<LeaseSkip> leaseSkip = probeLeaseSkipFor(slot, requestedQuotaClass, now);
-    if (leaseSkip) return skippedRoutingAccount(routedAccount, mapped.slot + 1, leaseSkip->circuit, leaseSkip->retryAtMs, std::nullopt);
     // Claim the half-open lease only if request execution actually reaches this
     // slot. This preserves first/second order without abandoning a secondary
     // lease when the healthy first account returns directly.

@@ -89,6 +89,10 @@ namespace uos::authority::native_codex_capacity {
 
   bool capacityObservationIsFresh(const native_codex_contracts::CodexCapacityRoutingObservation& observation, double now);
 
+  // The provider deadline that identifies a fresh, exhausted model-applicable window.
+  std::optional<double> capacityExhaustedResetAtMs(const native_codex_contracts::CodexCapacityRoutingObservation& observation,
+                                                  std::optional<std::string_view> model, double now);
+
   std::vector<native_codex_contracts::CodexCapacityRoutingObservation> parseStoredCapacityObservationStore(const json::value* value);
   std::vector<native_codex_contracts::CodexCapacityRoutingObservation> parseStoredCapacityObservationStore(const json::value& value);
 

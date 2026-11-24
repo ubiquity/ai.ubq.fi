@@ -54,6 +54,8 @@ namespace {
     std::variant<bool, std::vector<bool>> allowOverage = false;
     std::string mode = "live";
     bool seedUnsubmittedReset = false;
+    bool includeSibling = false;
+    bool siblingSubmitUnknown = false;
     bool parallel = false;
     bool allows(std::size_t index) const {
       if (const auto* allow = std::get_if<bool>(&allowOverage)) return *allow;
@@ -67,34 +69,44 @@ namespace {
   }
   rt::Task<BlockedRun> runBlockedSequence(std::vector<std::string> requestIds, std::function<rt::Response()> inventoryResponse, RunOptions options) {
     HarnessScope scope; uos::config::config.codexBaseUrl = "https://upstream-reset.test/backend-api/codex";
-    kv->auth = pool(auth("one")); os::resetOverageUsageCacheForTest();
+    kv->auth = options.includeSibling ? pool(auth("one"), auth("two")) : pool(auth("one")); os::resetOverageUsageCacheForTest();
     auto cleanup = rt::scopeExit([] { os::resetOverageUsageCacheForTest(); });
     std::vector<UpstreamCall> calls; WAIT(seedStableBankedResetBlock("account-one"));
+    if (options.includeSibling) WAIT(seedStableBankedResetBlock("account-two"));
     if (options.seedUnsubmittedReset) {
       AWAIT(routing, cr::selectCodexRoutingAccountsStrong(kv->auth, kv->auth.accounts, fixedStartMs));
       const auto* quotaBlocked = std::get_if<rs::RouteSelectionQuotaBlocked>(&routing); ASSERT(quotaBlocked); ASSERT(!quotaBlocked->blockedAccounts.empty());
-      const auto blocked = quotaBlocked->blockedAccounts[0]; ASSERT(blocked.routingGeneration); AWAIT(accountHash, uos::utils::sha256Hex("account-one"));
-      const std::string separator(1, '\0');
-      const auto credentialVersionInput = "uos_ai" + separator + "codex_reset_credential_version" + separator + blocked.credentialVersion;
-      AWAIT(credentialHash, uos::utils::sha256Hex(credentialVersionInput)); const auto credentialVersion = "v1:" + credentialHash;
-      const auto quotaGenerationInput = "uos_ai" + separator + "codex_reset_generation" + separator + accountHash + separator + rt::numberToString(blocked.quotaResetAtMs);
-      AWAIT(quotaHash, uos::utils::sha256Hex(quotaGenerationInput)); const auto quotaGeneration = "v1:" + quotaHash;
-      const auto idempotencyInput = "uos_ai" + separator + "codex_reset_idempotency" + separator + accountHash + separator + quotaGeneration;
-      AWAIT(idempotencyHash, uos::utils::sha256Hex(idempotencyInput)); const auto idempotencyKey = "uos_ai_codex_reset_v1_" + idempotencyHash;
-      AWAIT(idempotencyKeyHash, uos::utils::sha256Hex(idempotencyKey));
-      uos::types::CodexResetRedemptionRecord record{
-        .v = 1, .account_id_hash = accountHash, .credential_version = credentialVersion, .quota_generation = quotaGeneration,
-        .routing_generation = *blocked.routingGeneration, .idempotency_key_hash = idempotencyKeyHash,
-        .state = uos::types::CodexResetRedemptionState::claimed, .owner_token = "fixture-stale-owner", .fence = 1,
-        .lease_expires_at_ms = fixedStartMs + 30'000, .provider_receipt_id = std::nullopt, .created_at_ms = fixedStartMs - 1'000,
-        .updated_at_ms = fixedStartMs - 1'000, .submitted_at_ms = std::nullopt, .verified_at_ms = std::nullopt, .last_error_code = std::nullopt};
-      const auto key = br::codexResetRedemptionKey(accountHash, quotaGeneration); const auto value = rt::KvValue(json::value_from(record));
-      AWAIT(committed, kv->set(key, value)); (void) committed;
+      for (const auto& blocked : quotaBlocked->blockedAccounts) {
+        if (blocked.slot == 1 && !options.siblingSubmitUnknown) continue;
+        const bool unknown = blocked.slot == 1;
+        ASSERT(blocked.routingGeneration); AWAIT(accountHash, uos::utils::sha256Hex(blocked.auth.account_id));
+        const std::string separator(1, '\0');
+        const auto credentialVersionInput = "uos_ai" + separator + "codex_reset_credential_version" + separator + blocked.credentialVersion;
+        AWAIT(credentialHash, uos::utils::sha256Hex(credentialVersionInput)); const auto credentialVersion = "v1:" + credentialHash;
+        const auto quotaGenerationInput = "uos_ai" + separator + "codex_reset_generation" + separator + accountHash + separator + rt::numberToString(blocked.quotaResetAtMs);
+        AWAIT(quotaHash, uos::utils::sha256Hex(quotaGenerationInput)); const auto quotaGeneration = "v1:" + quotaHash;
+        const auto idempotencyInput = "uos_ai" + separator + "codex_reset_idempotency" + separator + accountHash + separator + quotaGeneration;
+        AWAIT(idempotencyHash, uos::utils::sha256Hex(idempotencyInput)); const auto idempotencyKey = "uos_ai_codex_reset_v1_" + idempotencyHash;
+        AWAIT(idempotencyKeyHash, uos::utils::sha256Hex(idempotencyKey));
+        uos::types::CodexResetRedemptionRecord record{
+          .v = 1, .account_id_hash = accountHash, .credential_version = credentialVersion, .quota_generation = quotaGeneration,
+          .routing_generation = *blocked.routingGeneration, .idempotency_key_hash = idempotencyKeyHash,
+          .state = unknown ? uos::types::CodexResetRedemptionState::unknown : uos::types::CodexResetRedemptionState::claimed,
+          .owner_token = "fixture-stale-owner", .fence = 1,
+          .lease_expires_at_ms = fixedStartMs + 30'000, .provider_receipt_id = std::nullopt, .created_at_ms = fixedStartMs - 1'000,
+          .updated_at_ms = fixedStartMs - 1'000, .submitted_at_ms = unknown ? std::optional<double>(fixedStartMs - 1'000) : std::nullopt,
+          .verified_at_ms = std::nullopt, .last_error_code = unknown ? std::optional<std::string>("provider_commit_unknown") : std::nullopt};
+        const auto key = br::codexResetRedemptionKey(accountHash, quotaGeneration); const auto value = rt::KvValue(json::value_from(record));
+        AWAIT(committed, kv->set(key, value)); (void) committed;
+      }
     }
     rt::GlobalFetchOverride fetch(rt::Fetch([&](rt::RequestInfo info, rt::RequestInit init) {
       const auto url = requestUrl(info); const auto account = init.headers.value_or(rt::Headers{}).get("chatgpt-account-id").value_or("");
       if (rt::endsWith(url, "/backend-api/codex/responses")) { calls.push_back({"inference", account}); return jsonResponse(json::object{{"id", "response-" + account}}); }
-      if (rt::endsWith(url, "/backend-api/wham/rate-limit-reset-credits")) { calls.push_back({"inventory", account}); return inventoryResponse(); }
+      if (rt::endsWith(url, "/backend-api/wham/rate-limit-reset-credits")) {
+        calls.push_back({"inventory", account});
+        return options.includeSibling && account == "account-one" ? emptyInventory() : inventoryResponse();
+      }
       if (rt::endsWith(url, "/backend-api/wham/rate-limit-reset-credits/consume")) { calls.push_back({"consume", account}); return jsonResponse(json::object{{"code", "reset"}, {"windows_reset", 1}}); }
       throw rt::JsError("unexpected request " + init.method.value_or("GET") + " " + url);
     }));
@@ -168,6 +180,23 @@ ASYNC_TEST("concurrent enabled overage requests do not contend for one probe lea
   const std::vector<std::string> ids{"overage-concurrent-one", "overage-concurrent-two"}; AWAIT(run, runBlockedSequence(ids, availableInventory, options));
   EXPECT_EQ(statuses(run), (std::vector<double>{200, 200})); EXPECT_EQ(accountsOf(run, "inference"), (std::vector<std::string>{"account-one", "account-one"}));
   EXPECT_EQ(std::count_if(run.logs.begin(), run.logs.end(), [](const auto& line) { return rt::includes(line, "codex_overage_served"); }), 2);
+}
+ASYNC_TEST("an unsubmitted reset claim on one account leaves a sibling credit eligible") {
+  RunOptions options; options.allowOverage = true; options.seedUnsubmittedReset = true; options.includeSibling = true;
+  const std::vector<std::string> ids{"overage-unsubmitted-sibling-credit"};
+  AWAIT(run, runBlockedSequence(ids, availableInventory, options));
+  EXPECT_EQ(statuses(run), (std::vector<double>{200}));
+  EXPECT_EQ(accountsOf(run, "consume"), (std::vector<std::string>{"account-two"}));
+  EXPECT_EQ(accountsOf(run, "inference"), (std::vector<std::string>{"account-two"}));
+  EXPECT(!logged(run, "codex_overage_served"));
+}
+ASYNC_TEST("an unsubmitted reset claim does not bypass a sibling's unknown submission") {
+  RunOptions options; options.allowOverage = true; options.seedUnsubmittedReset = true; options.includeSibling = true; options.siblingSubmitUnknown = true;
+  const std::vector<std::string> ids{"overage-unsubmitted-sibling-unknown"};
+  AWAIT(run, runBlockedSequence(ids, availableInventory, options));
+  EXPECT_EQ(statuses(run), (std::vector<double>{429}));
+  EXPECT(run.calls.empty());
+  EXPECT(!logged(run, "codex_overage_served"));
 }
 ASYNC_TEST("shadow-only reset outcomes still refuse overage when the account setting is off") {
   RunOptions options; options.mode = "shadow"; const std::vector<std::string> ids{"overage-shadow-disabled"};

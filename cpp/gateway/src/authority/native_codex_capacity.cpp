@@ -137,6 +137,30 @@ namespace uos::authority::native_codex_capacity {
       return value ? rt::replace(rt::toLowerCase(*value), NON_ALPHANUMERIC, "") : std::string();
     }
 
+    std::vector<const CodexCapacityRoutingWindows*> capacityWindowsForModel(const CodexCapacityRoutingObservation& observation,
+                                                                             std::optional<std::string_view> model) {
+      const std::string modelKey = normalizeQuotaLabel(model);
+      std::vector<const CodexCapacityRoutingWindows*> applicable;
+      if (!modelKey.empty()) {
+        for (const CodexCapacityRoutingAdditionalRateLimit& limit : observation.additional_rate_limits) {
+          if (normalizeQuotaLabel(std::string_view(limit.limit_name)) == modelKey) applicable.push_back(&limit.windows);
+        }
+      }
+      if (applicable.empty()) applicable.push_back(&observation.windows);
+      return applicable;
+    }
+
+    std::optional<double> exhaustedWindowResetAtMs(const CodexCapacityRoutingWindows& windows, double now) {
+      std::optional<double> latest;
+      for (const auto* window : {&windows.primary, &windows.secondary}) {
+        if (!*window || !(*window)->used_percent || *(*window)->used_percent < 100) continue;
+        const auto resetAtMs = (*window)->reset_at_ms;
+        if (!isSafeMs(resetAtMs)) return std::nullopt;
+        if (*resetAtMs > now && (!latest || *resetAtMs > *latest)) latest = resetAtMs;
+      }
+      return latest;
+    }
+
     constexpr std::array<std::string_view, 5> quotaClassKeys = {"spark", "gpt_oss_120b", "reserve", "standard", "unknown"};
 
     bool isQuotaClassKey(std::string_view value) { return std::find(quotaClassKeys.begin(), quotaClassKeys.end(), value) != quotaClassKeys.end(); }
@@ -599,28 +623,30 @@ namespace uos::authority::native_codex_capacity {
   }
 
   std::optional<double> capacityHeadroomForObservation(const CodexCapacityRoutingObservation& observation, std::optional<std::string_view> model) {
-    const std::optional<double> baseHeadroom = capacityHeadroomForWindows(observation.windows);
-    const std::string modelKey = normalizeQuotaLabel(model);
-    if (modelKey.empty()) return baseHeadroom;
-    std::vector<const CodexCapacityRoutingAdditionalRateLimit*> modelLimits;
-    for (const CodexCapacityRoutingAdditionalRateLimit& limit : observation.additional_rate_limits) {
-      if (normalizeQuotaLabel(std::string_view(limit.limit_name)) == modelKey) modelLimits.push_back(&limit);
+    std::optional<double> best;
+    for (const auto* windows : capacityWindowsForModel(observation, model)) {
+      const auto headroom = capacityHeadroomForWindows(*windows);
+      if (headroom && (!best || *headroom > *best)) best = headroom;
     }
-    if (!modelLimits.empty()) {
-      std::vector<double> modelHeadrooms;
-      for (const CodexCapacityRoutingAdditionalRateLimit* limit : modelLimits) {
-        const std::optional<double> headroom = capacityHeadroomForWindows(limit->windows);
-        if (headroom) modelHeadrooms.push_back(*headroom);
-      }
-      if (modelHeadrooms.empty()) return std::nullopt;
-      return rt::Math::max(std::span<const double>(modelHeadrooms));
-    }
-    return baseHeadroom;
+    return best;
   }
 
   bool capacityObservationIsFresh(const CodexCapacityRoutingObservation& observation, double now) {
     return observation.state == "available" && isSafeMs(observation.snapshot_at_ms) && observation.snapshot_at_ms <= now &&
            now - observation.snapshot_at_ms <= CODEX_CAPACITY_ROUTING_MAX_AGE_MS;
+  }
+
+  std::optional<double> capacityExhaustedResetAtMs(const CodexCapacityRoutingObservation& observation, std::optional<std::string_view> model, double now) {
+    if (!capacityObservationIsFresh(observation, now)) return std::nullopt;
+    std::optional<double> deadline;
+    for (const auto* windows : capacityWindowsForModel(observation, model)) {
+      // Both windows in one limit apply. Multiple matching limits describe alternatives
+      // and must agree before they can establish a single reset ledger identity.
+      const auto resetAtMs = exhaustedWindowResetAtMs(*windows, now);
+      if (!resetAtMs || (deadline && *resetAtMs != *deadline)) return std::nullopt;
+      deadline = resetAtMs;
+    }
+    return deadline;
   }
 
   std::vector<CodexCapacityRoutingObservation> parseStoredCapacityObservationStore(const json::value* value) {
@@ -661,13 +687,10 @@ namespace uos::authority::native_codex_capacity {
 
   std::optional<CodexAccountRoutingState> applyCapacityQuotaBlock(const CodexAccountRoutingState& state, const CodexRoutingAccount& account,
                                                                   const CodexCapacityRoutingObservation& observation, double now, double updatedAtMs) {
-    if (!capacityObservationIsFresh(observation, now)) return std::nullopt;
     if (observation.slot != account.slot || observation.account_id_hash != account.accountIdHash) return std::nullopt;
     const std::optional<std::string_view> requestedModel = account.requestedModel.hasValue() ? std::optional<std::string_view>(*account.requestedModel) : std::nullopt;
-    const std::optional<double> headroom = capacityHeadroomForObservation(observation, requestedModel);
-    if (!headroom || *headroom != 0) return std::nullopt;
-    const std::optional<double> resetAtMs = observation.windows.primary ? observation.windows.primary->reset_at_ms : std::nullopt;
-    if (!isSafeMs(resetAtMs) || *resetAtMs <= now) return std::nullopt;
+    const auto resetAtMs = capacityExhaustedResetAtMs(observation, requestedModel, now);
+    if (!resetAtMs) return std::nullopt;
     const CodexRoutingSlot current = slotFor(state, account);
     if (!slotMatchesCodexRoutingAccount(current, account) || current.probe_lease) return std::nullopt;
     const CodexQuotaClass requestedQuotaClass = quotaClass(account.requestedModel);

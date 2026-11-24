@@ -409,7 +409,19 @@ namespace uos::codex::banked_reset_pool {
       for (const PoolSettings& setting : settings) {
         if (setting.usage.allowed) eligible.push_back(setting.entry);
       }
-      if (eligible.empty()) co_return PoolStepOutcome{.outcome = poolOutcome("skipped", "usage_disabled")};
+      if (eligible.empty()) {
+        auto outcome = poolOutcome("skipped", "usage_disabled");
+        const bool explicitlyDisabled = std::all_of(settings.begin(), settings.end(), [](const PoolSettings& setting) {
+          if (setting.usage.entries.size() != 1 || !setting.usage.entries.front().value.isObject()) return false;
+          const auto& enabled = setting.usage.entries.front().value["enabled"];
+          return enabled.isBool() && !enabled.asBool();
+        });
+        if (explicitlyDisabled) {
+          rt::Promise<std::optional<std::string>> checking(stalePoolFenceReason(kv, complete));
+          outcome.allCandidatesExplicitlyDisabled = !(co_await checking.wait());
+        }
+        co_return PoolStepOutcome{.outcome = std::move(outcome)};
+      }
       std::vector<rt::KvEntryMaybe<>> settingsEntries;
       for (const PoolSettings& setting : settings) {
         for (const rt::KvEntryMaybe<>& entry : setting.usage.entries) settingsEntries.push_back(entry);

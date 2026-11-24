@@ -102,26 +102,15 @@ namespace uos::codex::responses_operations {
       return blocked != nullptr && blocked->fullCohortExhausted && !blocked->blockedAccounts.empty();
     }
 
-    // `observation: ... | undefined`: nullptr is undefined. `number | null`.
-    std::optional<double> observedCapacityResetDeadline(const routing_state::CodexCapacityRoutingObservation* observation,
-                                                        const std::optional<std::string>& requestedModel, double nowMs) {
-      if (observation == nullptr || observation->state != "available") return std::nullopt;
-      if (!capacity_routing::capacityObservationIsFresh(*observation, nowMs)) return std::nullopt;
-      const std::optional<double> headroom = capacity_routing::capacityHeadroomForObservation(
-        *observation, requestedModel.has_value() ? std::optional<std::string_view>(*requestedModel) : std::nullopt);
-      if (!headroom.has_value() || *headroom != 0) return std::nullopt;
-      const std::optional<double> resetAtMs = observation->windows.primary.has_value() ? observation->windows.primary->reset_at_ms : std::nullopt;
-      return !resetAtMs.has_value() || !rt::Number::isSafeInteger(*resetAtMs) || *resetAtMs <= nowMs ? std::nullopt : resetAtMs;
-    }
-
     /** Outcomes whose reason proves no banked reset could be redeemed this episode. */
-    constexpr std::array<std::string_view, 9> OVERAGE_FALLBACK_REASONS{
+    constexpr std::array<std::string_view, 10> OVERAGE_FALLBACK_REASONS{
       "no_eligible_credit",
       "inventory_empty",
       "inventory_no_eligible_codex_credit",
       "inventory_response_invalid_or_expired",
       "inventory_unavailable",
       "account_day_limit_reached",
+      "usage_explicitly_disabled",
       // Shadow mode observes a would-spend decision but never consumes its credit.
       // It therefore proves the reset is unavailable for this episode and may use
       // the same single bounded overage probe as any other no-redemption outcome.
@@ -131,6 +120,10 @@ namespace uos::codex::responses_operations {
       // cannot advance it, so it proves no external reset was consumed.
       "unsubmitted_transaction",
     };
+
+    bool permitsOverageFallback(std::string_view reason) {
+      return std::find(OVERAGE_FALLBACK_REASONS.begin(), OVERAGE_FALLBACK_REASONS.end(), reason) != OVERAGE_FALLBACK_REASONS.end();
+    }
 
     /**
      * Plan at most one bounded overage attempt for the current blocked cohort.
@@ -144,30 +137,18 @@ namespace uos::codex::responses_operations {
                                                               const std::vector<CodexBlockedRoutingAccount>& blockedAccounts,
                                                               const CodexActiveAccountSnapshot& activeSnapshot, const auth::CodexAuthPoolEntry& currentPoolEntry,
                                                               const std::optional<std::string>& requestedModel) {
-      if (std::find(OVERAGE_FALLBACK_REASONS.begin(), OVERAGE_FALLBACK_REASONS.end(), reason) == OVERAGE_FALLBACK_REASONS.end()) return std::nullopt;
+      if (!permitsOverageFallback(reason)) return std::nullopt;
       const std::optional<routing_state::CodexActiveAccountSelection>& active = activeSnapshot.selection;
       const CodexBlockedRoutingAccount* blocked = nullptr;
-      if (selectedSlot.has_value()) {
-        for (const CodexBlockedRoutingAccount& account : blockedAccounts) {
-          if (account.slot == *selectedSlot) {
-            blocked = &account;
-            break;
-          }
+      for (const CodexBlockedRoutingAccount& account : blockedAccounts) {
+        if (!overage_settings::overageUsageAllowedSync(account.accountIdHash)) continue;
+        if (selectedSlot == account.slot) {
+          blocked = &account;
+          break;
         }
+        if (blocked == nullptr || (active && account.accountIdHash == active->account_id_hash && account.slot == active->slot)) blocked = &account;
       }
-      if (blocked == nullptr && active.has_value()) {
-        for (const CodexBlockedRoutingAccount& account : blockedAccounts) {
-          if (account.accountIdHash == active->account_id_hash && account.slot == active->slot) {
-            blocked = &account;
-            break;
-          }
-        }
-      }
-      if (blocked == nullptr) blocked = rt::at(blockedAccounts, 0);
       if (blocked == nullptr) return std::nullopt;
-      // The per-account setting is a hard gate: a blocked cohort that cannot
-      // redeem a reset must not spend overage when the operator left it off.
-      if (!overage_settings::overageUsageAllowedSync(blocked->accountIdHash)) return std::nullopt;
       // Overage is an explicitly enabled serving path, not a single-flight reset
       // recovery probe. Concurrent requests may use the account directly; each one
       // still performs exactly one bounded transport attempt.
@@ -183,36 +164,18 @@ namespace uos::codex::responses_operations {
       return pending;
     }
 
-    /**
-     * The scoped fence for a fallback attempt: the claimed probe lease must still
-     * name this account, slot generation, circuit and quota class before any
-     * transport. Global routing fences are untouched by the fallback itself.
-     */
-    rt::Task<void> ensureOverageProbeLeaseCurrent(RoutingAccount routing) {
+    rt::Task<void> ensureOverageAllowed(std::string accountId) {
       bool fenced = false;
       try {
         rt::Promise<std::shared_ptr<rt::Kv>> opening = ::uos::kv::getKv();
         const std::shared_ptr<rt::Kv> kv = co_await opening.wait();
         if (!kv) throw dispatch::CodexActiveAccountFenceError();
-        rt::KvGetOptions strong;
-        strong.consistency = rt::KvConsistencyLevel::strong;
-        rt::Task<rt::KvEntryMaybe<>> reading = kv->get(routing_state::CODEX_ACCOUNT_ROUTING_KV_KEY, strong);
-        const rt::KvEntryMaybe<> entry = co_await std::move(reading);
-        const std::optional<routing_state::CodexAccountRoutingState> state = routing_state::parseCodexAccountRoutingState(entry.value.toJson());
-        const routing_state::CodexRoutingSlot* slot = state.has_value() ? rt::at(state->slots, routing.slot) : nullptr;
-        if (slot == nullptr || !capacity_routing::slotMatchesRoutingAccount(*slot, routing) || !capacity_routing::probeLeaseMatchesRoutingAccount(*slot, routing)) {
-          throw dispatch::CodexActiveAccountFenceError();
-        }
+        const auto hash = co_await utils::sha256Hex(accountId);
+        fenced = !(co_await overage_settings::readOverageUsage(kv, hash));
       } catch (...) {
         fenced = true;
       }
       if (fenced) throw dispatch::CodexActiveAccountFenceError();
-    }
-
-    // `(() => Promise<void>) | undefined`: an empty function is undefined.
-    std::function<rt::Task<void>()> overageProbeFence(const RoutingAccount& routing) {
-      if (!routing.probeRequired) return {};
-      return [routing]() { return ensureOverageProbeLeaseCurrent(routing); };
     }
 
     // ---- The operations installCodexResponseOperations assigns, in its order. ----
@@ -510,6 +473,8 @@ namespace uos::codex::responses_operations {
 
     rt::Task<PreexistingBankedReset> preexistingBankedReset(Context ctx, std::vector<CodexBankedResetCandidate> localCandidates,
                                                             CodexActiveAccountSnapshot originalActive, CodexResetCohortSnapshot cohort) {
+      std::optional<std::string> definitiveRefusal;
+      bool hasUnusedWindow = false;
       for (const CodexBankedResetCandidate& candidate : localCandidates) {
         banked_reset::CodexBankedResetCandidate input = ctx->resetInput(candidate, candidate.routingGeneration, originalActive, cohort);
         banked_reset::CodexBankedResetDependencies dependencies = ctx->resetDependenciesForCandidate(candidate);
@@ -524,8 +489,15 @@ namespace uos::codex::responses_operations {
           co_return responses_state::PreexistingBankedResetEvaluated{
             .evaluated = EvaluatedBlockedReset{.candidate = candidate, .reset = reset, .staleVerified = true, .originalActive = originalActive}};
         }
-        if (reset.reason != "no_existing_transaction") co_return responses_state::PreexistingBankedResetBlocked{.reason = reset.reason};
+        if (reset.reason == "no_existing_transaction") {
+          hasUnusedWindow = true;
+        } else if (permitsOverageFallback(reset.reason)) {
+          definitiveRefusal = reset.reason;
+        } else {
+          co_return responses_state::PreexistingBankedResetBlocked{.reason = reset.reason};
+        }
       }
+      if (!hasUnusedWindow && definitiveRefusal) co_return responses_state::PreexistingBankedResetBlocked{.reason = *definitiveRefusal};
       co_return responses_state::PreexistingBankedResetNone{};
     }
 
@@ -552,6 +524,7 @@ namespace uos::codex::responses_operations {
     // evaluateBlockedCohortBankedReset's `materializeCapacityQuotaBlocks` closure.
     rt::Task<bool> materializeCapacityQuotaBlocks(Context ctx, auth::CodexAuthPoolEntry currentPoolEntry) {
       const double nowMs = rt::dateNow();
+      const std::optional<std::string_view> requestedModel = ctx->requestedModel ? std::optional<std::string_view>(*ctx->requestedModel) : std::nullopt;
       rt::Promise<std::vector<routing_state::CodexCapacityRoutingObservation>> loading(
         capacity_routing::loadCodexCapacityRoutingObservations(currentPoolEntry.pool, true));
       const std::vector<routing_state::CodexCapacityRoutingObservation> observations = co_await loading.wait();
@@ -568,7 +541,7 @@ namespace uos::codex::responses_operations {
               break;
             }
           }
-          if (observation == nullptr || !observedCapacityResetDeadline(observation, ctx->requestedModel, nowMs).has_value()) continue;
+          if (observation == nullptr || !authority::native_codex_capacity::capacityExhaustedResetAtMs(*observation, requestedModel, nowMs)) continue;
           RoutingAccount account;
           account.slot = static_cast<double>(index);
           account.accountIdHash = identity.accountIdHash;
@@ -656,6 +629,7 @@ namespace uos::codex::responses_operations {
         }
       }
       const routing_state::RouteSelectionQuotaBlocked& blockedPool = std::get<routing_state::RouteSelectionQuotaBlocked>(routedPool);
+      if (blockedAccounts.size() != blockedPool.skippedSlots.size()) co_return std::nullopt;
       if (!blockedPool.poolSnapshotJson.has_value() || !blockedPool.capacitySnapshotJson.has_value()) co_return std::nullopt;
       const CodexResetCohortSnapshot cohort{.poolJson = *blockedPool.poolSnapshotJson, .capacityJson = *blockedPool.capacitySnapshotJson};
       const CodexActiveAccountSnapshot originalActive = blockedPool.activeSnapshot;
@@ -703,8 +677,10 @@ namespace uos::codex::responses_operations {
       fields["selected_slot"] = evaluated.selected.has_value() ? json::value(evaluated.selected->slot + 1) : json::value(nullptr);
       dispatch::logCodexRouting("codex_banked_reset_preflight", fields);
       ctx->overageFallbackPending =
-        planOverageFallback(evaluated.reason, evaluated.selected.has_value() ? std::optional<double>(evaluated.selected->slot) : std::nullopt, blockedAccounts,
+        planOverageFallback(evaluated.allCandidatesExplicitlyDisabled ? "usage_explicitly_disabled" : evaluated.reason,
+                            evaluated.selected.has_value() ? std::optional<double>(evaluated.selected->slot) : std::nullopt, blockedAccounts,
                             blockedPool.activeSnapshot, currentPoolEntry, ctx->requestedModel);
+      if (ctx->overageFallbackPending) co_return std::nullopt;
       co_return ctx->selectedBankedResetCandidate(evaluated, localCandidates, originalActive);
     }
 
@@ -727,13 +703,14 @@ namespace uos::codex::responses_operations {
       fields["account_id_hash"] = claimed->accountIdHash;
       fields["slot"] = claimed->slot + 1;
       fields["reason"] = pending->reason;
-      dispatch::logCodexRouting("codex_overage_served", fields);
       bool failed = false;
       try {
+        const auto consent = [accountId = claimed->auth.account_id]() { return ensureOverageAllowed(accountId); };
         rt::Promise<rt::Response> attempting(
-          ctx->fetchAttempt(pending->accountEntry, claimed->auth, *claimed, "overage_fallback", overageProbeFence(*claimed), true));
+          ctx->fetchAttempt(pending->accountEntry, claimed->auth, *claimed, "overage_fallback", consent, true));
         const rt::Response response = co_await attempting.wait();
         if (response.ok()) {
+          dispatch::logCodexRouting("codex_overage_served", fields);
           if (claimed->probeGeneration.has_value()) auth::codexProbeByResponse.set(response, *claimed);
           co_return ctx->decorateAuthWarning(response);
         }

@@ -36,7 +36,10 @@
 #include "uos/handler/serve_handler.hpp"
 #include "uos/codex/account_routing.hpp"
 #include "uos/codex/auth.hpp"
+#include "uos/codex/capacity_routing.hpp"
 #include "uos/codex/dispatch.hpp"
+#include "uos/codex/overage_settings.hpp"
+#include "uos/codex/reset_settings.hpp"
 #include "uos/config.hpp"
 #include "uos/kv.hpp"
 #include "uos/api_key_policy.hpp"
@@ -66,6 +69,8 @@ rt::Task<json::object> routingSlot(uos::types::CodexAuthState auth,double usedPe
 }
 struct UpstreamCall{std::optional<std::string> accountId,sessionId,conversationId,promptCacheKey;int status;std::string sentinel;};
 struct GatewayCall{int status;bool completed;std::string text;};
+enum class WeeklyReset { available, empty, disabled, unknown };
+const std::string RESET_PATH = "/backend-api/wham/rate-limit-reset-credits";
 struct Fixture{
   uos::tests::helpers::loopback_http::ScopedLoopbackFetch network;
   std::shared_ptr<rt::Kv> kv=uos::storage::native_kv::guardNativeKv(std::make_shared<rt::SqliteKv>(":memory:"));
@@ -75,6 +80,8 @@ struct Fixture{
   std::optional<wire::HttpServer> provider,gateway;
   std::unique_ptr<rt::GlobalFetchOverride> fetch;
   std::vector<UpstreamCall> calls;
+  std::vector<std::string> weeklyCalls;
+  std::optional<WeeklyReset> weeklyReset;
   std::string token="u_"+std::string(64,'b'),endpoint;
   bool exhaustAccountA=false;int requestIndex=0;
   bool failFirstStream = false;
@@ -87,6 +94,25 @@ struct Fixture{
   }
   ~Fixture(){fetch.reset();uos::kv::setKvForTest(nullptr);uos::config::config.isDeploy=savedDeploy;uos::config::config.codexAuthJsonB64=savedAuth;routing::resetCodexAccountRoutingForTest();uos::codex::auth::resetCodexAuthCacheForTest();uos::api_key_policy::resetApiKeyPolicyCacheForTest();uos::runtime_config::resetRuntimeConfigCacheForTest();uos::provider::selection::resetProviderSelectionCacheForTest();uos::models::codex_models_availability::resetCodexAccountModelsCacheForTest();uos::provider::capacity_events::setProviderCapacitySampleTriggerForTest(nullptr);kv->close();}
   rt::Task<void> set(rt::KvKey key,json::value value){const rt::KvValue stored(value);auto writing=kv->set(key,stored);co_await std::move(writing);}
+  rt::Task<void> seedWeeklyCapacity() {
+    const json::object pool{{"accounts", json::array{json::value_from(accountA)}}, {"updated_at_ms", now}};
+    co_await set(uos::codex::auth::CODEX_AUTH_POOL_KV_KEY, pool);
+    const auto hash = co_await uos::utils::sha256Hex(ACCOUNT_A);
+    co_await uos::codex::overage_settings::writeOverageUsage(kv, hash, true);
+    uos::codex::overage_settings::resetOverageUsageCacheForTest();
+    if (weeklyReset == WeeklyReset::disabled) {
+      const json::object setting{{"enabled", false}};
+      co_await set(uos::codex::reset_settings::codexResetUsageKey(hash), setting);
+    }
+    namespace state = uos::codex::routing_state;
+    const state::CodexCapacityRoutingObservationInput weekly{
+      .slot = 0, .account_id = ACCOUNT_A, .state = "available", .source_observed_at_ms = now, .snapshot_at_ms = now,
+      .windows = {state::CodexCapacityRoutingWindow{18'000, 24, now + 3'600'000},
+                  state::CodexCapacityRoutingWindow{604'800, 100, now + 6 * 86'400'000}},
+    };
+    const std::vector observations{weekly};
+    co_await uos::codex::capacity_routing::recordCodexCapacityRoutingObservations(observations, now);
+  }
   rt::Task<void> start(){
     const json::object pool{{"accounts",json::array{json::value_from(accountA),json::value_from(accountB)}},{"updated_at_ms",now}};auto auth=set(uos::codex::auth::CODEX_AUTH_POOL_KV_KEY,pool);co_await std::move(auth);
     const auto slotA=co_await routingSlot(accountA,90);const auto slotB=co_await routingSlot(accountB,10);const json::object state{{"v",2},{"updated_at_ms",now},{"banked_reset_legacy_identity_unresolved",false},{"slots",json::array{slotA,slotB}}};auto route=set(routing::CODEX_ACCOUNT_ROUTING_KV_KEY,state);co_await std::move(route);
@@ -95,10 +121,27 @@ struct Fixture{
     auto keyWriting=set(rt::KvKey{"ubq_ai","api_keys","id","serial-routing-http-key"},key);co_await std::move(keyWriting);auto hashWriting=set(rt::KvKey{"ubq_ai","api_keys","hash",tokenHash},common);co_await std::move(hashWriting);
     const json::object catalog{{"source","codex_cli"},{"client_version","0.145.0"},{"updated_at_ms",now},{"models",json::array{json::object{{"slug",MODEL},{"context_window",272'000},{"max_context_window",1'000'000},{"auto_compact_token_limit",nullptr},{"default_reasoning_level","low"},{"supported_reasoning_levels",json::array{"none","low","medium","high","xhigh","max","ultra"}},{"reasoning_effort_wire_map",json::object{{"ultra","max"}}}}}}};
     auto catalogWriting=set(rt::KvKey{"ubq_ai","codex_models"},catalog);co_await std::move(catalogWriting);const json::object runtime{{"version",2},{"default_model",MODEL},{"default_reasoning_effort","low"},{"codex_models",catalog},{"updated_at_ms",now}};auto runtimeWriting=set(uos::runtime_config::RUNTIME_CONFIG_V2_KEY,runtime);co_await std::move(runtimeWriting);
+    if (weeklyReset) co_await seedWeeklyCapacity();
     wire::ServeHttpOptions options;options.hostname="127.0.0.1";options.port=0;options.onListen=[](const auto&){};
     provider=wire::serveHttp(options,[this](rt::Request request,wire::ServeHandlerInfo)->rt::Task<rt::Response>{
-      if(rt::URL(request.url()).pathname()!="/codex/responses")co_return rt::Response("not found",rt::ResponseInit{.status=404});
+      const auto path = rt::URL(request.url()).pathname();
+      if (weeklyReset && (path == RESET_PATH || path == RESET_PATH + "/consume")) {
+        const bool inventory = path == RESET_PATH;
+        const auto account = request.headers().get("chatgpt-account-id").value_or("");
+        weeklyCalls.push_back((inventory ? "inventory " : "consume ") + account);
+        if (inventory) {
+          if (weeklyReset == WeeklyReset::empty) {
+            co_return rt::Response::json(json::object{{"available_count", 0}, {"credits", json::array{}}});
+          }
+          const json::object credit{{"id", "weekly-reset-credit"}, {"status", "available"}, {"reset_type", "codex_rate_limits"}, {"expires_at", nullptr}};
+          co_return rt::Response::json(json::object{{"available_count", 1}, {"credits", json::array{credit}}});
+        }
+        if (weeklyReset == WeeklyReset::unknown) co_return rt::Response("unknown commit", rt::ResponseInit{.status = 503});
+        co_return rt::Response::json(json::object{{"code", "reset"}, {"windows_reset", 2}});
+      }
+      if(path!="/codex/responses")co_return rt::Response("not found",rt::ResponseInit{.status=404});
       auto reading=request.json();const auto body=co_await std::move(reading);const auto id=request.headers().get("chatgpt-account-id");const auto sentinel=contentText(rt::get(body,"input"));const bool exhausted=exhaustAccountA&&id==ACCOUNT_A;
+      if (weeklyReset) weeklyCalls.push_back("inference " + id.value_or(""));
       calls.push_back({id,request.headers().get("session-id"),request.headers().get("conversation_id"),rt::getString(body,"prompt_cache_key")?std::optional<std::string>(std::string(*rt::getString(body,"prompt_cache_key"))):std::nullopt,exhausted?429:200,sentinel});
       if(exhausted)co_return rt::Response::json(json::object{{"error",json::object{{"message","Codex subscription quota exhausted"},{"type","usage_limit_reached"}}}},rt::ResponseInit{.status=429,.headers=rt::Headers{{"Retry-After",rt::Date(rt::dateNow()+90'000).toUTCString()}}});
       if (failFirstStream && calls.size() == 1) {
@@ -120,7 +163,7 @@ struct Fixture{
       co_return rt::Response(sse,rt::ResponseInit{.headers=rt::Headers{{"Content-Type","text/event-stream"}}});
     });
     const auto providerAddress=co_await provider->ready.wait();const auto providerOrigin="http://127.0.0.1:"+rt::numberToString(providerAddress.port);
-    fetch=std::make_unique<rt::GlobalFetchOverride>(rt::Fetch([providerOrigin](rt::RequestInfo input,rt::RequestInit init)->rt::Task<rt::Response>{std::string url;if(const auto* text=std::get_if<std::string>(&input))url=*text;else if(const auto* value=std::get_if<rt::URL>(&input))url=value->href();else url=std::get<rt::Request>(input).url();if(url==uos::config::config.codexBaseUrl+"/responses")url=providerOrigin+"/codex/responses";if(rt::startsWith(url,"https://auth.openai.com/"))co_return rt::Response::json(json::object{{"error","unexpected_token_refresh"}},rt::ResponseInit{.status=500});if(rt::URL(url).hostname()!="127.0.0.1")throw rt::JsError("Unmapped external URL refused by loopback HTTP fixture");auto responseTask=rt::defaultFetch()(url,init);auto response=co_await std::move(responseTask);co_return response;}));
+    fetch=std::make_unique<rt::GlobalFetchOverride>(rt::Fetch([providerOrigin](rt::RequestInfo input,rt::RequestInit init)->rt::Task<rt::Response>{std::string url;if(const auto* text=std::get_if<std::string>(&input))url=*text;else if(const auto* value=std::get_if<rt::URL>(&input))url=value->href();else url=std::get<rt::Request>(input).url();if(url==uos::config::config.codexBaseUrl+"/responses")url=providerOrigin+"/codex/responses";if(url=="https://chatgpt.com"+RESET_PATH||url=="https://chatgpt.com"+RESET_PATH+"/consume")url=providerOrigin+rt::URL(url).pathname();if(rt::startsWith(url,"https://auth.openai.com/"))co_return rt::Response::json(json::object{{"error","unexpected_token_refresh"}},rt::ResponseInit{.status=500});if(rt::URL(url).hostname()!="127.0.0.1")throw rt::JsError("Unmapped external URL refused by loopback HTTP fixture");auto responseTask=rt::defaultFetch()(url,init);auto response=co_await std::move(responseTask);co_return response;}));
     gateway=wire::serveHttp(options,uos::handler::serve_handler::createServeHandler());const auto address=co_await gateway->ready.wait();endpoint="http://127.0.0.1:"+rt::numberToString(address.port);
   }
   rt::Task<GatewayCall> callGateway(std::optional<std::string> cache){const auto sentinel="serial-routing-http-"+std::to_string(requestIndex++);json::object body{{"model",MODEL},{"input",sentinel},{"stream",false},{"reasoning",json::object{{"effort","low"}}}};if(cache)body["prompt_cache_key"]=*cache;rt::RequestInit init;init.method="POST";init.headers=rt::Headers{{"authorization","Bearer "+token},{"content-type","application/json"}};init.body=rt::jsonStringify(body);auto fetching=rt::fetch(endpoint+"/v1/responses",init);auto response=co_await std::move(fetching);auto reading=response.json();const auto payload=co_await std::move(reading);co_return GatewayCall{response.status(),rt::getString(payload,"status")=="completed",contentText(rt::get(payload,"output"))};}
@@ -128,6 +171,50 @@ struct Fixture{
   void servedBy(const std::string& account){ASSERT(!calls.empty());EXPECT_EQ(calls.back().accountId,std::optional<std::string>(account));EXPECT_EQ(calls.back().status,200);}
   rt::Task<void> stop(){if(gateway){auto stopping=gateway->shutdown();co_await stopping.wait();}if(provider){auto stopping=provider->shutdown();co_await stopping.wait();}auto draining=uos::codex::dispatch::awaitPendingCodexProbeTransitions();co_await std::move(draining);}
 };
+
+rt::Task<void> expectWeeklyResetCalls(WeeklyReset scenario, int expectedStatus, std::vector<std::string> expectedCalls) {
+  Fixture fixture;
+  fixture.weeklyReset = scenario;
+  rt::Reason failure;
+  try {
+    co_await fixture.start();
+    const auto response = co_await fixture.callGateway(std::nullopt);
+    EXPECT_EQ(response.status, expectedStatus);
+    EXPECT_EQ(response.completed, expectedStatus == 200);
+    if (response.completed) EXPECT_EQ(response.text, "serial-routing-http-0");
+    EXPECT_EQ(fixture.weeklyCalls, expectedCalls);
+    if (scenario == WeeklyReset::unknown) {
+      const auto repeated = co_await fixture.callGateway(std::nullopt);
+      EXPECT_EQ(repeated.status, expectedStatus);
+      EXPECT_EQ(fixture.weeklyCalls, expectedCalls);
+    }
+  } catch (...) {
+    failure = std::current_exception();
+  }
+  co_await fixture.stop();
+  uos::codex::overage_settings::resetOverageUsageCacheForTest();
+  if (failure) std::rethrow_exception(failure);
+}
+}
+
+ASYNC_TEST("a capacity-only weekly reset precedes enabled overage over loopback HTTP") {
+  const std::vector calls{"inventory " + ACCOUNT_A, "consume " + ACCOUNT_A, "inference " + ACCOUNT_A};
+  co_await expectWeeklyResetCalls(WeeklyReset::available, 200, calls);
+}
+
+ASYNC_TEST("an empty weekly reset inventory permits exactly one opted-in overage attempt over loopback HTTP") {
+  const std::vector calls{"inventory " + ACCOUNT_A, "inference " + ACCOUNT_A};
+  co_await expectWeeklyResetCalls(WeeklyReset::empty, 200, calls);
+}
+
+ASYNC_TEST("explicitly disabled automatic resets permit opted-in overage over loopback HTTP") {
+  const std::vector calls{"inference " + ACCOUNT_A};
+  co_await expectWeeklyResetCalls(WeeklyReset::disabled, 200, calls);
+}
+
+ASYNC_TEST("an unknown weekly reset submission fences overage and replay over loopback HTTP") {
+  const std::vector calls{"inventory " + ACCOUNT_A, "consume " + ACCOUNT_A};
+  co_await expectWeeklyResetCalls(WeeklyReset::unknown, 429, calls);
 }
 ASYNC_TEST("serial Codex routing keeps one active account across cache keys, idle time, exhaustion, and recovery over real loopback HTTP"){
   Fixture fixture;rt::Reason failure;try{auto starting=fixture.start();co_await std::move(starting);const std::string keyOne="serial-routing-http-key-one",keyTwo="serial-routing-http-key-two";
