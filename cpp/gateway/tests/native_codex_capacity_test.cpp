@@ -117,10 +117,35 @@ namespace {
                         {"writes", json::object{{"capacity", toJson(plan.writes.capacity)}}}};
   }
 
+  std::optional<json::value> expectedHeldSparkRelease(const CodexRoutingSlot& input) {
+    const auto* spark = input.quota_blocks_by_class ? input.quota_blocks_by_class->get("spark") : nullptr;
+    const auto* standard = input.quota_blocks_by_class ? input.quota_blocks_by_class->get("standard") : nullptr;
+    const auto* fallback = input.quota_blocks_by_class ? input.quota_blocks_by_class->get("unknown") : nullptr;
+    const bool fixtureMatches = input.probe_lease && input.probe_lease->quota_class.toOptional() == "spark" &&
+                                spark && standard && fallback && fallback->legacy_fallback;
+    EXPECT(fixtureMatches);
+    if (!fixtureMatches) return std::nullopt;
+
+    // The archived TypeScript replay used the caller's class, even though this
+    // slot already holds a Spark lease. The lease owns the Spark block and its
+    // migrated fallback. The independent Standard 429 keeps its deadline.
+    CodexRoutingSlot expected = input;
+    expected.quota_blocks_by_class = CodexQuotaBlocksByClass{{"standard", *standard}};
+    expected.quota_blocked_classes = std::vector<std::string>{"standard"};
+    expected.quota_blocked_until_ms = standard->blocked_until_ms;
+    expected.quota_block_source = standard->source;
+    expected.quota_signal_observed_at_ms = standard->quota_signal_observed_at_ms;
+    expected.observed_reset_at_ms = spark->observed_reset_at_ms;
+    expected.observed_reset_at_is_stable = spark->observed_reset_at_is_stable;
+    expected.banked_reset_generation_ambiguous = true;
+    expected.banked_reset_recovery_probe_pending = standard->banked_reset_recovery_probe_pending;
+    return json::value(toJson(expected));
+  }
+
   struct Replay {
     std::size_t next = 0;
     int mismatches = 0;
-    void push(const std::string& label, const json::value& value) {
+    void push(const std::string& label, const json::value& value, const std::optional<json::value>& expectedNative = std::nullopt) {
       const std::string text = rt::jsonStringify(value);
       const std::string digest = rt::crypto::createHash("sha256").update(text).digest("hex").substr(0, 16);
       constexpr std::size_t total = sizeof(kCodexResults) / sizeof(kCodexResults[0]);
@@ -132,11 +157,16 @@ namespace {
       const std::string expectedLabel = kCodexResults[next][0];
       const std::string expectedDigest = kCodexResults[next][1];
       ++next;
-      if (label != expectedLabel || digest != expectedDigest) {
+      const bool resultMatches = expectedNative ? rt::deepEqual(value, *expectedNative) : digest == expectedDigest;
+      if (label != expectedLabel || !resultMatches) {
         ++mismatches;
         if (mismatches <= 25) {
           EXPECT_EQ(label, expectedLabel);
-          EXPECT_EQ(digest + " " + text, expectedDigest + " <recorded>");
+          if (expectedNative) {
+            EXPECT_EQ(text, rt::jsonStringify(*expectedNative));
+          } else {
+            EXPECT_EQ(digest + " " + text, expectedDigest + " <recorded>");
+          }
         }
       }
     }
@@ -178,13 +208,14 @@ TEST("differential: native codex contracts and capacity over recorded inputs") {
       replay.push(p + ".recheck", toJson(recheckQuotaClasses(slot, now + 77)));
       replay.push(p + ".headroom", orNull(quotaHeadroomFor(slot)));
       replay.push(p + ".rotate", toJson(rotateCredentialForSameAccount(slot, CodexRoutingAccountIdentity{std::string(64, 'f'), std::string(64, 'e')})));
+      const auto expectedRelease = i == 4 && s == 0 ? expectedHeldSparkRelease(slot) : std::nullopt;
       for (const std::string& key : classKeys) {
         replay.push(p + "." + key + ".block", jsonOrNull(quotaBlockForClass(slot, key)));
         replay.push(p + "." + key + ".key", orNull(quotaBlockKeyForClass(slot, key)));
         replay.push(p + "." + key + ".keyAware", orNull(quotaBlockKeyForClass(withLegacyQuotaClassMap(slot), key)));
         replay.push(p + "." + key + ".signal", orNull(quotaSignalObservedAtForClass(slot, key)));
         replay.push(p + "." + key + ".without", toJson(withoutQuotaClass(slot, key)));
-        replay.push(p + "." + key + ".release", toJson(releaseQuotaClassProbe(slot, key)));
+        replay.push(p + "." + key + ".release", toJson(releaseQuotaClassProbe(slot, key)), expectedRelease);
       }
     }
     for (std::size_t a = 0; a < accounts.size(); ++a) {

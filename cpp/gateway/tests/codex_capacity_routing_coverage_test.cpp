@@ -2,7 +2,7 @@
 // Links: tests/codex_capacity_routing_coverage_test.cpp src/codex/capacity_routing.cpp src/codex/routing_state.cpp
 //        src/authority/native_codex_capacity.cpp src/authority/native_codex_contracts.cpp src/authority/native_codex_evaluation.cpp src/authority/native_codex_mutations.cpp
 //        src/kv.cpp src/storage/kv.cpp src/storage/sqlite_readonly.cpp src/storage/native_kv.cpp src/storage/value_compatibility.cpp
-// src/storage/key_compatibility.cpp src/utils.cpp
+//        src/storage/key_compatibility.cpp src/types.cpp src/utils.cpp
 //
 // The suite's ScriptedKv is ported below on rt::Kv. TS `assert.equal` identity checks on routing
 // objects (`cached === first`, `noChange === reconciled`, `grown.slots[0] === state.slots[0]`,
