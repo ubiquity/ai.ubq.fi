@@ -12,6 +12,7 @@
 // issuer (JWKS, exchange, session introspection, revocation) and a harness-style KV stub, then recorded every
 // handlePassportRoute / authenticatePassportSession / authenticatePassportAdmin / renewPassportSessionCookie
 // outcome: status, headers (Bun's iteration order), body, the issuer calls made and the KV keys left behind.
+// Issuer-dependent URLs and JWTs now reflect the canonical auth.ubq.fi origin.
 // Links: tests/passport_differential_test.cpp tests/helpers/admin_auth_harness.cpp src/auth/passport.cpp
 //        src/auth/passport_sessions.cpp src/http.cpp src/kv.cpp src/utils.cpp src/config.cpp src/release.cpp src/auth/relay.cpp
 //        src/provider/cerebras_rate_limits.cpp src/storage/key_compatibility.cpp src/storage/kv.cpp
@@ -96,20 +97,20 @@ namespace {
       log->push_back(init.method.value_or("GET") + " " + url + " " + headers.get("authorization").value_or("-") + " " + bodyText + " " +
                      init.redirect.value_or("-"));
       const json::value& data = vectors();
-      if (url == "https://passport.ubq.fi/api/auth/jwks") {
+      if (url == "https://auth.ubq.fi/api/auth/jwks") {
         rt::Response response = statusResponse(text(data, "jwksBody"), plan.jwksStatus, std::string("application/json;charset=utf-8"));
         co_return response;
       }
-      if (url == "https://passport.ubq.fi/api/auth/sso/exchange") {
+      if (url == "https://auth.ubq.fi/api/auth/sso/exchange") {
         rt::Response response = statusResponse(plan.exchangeBody.value_or(text(data, "defaultExchangeBody")), plan.exchangeStatus, std::string("application/json"));
         co_return response;
       }
-      if (url == "https://passport.ubq.fi/api/auth/sso/session") {
+      if (url == "https://auth.ubq.fi/api/auth/sso/session") {
         rt::Response response = statusResponse(text(data, plan.sessionIsAdmin ? "sessionBodyAdmin" : "sessionBodyNonAdmin"), plan.sessionStatus,
                                                std::string("application/json;charset=utf-8"));
         co_return response;
       }
-      if (url == "https://passport.ubq.fi/api/auth/sso/session/revoke") {
+      if (url == "https://auth.ubq.fi/api/auth/sso/session/revoke") {
         rt::ResponseInit revoked;
         revoked.status = 204;
         co_return rt::Response(rt::BodyInit(nullptr), std::move(revoked));
