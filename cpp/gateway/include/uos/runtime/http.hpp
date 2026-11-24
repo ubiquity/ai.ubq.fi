@@ -328,16 +328,17 @@ namespace uos::runtime::http {
   using http_upgrade::ServeUpgradeHandler;
   using http_upgrade::WebSocketUpgrade;
 
-  // export type ServeHandlerInfo<TAddress extends Addr = Addr> = Readonly<{ remoteAddr: TAddress; completed: Promise<void> }>;
-  struct ServeHandlerInfo {
-    Addr remoteAddr;
-    rt::Promise<void> completed;
-  };
-
   struct BufferedRequestBody {
     std::shared_ptr<rt::Bytes> bytes{};
     std::optional<std::string_view> omission{};
     std::shared_ptr<rt::Bytes> receivedPrefix{};
+  };
+
+  // export type ServeHandlerInfo<TAddress extends Addr = Addr> = Readonly<{ remoteAddr: TAddress; completed: Promise<void> }>;
+  struct ServeHandlerInfo {
+    Addr remoteAddr;
+    rt::Promise<void> completed;
+    std::function<BufferedRequestBody(std::size_t)> snapshotBufferedBody{};
   };
 
   // For authenticated failure capture only. Observe bytes already accepted by

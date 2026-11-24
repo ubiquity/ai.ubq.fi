@@ -32,6 +32,17 @@ namespace uos::handler::terminal_log {
     using BodyObservation = std::optional<model::SentinelClientBodyObservation>;
     using Controller = rt::ReadableStreamDefaultController<rt::ByteChunk>;
 
+    model::SentinelClientFailureObservation resolveClientTerminal(const model::SentinelFailureObservation& observation,
+                                                                  const BodyObservation& body, bool isSse) {
+      if (body || isSse) return replay::resolveSentinelClientFailureObservation(observation, body);
+      // Upstream may have streamed to the gateway before it emitted a buffered
+      // HTTP response. With no downstream SSE framing to inspect, do not apply
+      // the upstream stream expectation to the client body.
+      auto downstream = observation;
+      downstream.stream = false;
+      return replay::resolveSentinelClientFailureObservation(downstream, body);
+    }
+
     bool skipsAdminError(const WithTerminalRequestLogInput& input, int status, std::string_view provider) {
       // The default admin writer deliberately omits gateway authentication failures.
       return !input.recordAdminError && input.authenticatedRequest != true && status == 401 && provider == "gateway";
@@ -65,6 +76,7 @@ namespace uos::handler::terminal_log {
       std::optional<double> downstreamDrainedAtMonotonicMs;
       http::DeliveryOutcome deliveryOutcome;
       bool streamReadFailure;
+      bool isSse;
       std::function<rt::Task<BodyObservation>()> resolveClientBodyObservation;
     };
 
@@ -215,7 +227,7 @@ namespace uos::handler::terminal_log {
       auto resolvingBody = data.resolveClientBodyObservation();
       const auto clientBodyObservation = co_await std::move(resolvingBody);
       co_await rt::microtask();
-      const auto clientObservation = replay::resolveSentinelClientFailureObservation(replayObservation, clientBodyObservation);
+      const auto clientObservation = resolveClientTerminal(replayObservation, clientBodyObservation, data.isSse);
       auto adminFailureKind = clientObservation.failure_kind;
       if (!adminFailureKind && deliveryFailure) adminFailureKind = deliveryFailure;
       else if (!adminFailureKind && data.response.status() < 400 &&
@@ -254,6 +266,7 @@ namespace uos::handler::terminal_log {
       std::optional<rt::Promise<std::string>> deliveryOutcome;
       std::optional<rt::ReadableStreamDefaultReader<rt::ByteChunk>> reader;
       std::optional<replay::SentinelSseInspector> sseInspector;
+      bool isSse = false;
       bool sseInspectionFailed = false;
       std::optional<double> downstreamDrainedAtMonotonicMs;
       std::optional<rt::Resolvers<std::string>> bodyOutcome;
@@ -294,7 +307,7 @@ namespace uos::handler::terminal_log {
           replay::disposeSentinelUpstreamRecorder(capture);
         });
         const auto body = co_await resolveBody();
-        auto client = replay::resolveSentinelClientFailureObservation(observation, body);
+        auto client = resolveClientTerminal(observation, body, isSse);
         const bool legacyReplay = !diagnosticOnly && !(capture && capture->bodyStatus) &&
           replay::shouldPersistSentinelReplay(observation, client);
         if (!legacyReplay && !replay::shouldPersistFailedRequestPayload(observation, client, deliveryInterrupted)) co_return;
@@ -354,7 +367,7 @@ namespace uos::handler::terminal_log {
         std::optional<rt::Promise<void>> captureWrite;
         if (!replayFinalization) captureWrite = persistReplayAtTerminal(streamReadFailure, outcome == "interrupted", diagnosticOnly);
         LogInput data{.input = input, .response = response, .downstreamDrainedAtMonotonicMs = drained,
-          .deliveryOutcome = std::move(outcome), .streamReadFailure = streamReadFailure,
+          .deliveryOutcome = std::move(outcome), .streamReadFailure = streamReadFailure, .isSse = isSse,
           .resolveClientBodyObservation = [self = shared_from_this()] { return self->resolveBody(); }};
         const auto logging = rt::Promise<void>(logTerminalRequest(std::move(data))).catch_(rt::ignoreRejection);
         terminalLog = captureWrite ? settleWrites(logging, *captureWrite) : logging;
@@ -531,6 +544,7 @@ namespace uos::handler::terminal_log {
     const auto& response = state->response;
     const std::string contentType = rt::toLowerCase(response.headers().get("Content-Type").value_or(""));
     const bool isSse = rt::includes(contentType, "text/event-stream");
+    state->isSse = isSse;
     const auto initialTelemetry = openai_telemetry::getResponseTelemetry(state->telemetryResponse());
     // Pre-admission auth refusals without diagnostic consumers need no cloned body.
     const auto& options = state->input;

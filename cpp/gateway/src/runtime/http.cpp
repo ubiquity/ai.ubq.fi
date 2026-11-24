@@ -2058,7 +2058,8 @@ namespace uos::runtime::http {
       try {
         request = incomingRequest(incoming, controller.signal());
         headerReadiness = registerResponseReadiness(*request, outgoing, controller.signal());
-        ServeHandlerInfo info{NetAddr{"tcp", incoming->socket()->remoteAddress().value_or(""), incoming->socket()->remotePort().value_or(0)}, completed};
+        ServeHandlerInfo info{NetAddr{"tcp", incoming->socket()->remoteAddress().value_or(""), incoming->socket()->remotePort().value_or(0)}, completed,
+          [request = *request](std::size_t limit) { return snapshotBufferedRequestBody(request, limit); }};
         const rt::Promise<rt::Response> handling(state->handler(*request, std::move(info)));
         const rt::Response response = co_await handling.wait();
         headerReadiness->stop();

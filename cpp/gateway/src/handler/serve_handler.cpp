@@ -27,7 +27,7 @@ namespace uos::handler::serve_handler {
     rt::Task<rt::Response> serveRequest(DeliveryAwareHandler requestHandler, rt::Request request, runtime::http::ServeHandlerInfo info) {
       auto delivery = createRequestDeliveryLifecycle(request.signal(), info.completed);
       auto handoff = rt::scopeExit(std::move(delivery.handoff));
-      http::RequestDeliveryInfo deliveryInfo{std::move(info.completed), std::move(delivery.signal)};
+      http::RequestDeliveryInfo deliveryInfo{std::move(info.completed), std::move(delivery.signal), std::move(info.snapshotBufferedBody)};
       rt::Promise<rt::Response> response(requestHandler(std::move(request), std::move(deliveryInfo)));
       auto result = co_await response.wait();
       co_return result;

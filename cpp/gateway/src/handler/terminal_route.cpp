@@ -238,7 +238,9 @@ namespace uos::handler::terminal_route {
       std::optional<AcceptedSentinelReplayInput> takeSentinelReplayInput() {
         request::discardRawBodyObserverOnce(req);
         if (sentinelReplayCandidate && !sentinelReplayCandidate->body && !sentinelReplayCandidate->body_omitted_reason) {
-          auto buffered = runtime::http::snapshotBufferedRequestBody(req, static_cast<std::size_t>(request::MAX_ACCEPTED_JSON_BODY_BYTES));
+          auto buffered = delivery && delivery->snapshotBufferedBody
+            ? delivery->snapshotBufferedBody(static_cast<std::size_t>(request::MAX_ACCEPTED_JSON_BODY_BYTES))
+            : runtime::http::BufferedRequestBody{};
           if (buffered.bytes) {
             sentinelReplayCandidate->body_omitted_reason = buffered.bytes->empty() ? "body_empty" : "body_unparsed";
             sentinelReplayCandidate->body = std::move(buffered.bytes);

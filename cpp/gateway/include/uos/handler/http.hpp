@@ -10,11 +10,14 @@
 #include "uos/rt/prelude.hpp"
 
 #include <array>
+#include <cstddef>
 #include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <variant>
+
+namespace uos::runtime::http { struct BufferedRequestBody; }
 
 namespace uos::handler::http {
   using ClientAuthResult = auth::index::AuthenticateClientResult;
@@ -22,6 +25,7 @@ namespace uos::handler::http {
   struct RequestDeliveryInfo {
     rt::Promise<void> completed;
     rt::AbortSignal downstreamSignal;
+    std::function<runtime::http::BufferedRequestBody(std::size_t)> snapshotBufferedBody{};
   };
   using DeliveryOutcome = std::string;  // "delivered" | "interrupted" | "unobserved"
   using BodyOutcome = std::string;      // "drained" | "interrupted" | "failed"
