@@ -25,7 +25,7 @@
 
 namespace uos::auth::passport_sessions {
   namespace {
-    constexpr std::string_view ISSUER = "https://passport.ubq.fi";
+    constexpr std::string_view ISSUER = "https://auth.ubq.fi";
     const rt::Regex& LOCAL_TOKEN() {
       static const rt::Regex pattern("^uos_ai_passport_session_[A-Za-z0-9_-]{43}$", "");
       return pattern;
