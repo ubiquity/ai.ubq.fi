@@ -95,7 +95,7 @@ namespace uos::runtime::http_upgrade {
 
     rt::Response transportRefusal(const Upgrades& state, Refusal& refusal, int status, std::string_view reason, std::string message) {
       rt::ResponseInit init{.status = static_cast<double>(status)};
-      if (auto requestId = recordRefusal(state, refusal, status, reason)) init.headers.set("x-uos-request-id", *requestId);
+      if (auto requestId = recordRefusal(state, refusal, status, reason)) init.headers = rt::Headers{{"x-uos-request-id", *requestId}};
       return rt::Response(rt::BodyInit(std::move(message)), std::move(init));
     }
 
