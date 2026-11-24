@@ -175,6 +175,9 @@ namespace uos::authority::native_codex_contracts {
     rt::Nullable<CodexActiveAccountTransitionReason> activeTransitionReason = rt::undefined;
     /** Exact incoming model id used to keep separately metered pools independent. */
     rt::Nullable<std::string> requestedModel = rt::undefined;
+    // In-process routing evidence. These flags have no durable or wire representation.
+    bool quotaUsageProbeRequired = false;
+    bool hasFreshIncludedCapacity = false;
   };
 
   struct CodexCapacityRoutingWindow {

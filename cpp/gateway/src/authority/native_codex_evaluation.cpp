@@ -152,6 +152,7 @@ namespace uos::authority::native_codex_evaluation {
     CodexRoutedAccount routedAccount = account;
     routedAccount.quotaHeadroom = capacity.quotaHeadroom;
     routedAccount.routingGeneration = slot.generation;
+    routedAccount.hasFreshIncludedCapacity = capacity.capacityOverride;
     if (slot.invalid_credential_version == account.credentialVersion) {
       return skippedRoutingAccount(routedAccount, mapped.slot + 1, std::nullopt, std::nullopt, std::nullopt, "credential_invalid");
     }
@@ -184,6 +185,7 @@ namespace uos::authority::native_codex_evaluation {
       CodexRoutedAccount probing = routedAccount;
       probing.probeRequired = true;
       probing.probeCircuit = CodexProbeCircuit("quota");
+      probing.quotaUsageProbeRequired = capacityHasCurrentExhaustedWindow(*observation, modelView(model), now);
       CodexRoutingAccountEvaluation routed = routedRoutingAccount(probing);
       routed.capacityExhausted = true;
       return routed;

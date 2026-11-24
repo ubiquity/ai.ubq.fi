@@ -3,6 +3,7 @@
 
 #include "uos/codex/account_routing.hpp"
 #include "uos/codex/auth_refresh.hpp"
+#include "uos/codex/capacity_routing.hpp"
 #include "uos/codex/rate_limit_429.hpp"
 #include "uos/rt/clock.hpp"
 #include "uos/rt/json.hpp"
@@ -388,6 +389,27 @@ namespace uos::codex::responses_runners {
       if (std::holds_alternative<Runners::ClaimAttemptRoutingResultUnavailable>(claim)) co_return CodexAccountAttemptOutcomeNextAccount{};
       const auto attempt = std::make_shared<CodexCredentialAttempt>(
         CodexCredentialAttempt{.auth = accountEntry.auth, .routing = std::get<Runners::ClaimAttemptRoutingResultClaimed>(claim).routing});
+      if (attempt->routing.quotaUsageProbeRequired) {
+        const auto config = ctx->reloadConfiguredBankedResetConfig();
+        if (config.enabled && config.mode == "live") {
+          using capacity_routing::QuotaUsageProbeResult;
+          auto proof = QuotaUsageProbeResult::unavailable;
+          if (!ctx->quotaUsageProbeAccounts.has(attempt->routing.accountIdHash)) {
+            ctx->quotaUsageProbeAccounts.add(attempt->routing.accountIdHash);
+            proof = co_await capacity_routing::refreshCodexQuotaUsage(attempt->routing, ctx->options.signal);
+          }
+          if (proof == QuotaUsageProbeResult::refreshed) {
+            ctx->requestActiveReselection(Operations::RequestActiveReselectionOptions{});
+            co_return CodexAccountAttemptOutcomeReselectActive{};
+          }
+          if (proof == QuotaUsageProbeResult::unavailable) {
+            co_await capacity_routing::releaseCodexQuotaUsageProbe(attempt->routing);
+            co_return CodexAccountAttemptOutcomeResponse{
+              .response = dispatch::routingErrorResponse(429, "Codex capacity is temporarily unavailable; retry the request.", "codex_capacity_unavailable")};
+          }
+        }
+        attempt->routing.quotaUsageProbeRequired = false;
+      }
       rt::Reason failure;
       try {
         if (auth::needsRefresh(attempt->auth)) {

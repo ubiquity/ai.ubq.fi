@@ -4,6 +4,7 @@
 // native-codex-capacity decisions.
 #include "uos/authority/native_codex_capacity.hpp"
 #include "uos/codex/routing_state.hpp"
+#include "uos/rt/abort.hpp"
 #include "uos/rt/async.hpp"
 #include "uos/rt/kv.hpp"
 #include "uos/types.hpp"
@@ -89,6 +90,12 @@ namespace uos::codex::capacity_routing {
   /** Routing state reads and writes fail closed when the KV binding itself is unavailable. */
   // `Promise<Kv | null>`: a null pointer is null.
   [[nodiscard]] rt::Task<std::shared_ptr<rt::Kv>> openRoutingKv();
+
+  [[nodiscard]] rt::Task<std::optional<bool>> readQuotaUsageProbePolicy(std::shared_ptr<rt::Kv> kv, std::string accountId);
+
+  enum class QuotaUsageProbeResult { optedOut, refreshed, unavailable };
+  [[nodiscard]] rt::Task<QuotaUsageProbeResult> refreshCodexQuotaUsage(routing_state::RoutingAccount account, std::optional<rt::AbortSignal> signal);
+  [[nodiscard]] rt::Task<void> releaseCodexQuotaUsageProbe(routing_state::RoutingAccount account);
 
   [[nodiscard]] rt::Task<std::vector<routing_state::CodexCapacityRoutingObservation>> loadCodexCapacityRoutingObservations(::uos::types::CodexAuthPoolState pool,
                                                                                                                          bool forceKv = false);

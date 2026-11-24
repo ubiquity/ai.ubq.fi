@@ -636,6 +636,20 @@ namespace uos::authority::native_codex_capacity {
            now - observation.snapshot_at_ms <= CODEX_CAPACITY_ROUTING_MAX_AGE_MS;
   }
 
+  bool capacityHasCurrentExhaustedWindow(const CodexCapacityRoutingObservation& observation, std::optional<std::string_view> model, double now) {
+    for (const auto* windows : capacityWindowsForModel(observation, model)) {
+      for (const auto* window : {&windows->primary, &windows->secondary}) {
+        if (*window && (*window)->used_percent == 100 && (!isSafeMs((*window)->reset_at_ms) || *(*window)->reset_at_ms > now)) return true;
+      }
+    }
+    return false;
+  }
+
+  bool capacityLimitMatchesModel(std::string_view limitName, std::string_view model) {
+    const std::string modelKey = normalizeQuotaLabel(model);
+    return !modelKey.empty() && normalizeQuotaLabel(limitName) == modelKey;
+  }
+
   std::optional<double> capacityExhaustedResetAtMs(const CodexCapacityRoutingObservation& observation, std::optional<std::string_view> model, double now) {
     if (!capacityObservationIsFresh(observation, now)) return std::nullopt;
     std::optional<double> deadline;

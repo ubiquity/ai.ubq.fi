@@ -147,6 +147,12 @@ namespace uos::authority::native_codex {
       const CodexRoutingAccountEvaluation* evaluation = evaluations.byAccountId.get(auth.accountIdHash);
       if (evaluation != nullptr && evaluation->routedAccount) eligibleInPoolOrder.push_back(*evaluation->routedAccount);
     }
+    if (!eligibleInPoolOrder.empty() && eligibleInPoolOrder.front().quotaUsageProbeRequired) {
+      const auto included = std::find_if(eligibleInPoolOrder.begin(), eligibleInPoolOrder.end(), [](const CodexRoutingAccount& account) {
+        return account.hasFreshIncludedCapacity;
+      });
+      if (included != eligibleInPoolOrder.end()) std::rotate(eligibleInPoolOrder.begin(), included, included + 1);
+    }
     const CodexRoutingIdentity* accountForActive = nullptr;
     if (active) {
       const auto found = std::find_if(pool.begin(), pool.end(), [&](const CodexRoutingIdentity& account) {
@@ -179,7 +185,21 @@ namespace uos::authority::native_codex {
     };
     if (!active) return serialBootstrapDecision(context);
     if (activeEvaluation == nullptr) return serialReplacementDecision(context, *active);
-    if (activeEvaluation->routedAccount) return serialCurrentActiveDecision(context, *active, *activeEvaluation->routedAccount);
+    if (activeEvaluation->routedAccount) {
+      if (activeEvaluation->routedAccount->quotaUsageProbeRequired) {
+        const auto included = std::find_if(context.eligibleInPoolOrder.begin(), context.eligibleInPoolOrder.end(), [](const CodexRoutingAccount& account) {
+          return account.hasFreshIncludedCapacity;
+        });
+        if (included != context.eligibleInPoolOrder.end()) {
+          // This transition prefers observed included capacity. The unresolved account's
+          // evaluation still grants neither full-pool reset nor paid-fallback proof.
+          CodexRoutingAccountEvaluation exhausted = *activeEvaluation;
+          exhausted.activeTransitionReason = "quota_exhausted";
+          return serialBlockedActiveDecision(context, *active, exhausted);
+        }
+      }
+      return serialCurrentActiveDecision(context, *active, *activeEvaluation->routedAccount);
+    }
     return serialBlockedActiveDecision(context, *active, *activeEvaluation);
   }
 

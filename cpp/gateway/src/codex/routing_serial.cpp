@@ -216,8 +216,13 @@ namespace uos::codex::routing_serial {
     for (const CodexAuthState& auth : pool.accounts) {
       const CodexRoutingSlotIdentity* mapped = byId.get(auth.account_id);
       if (mapped == nullptr) continue;
-      const CodexRoutingAccountEvaluation evaluated =
+      CodexRoutingAccountEvaluation evaluated =
         routing_evaluation::evaluateCodexRoutingAccount(state, auth, *mapped, model, observationsByAccount, now, unavailableAccounts);
+      if (evaluated.routedAccount && evaluated.routedAccount->quotaUsageProbeRequired) {
+        const auto kv = co_await capacity_routing::openRoutingKv();
+        const auto policy = co_await capacity_routing::readQuotaUsageProbePolicy(kv, auth.account_id);
+        if (policy == false) evaluated.routedAccount->quotaUsageProbeRequired = false;
+      }
       byAccountId.set(auth.account_id, evaluated);
       routing_evaluation::foldCodexRoutingEvaluation(accumulator, evaluated);
     }

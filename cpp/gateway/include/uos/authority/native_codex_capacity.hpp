@@ -93,6 +93,10 @@ namespace uos::authority::native_codex_capacity {
   std::optional<double> capacityExhaustedResetAtMs(const native_codex_contracts::CodexCapacityRoutingObservation& observation,
                                                   std::optional<std::string_view> model, double now);
 
+  bool capacityHasCurrentExhaustedWindow(const native_codex_contracts::CodexCapacityRoutingObservation& observation,
+                                         std::optional<std::string_view> model, double now);
+  bool capacityLimitMatchesModel(std::string_view limitName, std::string_view model);
+
   std::vector<native_codex_contracts::CodexCapacityRoutingObservation> parseStoredCapacityObservationStore(const json::value* value);
   std::vector<native_codex_contracts::CodexCapacityRoutingObservation> parseStoredCapacityObservationStore(const json::value& value);
 
