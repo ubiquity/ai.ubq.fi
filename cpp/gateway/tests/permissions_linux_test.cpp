@@ -11,6 +11,12 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#if defined(__linux__) && defined(__aarch64__)
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <cstring>
+#endif
+
 #include <cerrno>
 #include <cstdio>
 #include <functional>
@@ -137,3 +143,119 @@ TEST("a confined child reads and writes only its grants and cannot change modes"
   if (fd >= 0) ::close(fd);
 #endif
 }
+
+#if defined(__linux__) && defined(__aarch64__)
+namespace {
+  struct UnixSocket {
+    int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    sockaddr_un address{};
+
+    explicit UnixSocket(const std::string& path) {
+      if (path.size() >= sizeof(address.sun_path)) throw std::invalid_argument("Fixture Unix socket path is too long");
+      address.sun_family = AF_UNIX;
+      std::memcpy(address.sun_path, path.c_str(), path.size() + 1);
+    }
+
+    ~UnixSocket() { if (fd >= 0) ::close(fd); }
+
+    int listen() const {
+      if (::bind(fd, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) != 0) return errno;
+      return ::listen(fd, 2) == 0 ? 0 : errno;
+    }
+
+    int connect() const {
+      return ::connect(fd, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) == 0 ? 0 : errno;
+    }
+  };
+
+  int openError(const std::string& path, int flags) {
+    const int fd = ::open(path.c_str(), flags | O_CLOEXEC, 0600);
+    if (fd < 0) return errno;
+    ::close(fd);
+    return 0;
+  }
+}
+
+TEST("owner file reads and socket resolution survive atomic replacement without granting writes") {
+  if (getLinuxPermissionsSupport().landlockAbi < 9) return;
+  const Fixture fixture;
+  const std::string home = fixture.root + "/home";
+  const std::string control = fixture.root + "/control";
+  const std::string other = fixture.root + "/other";
+  for (const auto& directory : {home, control, other}) rt::fs::mkdirSync(directory);
+  const std::string auth = home + "/auth.json";
+  const std::string replacement = home + "/next";
+  const std::string socket = control + "/owner.sock";
+  const std::string alias = home + "/owner.sock";
+  rt::fs::writeFileSync(auth, std::string_view("first"));
+  rt::fs::writeFileSync(replacement, std::string_view("second"));
+  rt::fs::writeFileSync(control + "/private", std::string_view("fixture"));
+  rt::fs::writeFileSync(other + "/auth.json", std::string_view("fixture"));
+  ASSERT_EQ(::symlink(socket.c_str(), alias.c_str()), 0);
+  const UnixSocket listener(socket);
+  const UnixSocket otherListener(other + "/other.sock");
+  ASSERT_EQ(listener.listen(), 0);
+  ASSERT_EQ(otherListener.listen(), 0);
+
+  const LinuxPermissions permissions{.readFilesBelow = {home}, .resolveUnixSocketsBelow = {control}};
+  EXPECT_THROWS_MESSAGE(detail::applyLinuxPermissionsWithAbiCap(permissions, 8), rt::JsError,
+                        "Unix socket resolution requires Landlock ABI9+");
+  int sync[2];
+  ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sync), 0);
+  const int failures = rt::test::failures();
+  std::fflush(nullptr);
+  const pid_t child = ::fork();
+  ASSERT(child >= 0);
+  if (child == 0) {
+    ::close(sync[0]);
+    ::close(listener.fd);
+    ::close(otherListener.fd);
+    try {
+      const auto receipt = applyLinuxPermissions(permissions);
+      EXPECT(receipt.filesystemThreadSync && receipt.processThreadSync);
+      const auto readAuth = [&] {
+        const auto content = rt::fs::readFileSync(auth);
+        return std::string(content.begin(), content.end());
+      };
+      EXPECT_EQ(readAuth(), "first");
+      EXPECT_EQ(UnixSocket(alias).connect(), 0);
+      EXPECT_EQ(openError(auth, O_WRONLY | O_TRUNC), EACCES);
+      EXPECT_EQ(openError(home + "/new", O_WRONLY | O_CREAT), EACCES);
+      EXPECT_EQ(openError(control + "/private", O_RDONLY), EACCES);
+      EXPECT_EQ(openError(control + "/new", O_WRONLY | O_CREAT), EACCES);
+      EXPECT_EQ(UnixSocket(control + "/new.sock").listen(), EACCES);
+      EXPECT_EQ(openError(other + "/auth.json", O_RDONLY), EACCES);
+      EXPECT_EQ(UnixSocket(other + "/other.sock").connect(), EACCES);
+      char ready = 'r';
+      ASSERT_EQ(::write(sync[1], &ready, 1), 1);
+      ASSERT_EQ(::read(sync[1], &ready, 1), 1);
+      EXPECT_EQ(ready, 'r');
+      EXPECT_EQ(readAuth(), "second");
+      EXPECT_EQ(UnixSocket(alias).connect(), 0);
+      ::_exit(rt::test::failures() == failures ? 0 : 1);
+    } catch (const std::exception& error) {
+      std::fprintf(stderr, "Confined child: %s\n", error.what());
+    } catch (...) {}
+    ::_exit(1);
+  }
+
+  ::close(sync[1]);
+  char ready = 0;
+  const bool childReady = ::read(sync[0], &ready, 1) == 1 && ready == 'r';
+  if (childReady) {
+    EXPECT_EQ(::rename(replacement.c_str(), auth.c_str()), 0);
+    EXPECT_EQ(::unlink(socket.c_str()), 0);
+    const UnixSocket rebound(socket);
+    EXPECT_EQ(rebound.listen(), 0);
+    EXPECT_EQ(::send(sync[0], &ready, 1, MSG_NOSIGNAL), 1);
+    // Keep the replacement listener alive until the child observes it.
+    EXPECT_EQ(::read(sync[0], &ready, 1), 0);
+  }
+  ::close(sync[0]);
+  int status = 0;
+  ASSERT_EQ(::waitpid(child, &status, 0), child);
+  EXPECT(childReady);
+  ASSERT(WIFEXITED(status));
+  EXPECT_EQ(WEXITSTATUS(status), 0);
+}
+#endif

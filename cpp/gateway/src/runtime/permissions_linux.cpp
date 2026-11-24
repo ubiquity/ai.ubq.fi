@@ -391,6 +391,11 @@ namespace uos::runtime::permissions_linux {
         if (!rt::fs::statSync(path).isDirectory()) throw rt::TypeError("Confinement read-files grant requires a directory");
         add(path, 4); // LANDLOCK_ACCESS_FS_READ_FILE, without enumeration or socket grants.
       }
+      for (const auto& input : permissions.resolveUnixSocketsBelow) {
+        const auto path = canonicalize(input);
+        if (path != input || !rt::fs::statSync(path).isDirectory()) throw rt::TypeError("Unix socket resolution grant requires a canonical directory");
+        add(path, resolveUnixSocket);
+      }
       for (const auto& input : permissions.execute) {
         const auto path = canonicalize(input);
         if (!rt::fs::statSync(path).isFile()) throw rt::TypeError("Executable confinement grant must name a regular file");
@@ -533,13 +538,15 @@ namespace uos::runtime::permissions_linux {
   static LinuxPermissionsReceipt enforcePermissions(const LinuxPermissions& permissions, std::optional<int> abiCap) {
     const NativePermissions native = linkedPermissions();
     const NativeSupport support = native.support(permissions.allowNoLandlock.has_value());
+    const int abi = abiCap ? std::min(*abiCap, support.landlockAbi) : support.landlockAbi;
+    if (!permissions.resolveUnixSocketsBelow.empty() && abi < 9)
+      throw rt::JsError("Unix socket resolution requires Landlock ABI9+");
 #if defined(__linux__) && defined(__aarch64__)
     if (support.serviceManager) {
       return detail::applyServiceManagerPermissions(reportedSupport(support), permissions.allowChildProcess,
                                                     nativeServiceManagerChecks(*permissions.allowNoLandlock));
     }
 #endif
-    const int abi = abiCap ? std::min(*abiCap, support.landlockAbi) : support.landlockAbi;
     const auto policy = detail::landlockPolicy(abi, support.seccomp, permissions.allowReducedConfinement.has_value());
     const auto list = filesystemGrants(permissions, policy);
     std::vector<std::string> immutableMounts;

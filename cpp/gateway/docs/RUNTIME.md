@@ -93,6 +93,7 @@ The executable serves with `--runtime-manifest <absolute-path>`. The launch mani
 `uos-gateway-launch-v1`, the canonical `packageRoot` and private `stateRoot`, the lowercase
 `packageManifestSha256`, `hostname` equal to `127.0.0.1`, and an integer `port` other than 8000.
 Port 7999 requires `DENO_TIMELINE=production`, a configured administrator token and the self-hosted runtime. Fixture and authentication follower startup require a separate port.
+On port 7999 the Linux launcher also requires Landlock ABI 9 or later and the existing owner-private Codex home and local daemon control directory. It grants file reads under the primary Codex home and pathname socket resolution in the dedicated daemon directory.
 Use disjoint package and state roots. The launch file must be owner-private, regular and singly linked. The
 state root and its existing `.data` directory must be canonical and owner-private. [Launch schema](../runtime/launch-schema.json)
 

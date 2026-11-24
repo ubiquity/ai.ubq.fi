@@ -3,6 +3,7 @@
 #include "runtime/paths.hpp"
 #include "src/rt/tls_internal.hpp"
 #include "uos/codex/auth_import.hpp"
+#include "uos/codex/native_auth.hpp"
 #include "uos/config.hpp"
 #include "uos/deepseek/index.hpp"
 #include "uos/health.hpp"
@@ -353,6 +354,56 @@ namespace uos::runtime::startup {
       if (::fsync(directory) != 0) refuse("fixture state directory durability failed");
     }
 
+    void grantProductionCodexAccess(permissions_linux::LinuxPermissions& permissions, const fs::path& package, const fs::path& state) {
+      const auto homes = codex::native_auth::nativeCodexConsumerHomes();
+      if (homes.empty()) refuse("the production VPS service requires a Codex owner home");
+      const fs::path home = homes.front();
+      privateDirectory(home);
+      if (!disjoint(home, package) || !disjoint(home, state))
+        refuse("the Codex owner home must be separate from the package and gateway state");
+
+      const fs::path control = home / "app-server-control";
+      const fs::path daemon = fs::path("/tmp") / ("codex-daemon-" + std::to_string(::getuid()));
+      struct stat info {};
+      if (::lstat(control.c_str(), &info) == 0) privateDirectory(control);
+      else if (errno != ENOENT) refuse("the Codex control directory cannot be inspected");
+
+      fs::path socket = control / "app-server-control.sock";
+      fs::path directory = control;
+      if (::lstat(socket.c_str(), &info) == 0) {
+        if (S_ISLNK(info.st_mode)) {
+          std::error_code error;
+          socket = fs::read_symlink(socket, error);
+          if (error || info.st_uid != ::getuid() || socket.lexically_normal() != socket || socket.parent_path() != daemon)
+            refuse("the Codex control socket link must select its dedicated daemon directory");
+          directory = daemon;
+        }
+      } else {
+        if (errno != ENOENT) refuse("the Codex control socket cannot be inspected");
+        // A daemon restart can leave the directory in place without a socket or link.
+        if (::lstat(daemon.c_str(), &info) == 0) {
+          directory = daemon;
+          socket.clear();
+        } else if (errno != ENOENT) {
+          refuse("the Codex daemon directory cannot be inspected");
+        }
+      }
+      if (!disjoint(directory, package) || !disjoint(directory, state))
+        refuse("the Codex control directory must be separate from the package and gateway state");
+      privateDirectory(directory);
+      if (!socket.empty()) {
+        if (::lstat(socket.c_str(), &info) == 0) {
+          if (!S_ISSOCK(info.st_mode) || info.st_uid != ::getuid() || (info.st_mode & 0077) != 0)
+            refuse("the Codex control socket must be owner-private");
+        } else if (errno != ENOENT) {
+          refuse("the Codex control socket cannot be inspected");
+        }
+      }
+
+      permissions.readFilesBelow.push_back(home.string());
+      permissions.resolveUnixSocketsBelow.push_back(directory.string());
+    }
+
     void enforce(const fs::path& package, const fs::path& state, int port,
                  const std::optional<std::string>& origin, const std::optional<fs::path>& authSource,
                  const std::optional<fs::path>& leaderData) {
@@ -363,6 +414,7 @@ namespace uos::runtime::startup {
       if (authSource) permissions.read.push_back(authSource->string());
       std::error_code error;
       if (leaderData && fs::is_directory(*leaderData, error)) permissions.readFilesBelow.push_back(leaderData->string());
+      if (port == 7999) grantProductionCodexAccess(permissions, package, state);
       if (const char* optIn = std::getenv("UOS_GATEWAY_ALLOW_REDUCED_CONFINEMENT"); optIn && std::string_view(optIn) == "1") {
         permissions_linux::LinuxPermissionsTcpPorts ports{static_cast<std::uint16_t>(port)};
         if (origin) ports.connectPorts.push_back(static_cast<std::uint16_t>(std::stoi(rt::URL(*origin).port())));

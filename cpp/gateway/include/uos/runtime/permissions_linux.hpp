@@ -45,6 +45,8 @@ namespace uos::runtime::permissions_linux {
     std::optional<ServiceManagerPaths> allowNoLandlock = std::nullopt;
     /** Read files below these directories, including files created after startup. */
     std::vector<std::string> readFilesBelow = {};
+    /** Resolve pathname Unix sockets below these directories without granting file access. */
+    std::vector<std::string> resolveUnixSocketsBelow = {};
   };
 
   struct LinuxPermissionsReceipt : LinuxPermissionsSupport {
