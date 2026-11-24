@@ -201,18 +201,22 @@ def exercise(gateway, upstream, binding, expected_commit):
                  "seccomp_filters": int(process["Seccomp_filters"])}
 
 
-def verify_startup_integrity(state, binding):
+def verify_startup_preflight(state, binding):
     package = Path(binding["packageRoot"])
     launch = state / "integrity.json"
     environment = sparse_environment(state / "integrity")
     manifest = {**binding, "schema": "uos-gateway-launch-v1", "stateRoot": str(state), "hostname": "127.0.0.1", "port": 0}
 
-    def refuse(document, root, expected):
+    checked_cases = 0
+
+    def refuse(document, root, expected, overrides=None):
+        nonlocal checked_cases
         write_json(launch, document)
-        result = subprocess.run([root / "ops/launch-native.sh", launch], cwd=state, env=environment,
+        result = subprocess.run([root / "ops/launch-native.sh", launch], cwd=state, env={**environment, **(overrides or {})},
                                 stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
         if result.returncode != 1 or expected not in result.stderr or any((state / ".data").iterdir()):
-            raise RuntimeError(f"Invalid immutable input crossed startup preflight: {result.returncode} {result.stderr}")
+            raise RuntimeError(f"Startup preflight expected {expected!r} and untouched state. Exit {result.returncode}. {result.stderr}")
+        checked_cases += 1
 
     refuse({**manifest, "packageManifestSha256": "0" * 64}, package, "package manifest integrity check failed")
     copy = state.parent / (state.name + "-tampered")
@@ -223,7 +227,21 @@ def verify_startup_integrity(state, binding):
     finally:
         if copy.exists():
             shutil.rmtree(copy)
-    return 2
+
+    integrity_refusals = checked_cases
+    production = {"DENO_TIMELINE": "production", "DENO_DEPLOY_TOKEN": ADMIN_TOKEN}
+    listener = {**manifest, "port": 7999}
+    denial = "port 7999 requires the production VPS service configuration"
+    refuse(listener, package, denial, {"DENO_DEPLOY_TOKEN": ADMIN_TOKEN})
+    refuse(listener, package, denial, {"DENO_TIMELINE": "production"})
+    refuse(listener, package, denial, {**production, "DENO_DEPLOY": "1"})
+    refuse(listener, package, denial, {**production, "UOS_GATEWAY_UPSTREAM_AUTH_FOLLOWER": "1"})
+    refuse({**listener, "fixture": {"syntheticOrigin": "http://127.0.0.1:1"}}, package, denial, production)
+    refuse({**listener, "port": 8000}, package, "port 8000 is reserved", production)
+    # Production passes the listener check and reaches private database validation.
+    missing_database = state / ".data/kv-bun.sqlite3"
+    refuse(listener, package, f"required regular file is missing or unsafe: {missing_database}", production)
+    return {"integrity_refusals": integrity_refusals, "listener_preflight_cases": checked_cases - integrity_refusals}
 
 
 def run(state, cap):
@@ -237,7 +255,7 @@ def run(state, cap):
             character not in "0123456789abcdef" for character in expected_commit):
         raise RuntimeError(f"Staged package has no bound Git commit: {expected_commit!r}")
     (state / ".data").mkdir(mode=0o700)
-    integrity_refusals = verify_startup_integrity(state, binding)
+    startup_preflight = verify_startup_preflight(state, binding)
     startup = state / "launch.json"
     upstream = CodexUpstream()
     environment = {"DENO_TIMELINE": "production", "DENO_DEPLOY_TOKEN": ADMIN_TOKEN}
@@ -270,7 +288,7 @@ def run(state, cap):
         if gateway is not None and not gateway.stop_monitor.is_set():
             gateway.close(force=True)
         upstream.close()
-    return {**result, "cap_mib": cap, "concurrency": CONCURRENCY, "integrity_refusals": integrity_refusals, "reopened_accounted_requests": reopened,
+    return {**result, **startup_preflight, "cap_mib": cap, "concurrency": CONCURRENCY, "reopened_accounted_requests": reopened,
             "binary_sha256": sha256(package / "bin/uos-gateway"), "manifest_sha256": binding["packageManifestSha256"]}
 
 

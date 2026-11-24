@@ -17,7 +17,13 @@
     "stateRoot": { "type": "string", "pattern": "^/" },
     "packageManifestSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "hostname": { "const": "127.0.0.1" },
-    "port": { "type": "integer", "minimum": 0, "maximum": 65535, "not": { "enum": [7999, 8000] } },
+    "port": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 65535,
+      "not": { "const": 8000 },
+      "description": "Port 7999 requires the production VPS service configuration."
+    },
     "fixture": {
       "type": "object",
       "additionalProperties": false,

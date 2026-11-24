@@ -91,7 +91,8 @@ After each integration, update its row with the actual source entry point, effec
 
 The executable serves with `--runtime-manifest <absolute-path>`. The launch manifest selects
 `uos-gateway-launch-v1`, the canonical `packageRoot` and private `stateRoot`, the lowercase
-`packageManifestSha256`, `hostname` equal to `127.0.0.1`, and an integer `port` other than 7999 or 8000.
+`packageManifestSha256`, `hostname` equal to `127.0.0.1`, and an integer `port` other than 8000.
+Port 7999 requires `DENO_TIMELINE=production`, a configured administrator token and the self-hosted runtime. Fixture and authentication follower startup require a separate port.
 Use disjoint package and state roots. The launch file must be owner-private, regular and singly linked. The
 state root and its existing `.data` directory must be canonical and owner-private. [Launch schema](../runtime/launch-schema.json)
 

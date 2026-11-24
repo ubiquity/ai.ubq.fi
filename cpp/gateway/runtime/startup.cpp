@@ -492,7 +492,10 @@ namespace uos::runtime::startup {
     if (hostname != "127.0.0.1" || !portValue || !std::isfinite(*portValue) || *portValue < 0 || *portValue > 65535 || std::floor(*portValue) != *portValue)
       refuse("listener must select an IPv4 loopback hostname and integer port");
     const int port = static_cast<int>(*portValue);
-    if (port == 7999 || port == 8000) refuse("production service ports are unavailable to this uninstalled build");
+    if (port == 8000) refuse("port 8000 is reserved");
+    if (port == 7999 && (!config::config.isProductionTimeline || config::config.isDeploy || config::config.adminTokens.empty() ||
+                         upstream_auth::followerMode() || rt::get(launch, "fixture")))
+      refuse("port 7999 requires the production VPS service configuration");
     std::optional<std::string> origin;
     std::string binding;
     bool newFixture = false;
