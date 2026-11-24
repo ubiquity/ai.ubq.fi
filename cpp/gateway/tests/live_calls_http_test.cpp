@@ -200,7 +200,7 @@ ASYNC_TEST("ordinary failures journal only metadata and use the returned ID") {
   uos::tests::helpers::responses_conformance_client::stageGatewayAssets();
   const rt::console::Capture logs({rt::console::Method::info});
   rt::RequestInit init;
-  init.method = "UNRECOGNIZED-SECRET";
+  init.method = "DELETE";
   init.headers = rt::Headers{{"authorization", "Bearer header-secret"}, {"cookie", "session=cookie-secret"}};
   auto first = uos::handler::index::handler(rt::Request("http://fixture.invalid/path-secret?secret=query-secret", init));
   const auto unknown = co_await std::move(first);
@@ -222,7 +222,7 @@ ASYNC_TEST("ordinary failures journal only metadata and use the returned ID") {
   ASSERT_EQ(events.size(), 2U);
   EXPECT_EQ(rt::getString(events[0], "request_id").value(), *unknownId);
   EXPECT_EQ(rt::getString(events[0], "route").value(), "unmatched");
-  EXPECT_EQ(rt::getString(events[0], "method").value(), "OTHER");
+  EXPECT_EQ(rt::getString(events[0], "method").value(), "DELETE");
   EXPECT_EQ(rt::getString(events[1], "request_id").value(), *healthId);
   EXPECT_EQ(rt::getString(events[1], "route").value(), "health");
   EXPECT_EQ(rt::getString(events[1], "method").value(), "GET");
