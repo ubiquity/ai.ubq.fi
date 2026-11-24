@@ -54,8 +54,11 @@ namespace {
     std::variant<bool, std::vector<bool>> allowOverage = false;
     std::string mode = "live";
     bool seedUnsubmittedReset = false;
+    bool holdClaimLease = false;
     bool includeSibling = false;
     bool siblingSubmitUnknown = false;
+    bool firstDayCapped = false;
+    std::function<rt::Response()> firstInventory;
     bool parallel = false;
     bool allows(std::size_t index) const {
       if (const auto* allow = std::get_if<bool>(&allowOverage)) return *allow;
@@ -67,12 +70,25 @@ namespace {
   rt::Response availableInventory() {
     return jsonResponse(json::object{{"available_count", 1}, {"credits", json::array{json::object{{"id", "credit-account-one"}, {"status", "available"}, {"reset_type", "codex_rate_limits"}, {"expires_at", nullptr}}}}});
   }
+  rt::Response creditInventory(const std::string& id, double expiresAtMs) {
+    return jsonResponse(json::object{{"available_count", 1},
+      {"credits", json::array{json::object{{"id", id}, {"status", "available"}, {"reset_type", "codex_rate_limits"},
+                                         {"expires_at", rt::Date(expiresAtMs).toISOString()}}}}});
+  }
   rt::Task<BlockedRun> runBlockedSequence(std::vector<std::string> requestIds, std::function<rt::Response()> inventoryResponse, RunOptions options) {
     HarnessScope scope; uos::config::config.codexBaseUrl = "https://upstream-reset.test/backend-api/codex";
     kv->auth = options.includeSibling ? pool(auth("one"), auth("two")) : pool(auth("one")); os::resetOverageUsageCacheForTest();
     auto cleanup = rt::scopeExit([] { os::resetOverageUsageCacheForTest(); });
     std::vector<UpstreamCall> calls; WAIT(seedStableBankedResetBlock("account-one"));
     if (options.includeSibling) WAIT(seedStableBankedResetBlock("account-two"));
+    if (options.firstDayCapped) {
+      AWAIT(accountHash, uos::utils::sha256Hex("account-one"));
+      const auto day = br::utcDay(fixedStartMs);
+      ASSERT(day);
+      const auto key = br::codexResetAccountDailyKey(accountHash, *day);
+      const json::object budget{{"v", 1}, {"day", *day}, {"submission_count", 1}, {"updated_at_ms", fixedStartMs - 1'000}};
+      WAIT(kv->set(key, rt::KvValue(budget)));
+    }
     if (options.seedUnsubmittedReset) {
       AWAIT(routing, cr::selectCodexRoutingAccountsStrong(kv->auth, kv->auth.accounts, fixedStartMs));
       const auto* quotaBlocked = std::get_if<rs::RouteSelectionQuotaBlocked>(&routing); ASSERT(quotaBlocked); ASSERT(!quotaBlocked->blockedAccounts.empty());
@@ -93,7 +109,8 @@ namespace {
           .routing_generation = *blocked.routingGeneration, .idempotency_key_hash = idempotencyKeyHash,
           .state = unknown ? uos::types::CodexResetRedemptionState::unknown : uos::types::CodexResetRedemptionState::claimed,
           .owner_token = "fixture-stale-owner", .fence = 1,
-          .lease_expires_at_ms = fixedStartMs + 30'000, .provider_receipt_id = std::nullopt, .created_at_ms = fixedStartMs - 1'000,
+          .lease_expires_at_ms = fixedStartMs + (unknown || options.holdClaimLease ? 30'000 : -1),
+          .provider_receipt_id = std::nullopt, .created_at_ms = fixedStartMs - 1'000,
           .updated_at_ms = fixedStartMs - 1'000, .submitted_at_ms = unknown ? std::optional<double>(fixedStartMs - 1'000) : std::nullopt,
           .verified_at_ms = std::nullopt, .last_error_code = unknown ? std::optional<std::string>("provider_commit_unknown") : std::nullopt};
         const auto key = br::codexResetRedemptionKey(accountHash, quotaGeneration); const auto value = rt::KvValue(json::value_from(record));
@@ -105,7 +122,8 @@ namespace {
       if (rt::endsWith(url, "/backend-api/codex/responses")) { calls.push_back({"inference", account}); return jsonResponse(json::object{{"id", "response-" + account}}); }
       if (rt::endsWith(url, "/backend-api/wham/rate-limit-reset-credits")) {
         calls.push_back({"inventory", account});
-        return options.includeSibling && account == "account-one" ? emptyInventory() : inventoryResponse();
+        if (options.includeSibling && account == "account-one") return options.firstInventory ? options.firstInventory() : emptyInventory();
+        return inventoryResponse();
       }
       if (rt::endsWith(url, "/backend-api/wham/rate-limit-reset-credits/consume")) { calls.push_back({"consume", account}); return jsonResponse(json::object{{"code", "reset"}, {"windows_reset", 1}}); }
       throw rt::JsError("unexpected request " + init.method.value_or("GET") + " " + url);
@@ -183,11 +201,38 @@ ASYNC_TEST("concurrent enabled overage requests do not contend for one probe lea
 }
 ASYNC_TEST("an unsubmitted reset claim on one account leaves a sibling credit eligible") {
   RunOptions options; options.allowOverage = true; options.seedUnsubmittedReset = true; options.includeSibling = true;
+  options.firstInventory = [] { return creditInventory("earlier-credit-one", fixedStartMs + 20'000); };
   const std::vector<std::string> ids{"overage-unsubmitted-sibling-credit"};
-  AWAIT(run, runBlockedSequence(ids, availableInventory, options));
+  AWAIT(run, runBlockedSequence(ids, [] { return creditInventory("later-credit-two", fixedStartMs + 40'000); }, options));
   EXPECT_EQ(statuses(run), (std::vector<double>{200}));
+  EXPECT_EQ(accountsOf(run, "inventory"), (std::vector<std::string>{"account-two"}));
   EXPECT_EQ(accountsOf(run, "consume"), (std::vector<std::string>{"account-two"}));
   EXPECT_EQ(accountsOf(run, "inference"), (std::vector<std::string>{"account-two"}));
+  EXPECT(!logged(run, "codex_overage_served"));
+}
+ASYNC_TEST("a live local claim prevents sibling redemption and overage") {
+  RunOptions options;
+  options.allowOverage = true;
+  options.seedUnsubmittedReset = true;
+  options.holdClaimLease = true;
+  options.includeSibling = true;
+  const std::vector<std::string> ids{"overage-live-claim-sibling"};
+  AWAIT(run, runBlockedSequence(ids, availableInventory, options));
+  EXPECT_EQ(statuses(run), (std::vector<double>{429}));
+  EXPECT(run.calls.empty());
+  EXPECT(!logged(run, "codex_overage_served"));
+}
+ASYNC_TEST("an earlier credit on a day-capped account yields to the redeemable sibling before overage") {
+  RunOptions options;
+  options.allowOverage = true;
+  options.includeSibling = true;
+  options.firstDayCapped = true;
+  options.firstInventory = [] { return creditInventory("earlier-credit-one", fixedStartMs + 20'000); };
+  const std::vector<std::string> ids{"overage-day-capped-sibling-credit"};
+  AWAIT(run, runBlockedSequence(ids, [] { return creditInventory("later-credit-two", fixedStartMs + 40'000); }, options));
+  EXPECT_EQ(statuses(run), (std::vector<double>{200}));
+  const std::vector<UpstreamCall> expected{{"inventory", "account-two"}, {"consume", "account-two"}, {"inference", "account-two"}};
+  EXPECT_EQ(run.calls, expected);
   EXPECT(!logged(run, "codex_overage_served"));
 }
 ASYNC_TEST("an unsubmitted reset claim does not bypass a sibling's unknown submission") {
