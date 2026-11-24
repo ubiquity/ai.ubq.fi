@@ -120,6 +120,13 @@ namespace uos::codex::banked_reset_claim {
 
   [[nodiscard]] rt::Task<ReadExistingRecordResult> readExistingRecord(std::shared_ptr<rt::Kv> kv, banked_reset::ResetContext context);
 
+  // An inventory refusal written before the durable submission boundary.
+  inline bool isUnsubmittedInventoryRejection(const ::uos::types::CodexResetRedemptionRecord& record) {
+    const auto& reason = record.last_error_code;
+    return record.state == ::uos::types::CodexResetRedemptionState::rejected && !record.submitted_at_ms && !record.provider_receipt_id &&
+           (reason == "inventory_empty" || reason == "inventory_no_eligible_codex_credit" || reason == "inventory_unavailable");
+  }
+
   // `clock: () => number`
   [[nodiscard]] rt::Task<ClaimResult> claimTransaction(std::shared_ptr<rt::Kv> kv, banked_reset::ResetContext context,
                                                        banked_reset::CodexBankedResetCandidate candidate, double nowMs, std::function<double()> clock,

@@ -272,6 +272,9 @@ namespace uos::codex::experiment {
     if (routing.slot != options.slot - 1 || routing.auth.account_id != auth.account_id) {
       throw CodexCacheScopeExperimentError("Prompt-cache scope experiment routing did not preserve the requested slot.");
     }
+    if (routing.quotaUsageProbeRequired) {
+      throw CodexCacheScopeExperimentError("Current Codex quota could not be verified for the selected experiment slot.");
+    }
     rt::Promise<RoutingAccount> claiming(claimCacheScopeExperimentRouting(current.pool, routing));
     routing = co_await claiming.wait();
 

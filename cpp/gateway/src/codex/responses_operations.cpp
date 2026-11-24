@@ -12,9 +12,11 @@
 #include "uos/codex/overage_settings.hpp"
 #include "uos/codex/rate_limit_429.hpp"
 #include "uos/codex/responses_runners.hpp"
+#include "uos/codex/routing_serial.hpp"
 #include "uos/config.hpp"
 #include "uos/kv.hpp"
 #include "uos/provider/capacity_events.hpp"
+#include "uos/provider/selection.hpp"
 #include "uos/rt/clock.hpp"
 #include "uos/rt/json.hpp"
 #include "uos/rt/number.hpp"
@@ -39,11 +41,13 @@ namespace uos::codex::responses_operations {
     using responses_state::CodexResponseContext;
     using responses_state::CodexRetryCandidate;
     using responses_state::EvaluatedBlockedReset;
+    using responses_state::OverageCohortMember;
     using responses_state::PendingOverageFallback;
     using responses_state::PreexistingBankedReset;
     using routing_state::CodexActiveAccountSnapshot;
     using routing_state::CodexBlockedRoutingAccount;
     using routing_state::RouteSelection;
+    using routing_state::RouteSelectionQuotaBlocked;
     using routing_state::RoutingAccount;
     using ::uos::types::CodexAuthState;
     using Context = std::shared_ptr<CodexResponseContext>;
@@ -98,6 +102,7 @@ namespace uos::codex::responses_operations {
 
     /** Outcomes whose reason proves no banked reset could be redeemed this episode. */
     constexpr std::string_view MIXED_UNAVAILABLE = "quota_and_invalid_credentials";
+    class OverageCohortChanged : public dispatch::CodexActiveAccountFenceError {};
     constexpr std::array<std::string_view, 11> OVERAGE_FALLBACK_REASONS{
       "no_eligible_credit",
       "inventory_empty",
@@ -121,22 +126,37 @@ namespace uos::codex::responses_operations {
       return std::find(OVERAGE_FALLBACK_REASONS.begin(), OVERAGE_FALLBACK_REASONS.end(), reason) != OVERAGE_FALLBACK_REASONS.end();
     }
 
-    /**
-     * Plan at most one bounded overage attempt for the current blocked cohort.
-     * The best candidate is the credit the evaluator selected (the day-cap
-     * refusal), then the current active blocked account, then the first blocked
-     * account. A completed spend and fence/config failures are not in the reason
-     * set and never fall back.
-     */
-    // `selectedSlot: number | undefined`; `requestedModel: string | null`.
-    std::optional<PendingOverageFallback> planOverageFallback(const std::string& reason, std::optional<double> selectedSlot,
-                                                              const std::vector<CodexBlockedRoutingAccount>& blockedAccounts,
-                                                              const CodexActiveAccountSnapshot& activeSnapshot,
-                                                              const std::optional<std::string>& requestedModel) {
-      if (!permitsOverageFallback(reason)) return std::nullopt;
-      const std::optional<routing_state::CodexActiveAccountSelection>& active = activeSnapshot.selection;
+    // The skipped slots are the actual selected cohort when no account routed.
+    // Capture current credential versions for invalid members as well as quota windows.
+    rt::Task<std::optional<std::vector<OverageCohortMember>>> overageCohort(const RouteSelectionQuotaBlocked& quota) {
+      if (!quota.poolSnapshotJson) co_return std::nullopt;
+      const auto pool = auth::parseCodexAuthPool(rt::jsonParse(*quota.poolSnapshotJson));
+      if (!pool) co_return std::nullopt;
+      std::vector<OverageCohortMember> cohort;
+      for (const double skipped : quota.skippedSlots) {
+        const double slot = skipped - 1;
+        const auto* current = rt::at(pool->accounts, slot);
+        if (!current) co_return std::nullopt;
+        const auto blocked = std::find_if(quota.blockedAccounts.begin(), quota.blockedAccounts.end(),
+                                          [slot](const CodexBlockedRoutingAccount& account) { return account.slot == slot; });
+        if (blocked == quota.blockedAccounts.end()) {
+          auto version = co_await capacity_routing::codexCredentialVersion(*current);
+          cohort.push_back({slot, std::move(version), std::nullopt});
+        } else {
+          cohort.push_back({slot, blocked->credentialVersion, blocked->quotaResetAtMs});
+        }
+      }
+      co_return cohort;
+    }
+
+    // Prefer the account named by the evaluator, then the active account, then pool order.
+    rt::Task<std::optional<PendingOverageFallback>> planOverageFallback(std::string reason, std::optional<double> selectedSlot,
+                                                                       const RouteSelectionQuotaBlocked& quota,
+                                                                       const std::optional<std::string>& requestedModel) {
+      if (!permitsOverageFallback(reason)) co_return std::nullopt;
+      const std::optional<routing_state::CodexActiveAccountSelection>& active = quota.activeSnapshot.selection;
       const CodexBlockedRoutingAccount* blocked = nullptr;
-      for (const CodexBlockedRoutingAccount& account : blockedAccounts) {
+      for (const CodexBlockedRoutingAccount& account : quota.blockedAccounts) {
         if (!overage_settings::overageUsageAllowedSync(account.accountIdHash)) continue;
         if (selectedSlot == account.slot) {
           blocked = &account;
@@ -144,7 +164,9 @@ namespace uos::codex::responses_operations {
         }
         if (blocked == nullptr || (active && account.accountIdHash == active->account_id_hash && account.slot == active->slot)) blocked = &account;
       }
-      if (blocked == nullptr) return std::nullopt;
+      if (blocked == nullptr) co_return std::nullopt;
+      auto cohort = co_await overageCohort(quota);
+      if (!cohort) co_return std::nullopt;
       // Overage is an explicitly enabled serving path, not a single-flight reset
       // recovery probe. Concurrent requests may use the account directly; each one
       // still performs exactly one bounded transport attempt.
@@ -153,7 +175,7 @@ namespace uos::codex::responses_operations {
       routing.probeCircuit = nullptr;
       routing.overageFallback = true;
       routing.requestedModel = rt::orNull(requestedModel);
-      return PendingOverageFallback{reason, std::move(routing), activeSnapshot};
+      co_return PendingOverageFallback{std::move(reason), std::move(routing), quota.activeSnapshot, std::move(*cohort)};
     }
 
     rt::Task<void> ensureOverageAllowed(std::string accountId) {
@@ -611,8 +633,7 @@ namespace uos::codex::responses_operations {
       if (quotaBlocked == nullptr) co_return std::nullopt;
       if (!quotaBlocked->fullCohortExhausted) {
         if (quotaBlocked->fullCohortUnavailable == true)
-          ctx->overageFallbackPending = planOverageFallback(std::string(MIXED_UNAVAILABLE), std::nullopt, quotaBlocked->blockedAccounts,
-                                                           quotaBlocked->activeSnapshot, ctx->requestedModel);
+          ctx->overageFallbackPending = co_await planOverageFallback(std::string(MIXED_UNAVAILABLE), std::nullopt, *quotaBlocked, ctx->requestedModel);
         co_return std::nullopt;
       }
       std::vector<CodexBlockedRoutingAccount> blockedAccounts = quotaBlocked->blockedAccounts;
@@ -653,7 +674,7 @@ namespace uos::codex::responses_operations {
       const PreexistingBankedReset preexisting = co_await checking.wait();
       if (const auto* refused = std::get_if<responses_state::PreexistingBankedResetBlocked>(&preexisting)) {
         ctx->overageFallbackPending =
-          planOverageFallback(refused->reason, std::nullopt, blockedAccounts, blockedPool.activeSnapshot, ctx->requestedModel);
+          co_await planOverageFallback(refused->reason, std::nullopt, blockedPool, ctx->requestedModel);
         co_return std::nullopt;
       }
       if (const auto* evaluated = std::get_if<responses_state::PreexistingBankedResetEvaluated>(&preexisting)) co_return evaluated->evaluated;
@@ -678,9 +699,9 @@ namespace uos::codex::responses_operations {
       fields["selected_slot"] = evaluated.selected.has_value() ? json::value(evaluated.selected->slot + 1) : json::value(nullptr);
       dispatch::logCodexRouting("codex_banked_reset_preflight", fields);
       ctx->overageFallbackPending =
-        planOverageFallback(evaluated.allCandidatesExplicitlyDisabled ? "usage_explicitly_disabled" : evaluated.reason,
-                            evaluated.selected.has_value() ? std::optional<double>(evaluated.selected->slot) : std::nullopt, blockedAccounts,
-                            blockedPool.activeSnapshot, ctx->requestedModel);
+        co_await planOverageFallback(evaluated.allCandidatesExplicitlyDisabled ? "usage_explicitly_disabled" : evaluated.reason,
+                                     evaluated.selected.has_value() ? std::optional<double>(evaluated.selected->slot) : std::nullopt, blockedPool,
+                                     ctx->requestedModel);
       if (ctx->overageFallbackPending) co_return std::nullopt;
       co_return ctx->selectedBankedResetCandidate(evaluated, localCandidates, originalActive);
     }
@@ -692,12 +713,14 @@ namespace uos::codex::responses_operations {
         const auto* quota = std::get_if<routing_state::RouteSelectionQuotaBlocked>(&selection);
         const bool mixed = pending.reason == MIXED_UNAVAILABLE;
         if (!quota || quota->fullCohortUnavailable != true || quota->fullCohortExhausted == mixed ||
-            !quota->poolSnapshotJson || !quota->capacitySnapshotJson) throw dispatch::CodexActiveAccountFenceError();
+            !quota->poolSnapshotJson || !quota->capacitySnapshotJson) throw OverageCohortChanged();
+        const auto currentCohort = co_await overageCohort(*quota);
+        if (!currentCohort || *currentCohort != pending.cohort) throw OverageCohortChanged();
         const auto& priorActive = pending.activeSnapshot.selection;
         const auto& currentActive = quota->activeSnapshot.selection;
         if (priorActive.has_value() != currentActive.has_value() ||
             (priorActive && (priorActive->account_id_hash != currentActive->account_id_hash || priorActive->generation != currentActive->generation))) {
-          throw dispatch::CodexActiveAccountFenceError();
+          throw OverageCohortChanged();
         }
         const auto candidate = std::find_if(quota->blockedAccounts.begin(), quota->blockedAccounts.end(), [&](const CodexBlockedRoutingAccount& blocked) {
           return blocked.slot == routing.slot && blocked.accountIdHash == routing.accountIdHash &&
@@ -705,7 +728,7 @@ namespace uos::codex::responses_operations {
                  blocked.quotaResetAtMs == pending.routing.quotaResetAtMs && blocked.auth.account_id == routing.auth.account_id &&
                  auth_refresh::sameCodexCredentials(blocked.auth, routing.auth);
         });
-        if (candidate == quota->blockedAccounts.end()) throw dispatch::CodexActiveAccountFenceError();
+        if (candidate == quota->blockedAccounts.end()) throw OverageCohortChanged();
 
         // A sibling can acquire a reset while inventory was being evaluated.
         // Recheck every current window just before admitting overage.
@@ -734,17 +757,32 @@ namespace uos::codex::responses_operations {
           if (!expiredClaim && !definitiveRefusal) throw dispatch::CodexActiveAccountFenceError();
         }
         co_await ensureOverageAllowed(routing.auth.account_id);
-        if (!(co_await checks->commit()).ok) throw dispatch::CodexActiveAccountFenceError();
+        const auto policyRow = co_await kv->get(provider::selection::PROVIDER_SELECTION_KV_KEY, strong);
+        const auto policy = provider::selection::normalizeProviderSelection(policyRow.value);
+        if (policyRow.versionstamp && !policy) throw dispatch::CodexActiveAccountFenceError();
+        std::vector<double> selectedSlots;
+        for (std::size_t i = 0; i < currentPool.pool.accounts.size(); ++i) {
+          const auto accountHash = co_await provider::selection::codexSubscriptionHash(currentPool.pool.accounts[i].account_id);
+          if (provider::selection::isCodexSubscriptionEnabled(accountHash, policy)) selectedSlots.push_back(static_cast<double>(i) + 1);
+        }
+        if (selectedSlots != quota->skippedSlots) throw OverageCohortChanged();
+        const auto rows = co_await routing_serial::readStrongCodexRoutingRows(kv);
+        if (!currentPool.entry || currentPool.entry->versionstamp != rows.authEntry.versionstamp ||
+            rt::jsonStringify(rows.authEntry.value) != *quota->poolSnapshotJson ||
+            rt::jsonStringify(rows.capacityEntry.value) != *quota->capacitySnapshotJson ||
+            !account_routing::isCodexActiveAccountSnapshotCurrent(rows.activeEntry.value, quota->activeSnapshot)) throw OverageCohortChanged();
+        checks->check(policyRow, rows.activeEntry, rows.authEntry, rows.capacityEntry);
+        if (!(co_await checks->commit()).ok) throw OverageCohortChanged();
         co_return;
+      } catch (const OverageCohortChanged&) {
+        throw;
       } catch (...) {
         throw dispatch::CodexActiveAccountFenceError();
       }
     }
 
-    rt::Task<std::optional<rt::Response>> runOverageFallbackAttempt(Context ctx) {
-      const auto pending = std::exchange(ctx->overageFallbackPending, std::nullopt);
-      if (!pending) co_return std::nullopt;
-      RoutingAccount routing = pending->routing;
+    rt::Task<std::optional<rt::Response>> attemptPlannedOverage(Context ctx, PendingOverageFallback pending) {
+      RoutingAccount routing = pending.routing;
       std::optional<rt::Response> upstream;
       rt::Reason failure;
       try {
@@ -752,7 +790,7 @@ namespace uos::codex::responses_operations {
         const auto currentPool = co_await auth::getAuthPoolEntry(true, true);
         const auto* current = rt::at(currentPool.pool.accounts, routing.slot);
         if (!current || current->account_id != routing.auth.account_id || !auth_refresh::sameCodexCredentials(*current, routing.auth)) {
-          co_return std::nullopt;
+          throw OverageCohortChanged();
         }
         const auto entry = accountEntryOf(currentPool, *current, routing);
         if (auth::needsRefresh(*current)) {
@@ -762,22 +800,23 @@ namespace uos::codex::responses_operations {
             const auto refreshedPool = co_await auth::getAuthPoolEntry(true, true);
             const auto refreshed = co_await selectPoolStrong(ctx, refreshedPool);
             const auto* blocked = std::get_if<routing_state::RouteSelectionQuotaBlocked>(&refreshed);
-            if (!blocked) co_return std::nullopt;
+            if (!blocked) throw OverageCohortChanged();
             const auto renewed = std::find_if(blocked->blockedAccounts.begin(), blocked->blockedAccounts.end(), [&](const CodexBlockedRoutingAccount& candidate) {
               return candidate.slot == routing.slot && candidate.accountIdHash == routing.accountIdHash &&
-                     candidate.credentialVersion == routing.credentialVersion && candidate.quotaResetAtMs == pending->routing.quotaResetAtMs;
+                     candidate.credentialVersion == routing.credentialVersion && candidate.quotaResetAtMs == pending.routing.quotaResetAtMs;
             });
-            if (renewed == blocked->blockedAccounts.end()) co_return std::nullopt;
+            if (renewed == blocked->blockedAccounts.end()) throw OverageCohortChanged();
             routing.routingGeneration = renewed->routingGeneration;
           }
           routing.auth = validated;
         }
-        const auto check = [ctx, pending, routing]() { return ensureOverageAdmissionCurrent(ctx, *pending, routing); };
+        const auto check = [ctx, pending, routing]() { return ensureOverageAdmissionCurrent(ctx, pending, routing); };
         upstream = co_await ctx->fetchAttempt(entry, routing.auth, routing, "overage_fallback", check, true);
       } catch (...) {
         failure = std::current_exception();
       }
       if (failure) {
+        if (reasonIs<OverageCohortChanged>(failure)) std::rethrow_exception(failure);
         if (reasonIs<dispatch::CodexActiveAccountFenceError>(failure)) co_return std::nullopt;
         const auto* error = auth::codexErrorOf(failure);
         if (dynamic_cast<const auth::CodexAuthFollowerStaleError*>(error)) dispatch::reportCodexResponseTiming(ctx->options.onFollowerStale);
@@ -789,7 +828,7 @@ namespace uos::codex::responses_operations {
       if (response.ok()) {
         dispatch::logCodexRouting("codex_overage_served", json::object{
           {"request_id", stringOrNull(ctx->options.requestId)}, {"account_id_hash", routing.accountIdHash},
-          {"slot", routing.slot + 1}, {"reason", pending->reason},
+          {"slot", routing.slot + 1}, {"reason", pending.reason},
         });
       } else if (ctx->responseIsCodexAuthFailure(routing.auth, response)) {
         co_await routing_mutations::markCodexCredentialInvalid(routing);
@@ -803,6 +842,33 @@ namespace uos::codex::responses_operations {
         co_return ctx->decorateAuthWarning(disposition.response);
       }
       co_return ctx->decorateAuthWarning(response);
+    }
+
+    rt::Task<std::optional<rt::Response>> runOverageFallbackAttempt(Context ctx) {
+      // Recompute reset eligibility once if the proof changed before transport.
+      // A stale plan never spends overage or qualifies for external paid fallback.
+      for (bool reselected = false;; reselected = true) {
+        auto pending = std::exchange(ctx->overageFallbackPending, std::nullopt);
+        if (!pending) {
+          if (!reselected) co_return std::nullopt;
+          break;
+        }
+        try {
+          auto response = co_await attemptPlannedOverage(ctx, std::move(*pending));
+          if (response || !reselected) co_return response;
+          break;
+        } catch (const OverageCohortChanged&) {
+        }
+        if (reselected) break;
+        const auto reset = co_await ctx->evaluateBlockedCohortBankedReset();
+        if (reset) {
+          auto response = co_await ctx->runPostResetRetry(*reset, ctx->lastResponse);
+          if (response) co_return response;
+          break;
+        }
+      }
+      if (ctx->lastResponse) dispatch::cancelResponseBody(*ctx->lastResponse);
+      co_return dispatch::routingErrorResponse(429, "Codex capacity changed before dispatch; retry the request.", "codex_capacity_unavailable");
     }
 
     // fetchAttempt's `async () => { await beforeTransport?.(); if (!activeAdmissionAlreadyFenced) ... }`.

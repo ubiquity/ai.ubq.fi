@@ -27,6 +27,7 @@ namespace uos::codex::capacity_routing {
     using routing_state::CodexAccountRoutingState;
     using routing_state::CodexCapacityRoutingObservation;
     using routing_state::CodexCapacityRoutingWindow;
+    using routing_state::CodexCapacityRoutingWindows;
     using routing_state::parseCodexAccountRoutingState;
     using routing_state::RoutingAccount;
 
@@ -43,9 +44,42 @@ namespace uos::codex::capacity_routing {
       return (!allowed || rt::getBool(allowed) == true) && (!reached || rt::getBool(reached) == false);
     }
 
+    bool confirmsExhaustedWindow(const std::optional<CodexCapacityRoutingWindow>& prior, const std::optional<CodexCapacityRoutingWindow>& current,
+                                 double priorSampleAt, double now, bool included) {
+      if (!prior || prior->used_percent != 100 || (prior->reset_at_ms && *prior->reset_at_ms <= priorSampleAt)) return true;
+      if (!current || !current->used_percent || (prior->limit_window_seconds && prior->limit_window_seconds != current->limit_window_seconds)) return false;
+      if (*current->used_percent < 100) return true;
+      return !included && current->reset_at_ms && *current->reset_at_ms > now &&
+             (!prior->reset_at_ms || *prior->reset_at_ms <= now || current->reset_at_ms == prior->reset_at_ms);
+    }
+
+    bool confirmsExhaustedWindows(const CodexCapacityRoutingObservation& prior, const CodexCapacityRoutingObservation& current,
+                                  std::optional<std::string_view> model, double now, bool included) {
+      const auto confirms = [&](const CodexCapacityRoutingWindows& before, const CodexCapacityRoutingWindows& after) {
+        return confirmsExhaustedWindow(before.primary, after.primary, prior.snapshot_at_ms, now, included) &&
+               confirmsExhaustedWindow(before.secondary, after.secondary, prior.snapshot_at_ms, now, included);
+      };
+      const auto applies = [&model](const auto& limit) { return model && capacityDecisions::capacityLimitMatchesModel(limit.limit_name, *model); };
+      const auto priorCount = std::count_if(prior.additional_rate_limits.begin(), prior.additional_rate_limits.end(), applies);
+      if (priorCount != std::count_if(current.additional_rate_limits.begin(), current.additional_rate_limits.end(), applies)) return false;
+      if (priorCount == 0) return confirms(prior.windows, current.windows);
+      for (const auto& previous : prior.additional_rate_limits) {
+        if (!applies(previous)) continue;
+        const auto sameLimit = [&](const auto& limit) {
+          return limit.limit_name == previous.limit_name && limit.metered_feature == previous.metered_feature;
+        };
+        const auto matching = std::find_if(current.additional_rate_limits.begin(), current.additional_rate_limits.end(), sameLimit);
+        if (matching == current.additional_rate_limits.end() ||
+            std::count_if(prior.additional_rate_limits.begin(), prior.additional_rate_limits.end(), sameLimit) != 1 ||
+            std::count_if(current.additional_rate_limits.begin(), current.additional_rate_limits.end(), sameLimit) != 1 ||
+            !confirms(previous.windows, matching->windows)) return false;
+      }
+      return true;
+    }
+
     rt::Task<std::optional<CodexCapacityRoutingObservation>> readQuotaUsage(RoutingAccount account, double startedAt,
                                                                             std::optional<rt::AbortSignal> requestSignal,
-                                                                            bool requireScopedWindows) {
+                                                                            const CodexCapacityRoutingObservation& prior) {
       constexpr double TIMEOUT_MS = 8'000;
       const auto timeout = rt::AbortSignal::timeout(TIMEOUT_MS);
       const auto signal = requestSignal ? rt::AbortSignal::any({*requestSignal, timeout}) : timeout;
@@ -97,12 +131,14 @@ namespace uos::codex::capacity_routing {
         const bool hasParsedScope = std::any_of(observation.additional_rate_limits.begin(), observation.additional_rate_limits.end(), [&model](const auto& limit) {
           return capacityDecisions::capacityLimitMatchesModel(limit.limit_name, *model);
         });
-        if ((scoped || requireScopedWindows) && !hasParsedScope) co_return std::nullopt;
+        if (scoped && !hasParsedScope) co_return std::nullopt;
         if (scoped) permitsIncluded = scopedPermitsIncluded;
       }
       const double now = rt::dateNow();
       const auto headroom = capacityDecisions::capacityHeadroomForObservation(observation, model);
-      if ((permitsIncluded && headroom && *headroom > 0) || capacityDecisions::capacityExhaustedResetAtMs(observation, model, now))
+      const bool included = permitsIncluded && headroom && *headroom > 0;
+      if ((included || capacityDecisions::capacityExhaustedResetAtMs(observation, model, now)) &&
+          confirmsExhaustedWindows(prior, observation, model, now, included))
         co_return observation;
       co_return std::nullopt;
     }
@@ -135,16 +171,13 @@ namespace uos::codex::capacity_routing {
         co_return QuotaUsageProbeResult::unavailable;
       const auto durable = capacityDecisions::parseStoredCapacityObservationStore(rows.capacityEntry.value);
       const auto model = account.requestedModel.hasValue() ? std::optional<std::string_view>(*account.requestedModel) : std::nullopt;
-      bool requireScopedWindows = false;
-      if (model) {
-        for (const auto& observation : durable) {
-          if (observation.account_id_hash != account.accountIdHash) continue;
-          requireScopedWindows = std::any_of(observation.additional_rate_limits.begin(), observation.additional_rate_limits.end(), [&model](const auto& limit) {
-            return capacityDecisions::capacityLimitMatchesModel(limit.limit_name, *model);
-          });
-        }
-      }
-      const auto observation = co_await readQuotaUsage(account, startedAt, signal, requireScopedWindows);
+      const auto prior = std::find_if(durable.begin(), durable.end(), [&](const CodexCapacityRoutingObservation& observation) {
+        return observation.account_id_hash == account.accountIdHash && observation.slot == account.slot &&
+               capacityDecisions::capacityObservationIsFresh(observation, startedAt) &&
+               capacityDecisions::capacityHasCurrentExhaustedWindow(observation, model, startedAt);
+      });
+      if (prior == durable.end()) co_return QuotaUsageProbeResult::unavailable;
+      const auto observation = co_await readQuotaUsage(account, startedAt, signal, *prior);
       const double now = rt::dateNow();
       if (!observation || slot->probe_lease->expires_at_ms <= now || (signal && signal->aborted())) co_return QuotaUsageProbeResult::unavailable;
       const std::vector observations{*observation};
@@ -549,23 +582,20 @@ namespace uos::codex::responses_runners {
       const auto attempt = std::make_shared<CodexCredentialAttempt>(
         CodexCredentialAttempt{.auth = accountEntry.auth, .routing = std::get<Runners::ClaimAttemptRoutingResultClaimed>(claim).routing});
       if (attempt->routing.quotaUsageProbeRequired) {
-        const auto config = ctx->reloadConfiguredBankedResetConfig();
-        if (config.enabled && config.mode == "live") {
-          using capacity_routing::QuotaUsageProbeResult;
-          auto proof = QuotaUsageProbeResult::unavailable;
-          if (!ctx->quotaUsageProbeAccounts.has(attempt->routing.accountIdHash)) {
-            ctx->quotaUsageProbeAccounts.add(attempt->routing.accountIdHash);
-            proof = co_await capacity_routing::refreshCodexQuotaUsage(attempt->routing, ctx->options.signal);
-          }
-          if (proof == QuotaUsageProbeResult::refreshed) {
-            ctx->requestActiveReselection(Operations::RequestActiveReselectionOptions{});
-            co_return CodexAccountAttemptOutcomeReselectActive{};
-          }
-          if (proof == QuotaUsageProbeResult::unavailable) {
-            co_await capacity_routing::releaseCodexQuotaUsageProbe(attempt->routing);
-            co_return CodexAccountAttemptOutcomeResponse{
-              .response = dispatch::routingErrorResponse(429, "Codex capacity is temporarily unavailable; retry the request.", "codex_capacity_unavailable")};
-          }
+        using capacity_routing::QuotaUsageProbeResult;
+        auto proof = QuotaUsageProbeResult::unavailable;
+        if (!ctx->quotaUsageProbeAccounts.has(attempt->routing.accountIdHash)) {
+          ctx->quotaUsageProbeAccounts.add(attempt->routing.accountIdHash);
+          proof = co_await capacity_routing::refreshCodexQuotaUsage(attempt->routing, ctx->options.signal);
+        }
+        if (proof == QuotaUsageProbeResult::refreshed) {
+          ctx->requestActiveReselection(Operations::RequestActiveReselectionOptions{});
+          co_return CodexAccountAttemptOutcomeReselectActive{};
+        }
+        if (proof == QuotaUsageProbeResult::unavailable) {
+          co_await capacity_routing::releaseCodexQuotaUsageProbe(attempt->routing);
+          co_return CodexAccountAttemptOutcomeResponse{
+            .response = dispatch::routingErrorResponse(429, "Codex capacity is temporarily unavailable; retry the request.", "codex_capacity_unavailable")};
         }
         attempt->routing.quotaUsageProbeRequired = false;
       }

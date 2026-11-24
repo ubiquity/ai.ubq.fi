@@ -73,8 +73,9 @@ namespace uos::authority::native_codex_mutations {
     const CodexRoutingSlot released = [&account, &current, &classAwareCurrent] {
       if (routingProbeCircuit(account) != "quota") return current;
       const CodexQuotaClass requestedQuotaClass = quotaClass(account.requestedModel);
-      const std::optional<CodexQuotaClass> releasedKey = quotaBlockKeyForClass(classAwareCurrent, requestedQuotaClass, requestedModelView(account.requestedModel));
-      return withoutQuotaClass(classAwareCurrent, releasedKey ? *releasedKey : requestedQuotaClass);
+      const auto claimed = current.probe_lease->quota_class.toOptional();
+      const auto releasedKey = claimed ? *claimed : quotaBlockKeyForClass(classAwareCurrent, requestedQuotaClass).value_or(requestedQuotaClass);
+      return withoutQuotaClass(classAwareCurrent, releasedKey);
     }();
     const bool hasOtherQuotaClasses = released.quota_blocks_by_class && released.quota_blocks_by_class->size() > 0;
     CodexRoutingSlot next = released;
@@ -132,9 +133,12 @@ namespace uos::authority::native_codex_mutations {
     const CodexQuotaClass requestedQuotaClass = quotaClass(account.requestedModel);
     const double nextGeneration = recoveryLease.generation;
     const CodexRoutingSlot classAwareCurrent = withLegacyQuotaClassMap(current);
-    const std::optional<CodexQuotaClassBlock> releasedClassBlock = quotaBlockForClass(classAwareCurrent, requestedQuotaClass, requestedModelView(account.requestedModel));
-    const std::optional<CodexQuotaClass> releasedKey = quotaBlockKeyForClass(classAwareCurrent, requestedQuotaClass, requestedModelView(account.requestedModel));
-    const CodexRoutingSlot released = withoutQuotaClass(classAwareCurrent, releasedKey ? *releasedKey : requestedQuotaClass);
+    const auto claimed = recoveryLease.quota_class.toOptional();
+    const auto releasedKey = claimed ? *claimed : quotaBlockKeyForClass(classAwareCurrent, requestedQuotaClass).value_or(requestedQuotaClass);
+    const auto* releasedClassBlock = classAwareCurrent.quota_blocks_by_class ? classAwareCurrent.quota_blocks_by_class->get(releasedKey) : nullptr;
+    const auto legacyBlock = !claimed && !releasedClassBlock ? quotaBlockForClass(classAwareCurrent, requestedQuotaClass) : std::nullopt;
+    if (legacyBlock) releasedClassBlock = &*legacyBlock;
+    const CodexRoutingSlot released = withoutQuotaClass(classAwareCurrent, releasedKey);
     CodexRoutingSlot recovered = released;
     // The verified reset makes normal routing eligible, but an absolute
     // Retry-After cannot prove whether a delayed response names this old

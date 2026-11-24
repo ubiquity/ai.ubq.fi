@@ -1,6 +1,6 @@
 // Port of tests/codex-capacity-routing-coverage.test.ts.
 // Links: tests/codex_capacity_routing_coverage_test.cpp src/codex/capacity_routing.cpp src/codex/routing_state.cpp
-//        src/authority/native_codex_capacity.cpp src/authority/native_codex_contracts.cpp src/authority/native_codex_evaluation.cpp
+//        src/authority/native_codex_capacity.cpp src/authority/native_codex_contracts.cpp src/authority/native_codex_evaluation.cpp src/authority/native_codex_mutations.cpp
 //        src/kv.cpp src/storage/kv.cpp src/storage/sqlite_readonly.cpp src/storage/native_kv.cpp src/storage/value_compatibility.cpp
 // src/storage/key_compatibility.cpp src/utils.cpp
 //
@@ -10,6 +10,7 @@
 #include "uos/codex/capacity_routing.hpp"
 
 #include "uos/authority/native_codex_evaluation.hpp"
+#include "uos/authority/native_codex_mutations.hpp"
 #include "uos/codex/banked_reset.hpp"
 
 #include "uos/kv.hpp"
@@ -23,6 +24,7 @@
 #include <exception>
 #include <memory>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -905,6 +907,119 @@ namespace {
   ASYNC_TEST("named exhaustion keeps an exact reset fence without blocking a healthy same-class model") {
     auto running = runScripted(&preserveNamedQuotaScope);
     co_await std::move(running);
+  }
+
+  namespace decisions = uos::authority::native_codex_capacity;
+  namespace evaluation = uos::authority::native_codex_evaluation;
+  namespace mutations = uos::authority::native_codex_mutations;
+
+  constexpr const char* NAMED_MODEL = "gpt-6-astra";
+  constexpr const char* NAMED_SCOPE = "model:gpt6astra";
+  constexpr const char* OTHER_MODEL = "gpt-6-luna";
+  constexpr double WEEKLY_DEADLINE = 1'790'604'800'000;
+
+  CodexRoutingSlot slotWithNamedWeeklyBlock(CodexRoutingSlot slot) {
+    auto weekly = quotaBlock(WEEKLY_DEADLINE);
+    weekly.quota_signal_observed_at_ms = NOW_MS;
+    weekly.observed_reset_at_ms = WEEKLY_DEADLINE;
+    weekly.observed_reset_at_is_stable = true;
+    slot.quota_blocks_by_class->set(NAMED_SCOPE, weekly);
+    return slot;
+  }
+
+  evaluation::CodexRoutingAccountEvaluation evaluateNamedScope(const CodexAccountRoutingState& state, std::string model, double now,
+                                                              std::optional<CodexCapacityRoutingObservation> observation = std::nullopt) {
+    const auto& slot = state.slots.front();
+    rt::OrderedMap<std::string, CodexCapacityRoutingObservation> observations;
+    if (observation) observations.set(observation->account_id_hash, *observation);
+    const routing_state::CodexRoutingIdentity identity{.slot = 0, .accountIdHash = *slot.account_id_hash, .credentialVersion = slot.credential_version};
+    return evaluation::evaluateCodexRoutingAccount(state, identity, model, observations, now, {});
+  }
+
+  TEST("a newer short class block cannot hide a longer applicable weekly model block") {
+    const double shortDeadline = NOW_MS + 4'000;
+    auto block = quotaBlock(shortDeadline);
+    block.source = "body_resets_at";
+    block.observed_reset_at_ms = shortDeadline;
+    block.observed_reset_at_is_stable = true;
+    const auto state = stateWith({slotWithNamedWeeklyBlock(slotWithClassBlock("standard", block))});
+
+    const auto before = evaluateNamedScope(state, OTHER_MODEL, shortDeadline - 1);
+    EXPECT_EQ(before.retryAtMs, std::optional<double>(shortDeadline));
+    const auto after = evaluateNamedScope(state, OTHER_MODEL, shortDeadline + 1);
+    EXPECT(after.routedAccount);
+    const auto named = evaluateNamedScope(state, NAMED_MODEL, shortDeadline + 1);
+    EXPECT(!named.routedAccount);
+    EXPECT_EQ(named.retryAtMs, std::optional<double>(WEEKLY_DEADLINE));
+    ASSERT(named.blockedAccount);
+    EXPECT_EQ(named.blockedAccount->quotaResetAtMs, WEEKLY_DEADLINE);
+  }
+
+  TEST("only matching positive named usage can reopen a live named quota block") {
+    const auto slot = slotWithNamedWeeklyBlock(capacity_routing::neutralSlot("credential-one", std::string("account-one-hash")));
+    const auto state = stateWith({slot});
+    auto sample = observationOf(0, *slot.account_id_hash);
+    sample.snapshot_at_ms = NOW_MS + 1'000;
+    sample.additional_rate_limits.push_back({OTHER_MODEL, std::nullopt, {window(18'000, 25, NOW_MS + 2'000), std::nullopt}});
+
+    const auto namedWithoutProof = evaluateNamedScope(state, NAMED_MODEL, NOW_MS + 1'001, sample);
+    EXPECT(!namedWithoutProof.routedAccount);
+    EXPECT_EQ(namedWithoutProof.retryAtMs, std::optional<double>(WEEKLY_DEADLINE));
+    const auto baseOnly = decisions::applyCapacityObservation(state, sample, NOW_MS + 1'001, std::string_view(NAMED_MODEL), NOW_MS + 1'001);
+    ASSERT(baseOnly);
+    EXPECT(baseOnly->slots.front().quota_blocks_by_class->has(NAMED_SCOPE));
+    EXPECT(evaluateNamedScope(*baseOnly, OTHER_MODEL, NOW_MS + 1'001, sample).routedAccount);
+
+    sample.additional_rate_limits.push_back({NAMED_MODEL, std::nullopt, {std::nullopt, window(604'800, 25, WEEKLY_DEADLINE)}});
+    const auto positive = evaluateNamedScope(state, NAMED_MODEL, NOW_MS + 1'001, sample);
+    EXPECT(positive.routedAccount);
+    const auto namedUsage = decisions::applyCapacityObservation(state, sample, NOW_MS + 1'001, std::string_view(NAMED_MODEL), NOW_MS + 1'001);
+    ASSERT(namedUsage);
+    EXPECT(!namedUsage->slots.front().quota_blocks_by_class->has(NAMED_SCOPE));
+
+    const auto shortDeadline = NOW_MS + 4'000;
+    auto shortClass = quotaBlock(shortDeadline);
+    shortClass.source = "body_resets_at";
+    shortClass.quota_signal_observed_at_ms = NOW_MS;
+    auto overlapping = stateWith({slotWithNamedWeeklyBlock(slotWithClassBlock("standard", shortClass))});
+    sample.windows.primary = window(18'000, 100, shortDeadline);
+    const auto namedRestored = evaluateNamedScope(overlapping, NAMED_MODEL, NOW_MS + 1'001, sample);
+    EXPECT(!namedRestored.routedAccount);
+    EXPECT_EQ(namedRestored.retryAtMs, std::optional<double>(shortDeadline));
+    const auto onlyClass = decisions::applyCapacityObservation(overlapping, sample, NOW_MS + 1'001, std::string_view(NAMED_MODEL), NOW_MS + 1'001);
+    ASSERT(onlyClass);
+    EXPECT(!onlyClass->slots.front().quota_blocks_by_class->has(NAMED_SCOPE));
+    EXPECT(onlyClass->slots.front().quota_blocks_by_class->has("standard"));
+  }
+
+  TEST("quota probe settlement does not release another scope after election released its own fence") {
+    auto scoped = slotWithNamedWeeklyBlock(capacity_routing::neutralSlot("credential-one", std::string("account-one-hash")));
+    auto shared = slotWithClassBlock("standard", quotaBlock(NOW_MS + 4'000));
+    for (auto& [slot, claimedScope, remainingScope] : std::vector<std::tuple<CodexRoutingSlot, std::string, std::string>>{
+           {scoped, "standard", NAMED_SCOPE}, {shared, NAMED_SCOPE, "standard"}}) {
+      slot.generation = 5;
+      slot.probe_lease = routing_state::CodexProbeLease{"owned", NOW_MS + 3'000, 5, "quota", claimedScope};
+      slot.banked_reset_recovery_probe_pending = true;
+      auto state = stateWith({slot});
+      routing_state::RoutingAccount account;
+      account.slot = 0;
+      account.accountIdHash = *slot.account_id_hash;
+      account.credentialVersion = slot.credential_version;
+      account.probeGeneration = 5;
+      account.probeToken = "owned";
+      account.probeCircuit = std::string("quota");
+      account.requestedModel = std::string(NAMED_MODEL);
+      const auto metadata = routing_state::nativeCodexAccountMetadata(account);
+
+      const auto success = mutations::markCodexSuccess(state, metadata, NOW_MS + 1'000);
+      ASSERT(success);
+      EXPECT(!success->slots.front().probe_lease);
+      EXPECT(success->slots.front().quota_blocks_by_class->has(remainingScope));
+      const auto released = mutations::releaseCodexRoutingProbe(state, metadata, NOW_MS + 1'000);
+      ASSERT(released);
+      EXPECT(!released->slots.front().probe_lease);
+      EXPECT(released->slots.front().quota_blocks_by_class->has(remainingScope));
+    }
   }
 
   CodexCapacityRoutingObservationInput observationInputOf(double slot, const std::string& accountId) {

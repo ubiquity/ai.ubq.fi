@@ -20,6 +20,7 @@
 //        src/codex/banked_reset_pool.cpp src/codex/banked_reset_submission.cpp src/codex/banked_reset_claim.cpp
 // Port of tests/codex-banked-reset-capacity-recovery.test.ts; all 12 original cases, no deferred cases.
 #include "tests/helpers/codex_account_routing_harness.hpp"
+#include "uos/codex/banked_reset_claim.hpp"
 #include "uos/codex/capacity_routing.hpp"
 #include "uos/codex/overage_settings.hpp"
 #include "uos/config.hpp"
@@ -38,6 +39,7 @@ namespace {
   namespace json = uos::json;
   namespace routing = uos::codex::routing_state;
   namespace capacity = uos::codex::capacity_routing;
+  namespace banked = uos::codex::banked_reset;
   namespace overage = uos::codex::overage_settings;
   using namespace uos::tests::helpers::codex_account_routing_harness;
   using routing::RoutingAccount;
@@ -179,6 +181,48 @@ ASYNC_TEST("a newer capacity sample reconciles both sibling blocks so the full c
   STRONG(selected, authPool, now + 3); ASSERT_EQ(kind(selected), "quota_blocked"); const auto& blocked = std::get<routing::RouteSelectionQuotaBlocked>(selected);
   EXPECT(blocked.fullCohortExhausted); EXPECT_EQ(blocked.blockedAccounts.size(), std::size_t{2});
   for (const auto& account : blocked.blockedAccounts) { AWAIT(fence, getCodexQuotaBlockFence(account, newDeadline)); EXPECT(fence); }
+}
+
+ASYNC_TEST("a corrected weekly deadline distinguishes an unsubmitted inventory rejection from a submitted record") {
+  for (const bool submitted : {false, true}) {
+    Fixture fixture;
+    const double now = 1'700'000'000'000;
+    const double priorDeadline = now + 60'000;
+    const double weeklyDeadline = now + 7 * DAY_MS;
+    const auto auth = harnessAuth(now);
+    const auto kv = fixture.kv;
+    RUN(seedAuthPool(kv, auth, now));
+    RUN(seedRoutingState(kv, auth, now, exhaustedSlot(priorDeadline, now - 1, false)));
+    AWAIT(hash, routingAccountIdHash(auth.account_id));
+    AWAIT(credential, codexCredentialVersion(auth));
+    const auto account = accountOf(auth, 0, hash, credential);
+    const auto generation = state(kv).slots[0].generation;
+    const banked::CodexBankedResetCandidate previous{
+      .accountId = auth.account_id, .credentialVersion = credential, .quotaResetAtMs = priorDeadline,
+      .routingGeneration = generation, .fences = {}, .requestId = std::nullopt};
+    AWAIT(context, uos::codex::banked_reset_claim::makeResetContext(previous, uos::utils::sha256Hex));
+    ASSERT(context);
+    const auto key = banked::codexResetRedemptionKey(context->account.accountIdHash, context->account.quotaGeneration);
+    const uos::types::CodexResetRedemptionRecord record{
+      .v = 1, .account_id_hash = context->account.accountIdHash, .credential_version = context->account.credentialVersion,
+      .quota_generation = context->account.quotaGeneration, .routing_generation = generation, .idempotency_key_hash = context->idempotencyKeyHash,
+      .state = uos::types::CodexResetRedemptionState::rejected, .owner_token = "fixture-owner", .fence = 1,
+      .lease_expires_at_ms = now + 30'000, .provider_receipt_id = std::nullopt, .created_at_ms = now - 3,
+      .updated_at_ms = now - 1, .submitted_at_ms = submitted ? std::optional<double>(now - 2) : std::nullopt,
+      .verified_at_ms = std::nullopt, .last_error_code = "inventory_empty"};
+    const auto storedRecord = json::value_from(record);
+    RUN(kv->set(key, rt::KvValue(storedRecord)));
+    auto sample = capacitySample(0, auth.account_id, now + 1, priorDeadline, 25);
+    sample.windows.secondary = routing::CodexCapacityRoutingWindow{WEEKLY_WINDOW_SECONDS, 100, weeklyDeadline};
+    const std::vector samples{sample};
+    RUN(recordCodexCapacityRoutingObservations(samples, now + 1));
+    AWAIT(observations, capacity::loadCodexCapacityRoutingObservations(singlePool, true));
+    ASSERT_EQ(observations.size(), 1U);
+    AWAIT(reconciled, capacity::reconcileCapacityQuotaBlock(account, observations.front(), now + 2));
+    EXPECT_EQ(reconciled, !submitted);
+    EXPECT_EQ(standardBlock(kv, 0).observed_reset_at_ms, submitted ? priorDeadline : weeklyDeadline);
+    EXPECT(rt::deepEqual(kv->row(key), storedRecord));
+  }
 }
 
 ASYNC_TEST("an older capacity sample cannot replace a newer live quota signal") {

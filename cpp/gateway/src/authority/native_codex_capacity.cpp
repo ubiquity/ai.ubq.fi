@@ -204,8 +204,8 @@ namespace uos::authority::native_codex_capacity {
       if (legacy) consider(*legacy, BlockOrigin::legacy);
       if (model && slot.quota_blocks_by_class) {
         const auto* scoped = slot.quota_blocks_by_class->get(capacityModelScope(model));
-        if (scoped && (!latest || scoped->quota_signal_observed_at_ms > latest->block.quota_signal_observed_at_ms))
-          consider(*scoped, BlockOrigin::model);
+        // A class-wide 429 cannot shorten a separate named quota window.
+        if (scoped) consider(*scoped, BlockOrigin::model);
       }
       return latest;
     }
@@ -638,11 +638,14 @@ namespace uos::authority::native_codex_capacity {
     return next;
   }
 
-  CodexRoutingSlot releaseQuotaClassProbe(const CodexRoutingSlot& slot, std::string_view quotaClassKey, std::optional<std::string_view> model) {
+  CodexRoutingSlot releaseQuotaClassProbe(const CodexRoutingSlot& slot, std::string_view quotaClassKey, std::optional<std::string_view>) {
     const CodexRoutingSlot classAwareSlot = withLegacyQuotaClassMap(slot);
-    const std::optional<CodexQuotaClassBlock> block = quotaBlockForClass(classAwareSlot, quotaClassKey, model);
-    const std::optional<CodexQuotaClass> key = quotaBlockKeyForClass(classAwareSlot, quotaClassKey, model);
-    CodexRoutingSlot released = withoutQuotaClass(classAwareSlot, key ? std::string_view(*key) : quotaClassKey);
+    const auto claimed = slot.probe_lease ? slot.probe_lease->quota_class.toOptional() : std::nullopt;
+    const auto key = claimed ? *claimed : quotaBlockKeyForClass(classAwareSlot, quotaClassKey).value_or(std::string(quotaClassKey));
+    const auto* block = classAwareSlot.quota_blocks_by_class ? classAwareSlot.quota_blocks_by_class->get(key) : nullptr;
+    const auto legacyBlock = !claimed && !block ? quotaBlockForClass(classAwareSlot, quotaClassKey) : std::nullopt;
+    if (legacyBlock) block = &*legacyBlock;
+    CodexRoutingSlot released = withoutQuotaClass(classAwareSlot, key);
     if (!classAwareSlot.banked_reset_recovery_probe_pending) return released;
     const bool pending = released.banked_reset_recovery_probe_pending;
     released.observed_reset_at_ms = block && block->observed_reset_at_ms ? block->observed_reset_at_ms : slot.observed_reset_at_ms;
@@ -664,6 +667,30 @@ namespace uos::authority::native_codex_capacity {
   bool capacityObservationIsFresh(const CodexCapacityRoutingObservation& observation, double now) {
     return observation.state == "available" && isSafeMs(observation.snapshot_at_ms) && observation.snapshot_at_ms <= now &&
            now - observation.snapshot_at_ms <= CODEX_CAPACITY_ROUTING_MAX_AGE_MS;
+  }
+
+  bool hasModelScopedQuotaBlock(const CodexRoutingSlot& slot, std::optional<std::string_view> model) {
+    return model && slot.quota_blocks_by_class && slot.quota_blocks_by_class->has(capacityModelScope(model));
+  }
+
+  std::optional<CodexRoutingSlot> recoverQuotaScopesFromCapacity(const CodexRoutingSlot& slot, const CodexCapacityRoutingObservation& observation,
+                                                                 std::optional<std::string_view> model) {
+    const auto quotaClassKey = quotaClass(model);
+    const auto modelScope = capacityModelScope(model);
+    const auto* namedBlock = slot.quota_blocks_by_class ? slot.quota_blocks_by_class->get(modelScope) : nullptr;
+    const auto classSignal = quotaSignalObservedAtForClass(slot, quotaClassKey);
+    const auto isNewer = [&](const std::optional<double>& signal) { return !signal || *signal < observation.snapshot_at_ms; };
+    const auto classEvidence = namedBlock ? std::nullopt : model;
+    std::optional<CodexRoutingSlot> recovered;
+    if (capacityHasAnyPositiveHeadroom(observation, classEvidence) && isNewer(classSignal)) {
+      const auto key = quotaBlockKeyForClass(slot, quotaClassKey);
+      if (!namedBlock || key) recovered = withoutQuotaClass(slot, key.value_or(quotaClassKey));
+    }
+    if (namedBlock && isNewer(namedBlock->quota_signal_observed_at_ms) && capacityHasAnyPositiveHeadroom(observation, model) &&
+        capacityWindowsForModel(observation, model).front() != &observation.windows) {
+      recovered = withoutQuotaClass(recovered ? *recovered : slot, modelScope);
+    }
+    return recovered;
   }
 
   bool capacityHasCurrentExhaustedWindow(const CodexCapacityRoutingObservation& observation, std::optional<std::string_view> model, double now) {
@@ -801,18 +828,10 @@ namespace uos::authority::native_codex_capacity {
     if (found == nullptr || found->account_id_hash != observation.account_id_hash) return std::nullopt;
     const CodexRoutingSlot& current = *found;
     if (current.capacity_observed_at_ms && observation.snapshot_at_ms < *current.capacity_observed_at_ms) return std::nullopt;
-    const bool fresh = capacityObservationIsFresh(observation, now);
-    const bool capacityPositive = fresh && capacityHasAnyPositiveHeadroom(observation, model);
-    const CodexQuotaClass requestedQuotaClass = quotaClass(model);
-    const CodexRoutingSlot classAwareCurrent = withLegacyQuotaClassMap(current);
-    const std::optional<double> classQuotaSignalObservedAtMs = quotaSignalObservedAtForClass(classAwareCurrent, requestedQuotaClass, model);
-    const bool newerQuotaSignal = classQuotaSignalObservedAtMs && *classQuotaSignalObservedAtMs >= observation.snapshot_at_ms;
-    const bool clearCircuit = capacityPositive && !newerQuotaSignal;
-    std::optional<CodexRoutingSlot> capacityClearedSlot;
-    if (clearCircuit) {
-      const std::optional<CodexQuotaClass> key = quotaBlockKeyForClass(classAwareCurrent, requestedQuotaClass, model);
-      capacityClearedSlot = withoutQuotaClass(classAwareCurrent, key ? std::string_view(*key) : std::string_view(requestedQuotaClass));
-    }
+    const auto capacityClearedSlot = capacityObservationIsFresh(observation, now)
+      ? recoverQuotaScopesFromCapacity(withLegacyQuotaClassMap(current), observation, model)
+      : std::nullopt;
+    const bool clearCircuit = capacityClearedSlot.has_value();
     const CodexRoutingSlot nextSlot = capacityObservedSlot(current, capacityClearedSlot ? *capacityClearedSlot : current, observation, clearCircuit);
     // The TS compares every member with `!==`. A cleared circuit always carries the class map
     // and class list withoutQuotaClass rebuilt (new objects); otherwise only the three observed
