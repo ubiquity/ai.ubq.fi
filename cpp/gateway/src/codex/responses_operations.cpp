@@ -759,7 +759,7 @@ namespace uos::codex::responses_operations {
         co_await ensureOverageAllowed(routing.auth.account_id);
         const auto policyRow = co_await kv->get(provider::selection::PROVIDER_SELECTION_KV_KEY, strong);
         const auto policy = provider::selection::normalizeProviderSelection(policyRow.value);
-        if (policyRow.versionstamp && !policy) throw dispatch::CodexActiveAccountFenceError();
+        if (policyRow.versionstamp && !policy) throw OverageCohortChanged();
         std::vector<double> selectedSlots;
         for (std::size_t i = 0; i < currentPool.pool.accounts.size(); ++i) {
           const auto accountHash = co_await provider::selection::codexSubscriptionHash(currentPool.pool.accounts[i].account_id);
@@ -862,8 +862,11 @@ namespace uos::codex::responses_operations {
         if (reselected) break;
         const auto reset = co_await ctx->evaluateBlockedCohortBankedReset();
         if (reset) {
-          auto response = co_await ctx->runPostResetRetry(*reset, ctx->lastResponse);
-          if (response) co_return response;
+          auto response = co_await ctx->runPostResetRetry(*reset, std::nullopt);
+          if (response) {
+            if (ctx->lastResponse) dispatch::cancelResponseBody(*ctx->lastResponse);
+            co_return response;
+          }
           break;
         }
       }
