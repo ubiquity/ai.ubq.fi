@@ -37,10 +37,13 @@
 #include "uos/rt/number.hpp"
 #include "uos/rt/test_async.hpp"
 
+#include <cstddef>
 #include <functional>
+#include <initializer_list>
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -226,10 +229,48 @@ namespace {
     return rt::KvValue(value);
   }
 
+  void insertExpectedReads(json::array& reads, std::ptrdiff_t offset, std::initializer_list<std::string_view> keys) {
+    for (const auto key : keys) {
+      reads.insert(reads.begin() + offset, json::array{nullptr, json::string(key)});
+      ++offset;
+    }
+  }
+
+  // Extend the historical trace with the C++ live cohort's window and day-budget
+  // reads. The sibling window is also checked when claiming, submitting and renewing.
+  void addLiveCohortFences(json::object& expected, std::string_view name) {
+    if (name != "pool_live" && name != "subscription_disabled_during_inventory_live") return;
+    constexpr std::string_view firstWindow = R"(["uos_ai","codex_reset_redemption","v1","test-hash-c9d0c46d-14","v1:test-hash-2d8c83bc-65"])";
+    constexpr std::string_view secondWindow = R"(["uos_ai","codex_reset_redemption","v1","test-hash-c6d0bfb4-14","v1:test-hash-c0a81c6e-65"])";
+    constexpr std::string_view firstDay = R"(["uos_ai","codex_reset_redemption","account_day","v1","test-hash-c9d0c46d-14","2023-11-14"])";
+    constexpr std::string_view secondDay = R"(["uos_ai","codex_reset_redemption","account_day","v1","test-hash-c6d0bfb4-14","2023-11-14"])";
+    auto& reads = expected.at("gets").as_array();
+    if (name == "pool_live") {
+      insertExpectedReads(reads, 16, {firstWindow, secondWindow, firstDay, secondDay});
+      insertExpectedReads(reads, 24, {firstWindow, secondWindow});
+      insertExpectedReads(reads, 38, {firstWindow});
+      insertExpectedReads(reads, 44, {firstWindow});
+      insertExpectedReads(reads, 63, {firstWindow});
+      auto& checks = expected.at("checks").as_array();
+      auto& claim = checks.at(0).as_array();
+      auto& submit = checks.at(1).as_array();
+      auto& renew = checks.at(2).as_array();
+      claim.insert(claim.begin() + 5, json::string(firstWindow));
+      submit.insert(submit.begin() + 6, json::string(firstWindow));
+      renew.insert(renew.begin() + 5, json::string(firstWindow));
+    } else {
+      insertExpectedReads(reads, 8, {firstWindow, firstDay});
+      insertExpectedReads(reads, 12, {firstWindow});
+    }
+    double readNumber = 1;
+    for (auto& read : reads) read.as_array().at(0) = rt::makeNumber(readNumber++);
+  }
+
   // Compares one scenario's observation with the bun vector of the same name.
   void expectVector(const json::object& actual) {
     const std::string name(std::string_view(actual.at("name").as_string()));
-    const json::value& expected = scenarioVector(name);
+    json::value expected = scenarioVector(name);
+    addLiveCohortFences(expected.as_object(), name);
     if (rt::deepEqual(json::value(actual), expected)) return;
     for (const auto& member : expected.as_object()) {
       const json::value* mine = rt::get(actual, member.key());

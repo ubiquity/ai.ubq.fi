@@ -188,8 +188,8 @@ namespace {
       if (options.codexStreamPreflight) {
         const auto context = options.usageContext ? std::optional(*options.usageContext) : std::nullopt;
         fetchOptions.streamRetry = codex::dispatch::CodexStreamRetryHooks{
-          .preflight = [state = options.codexStreamPreflight, signal = options.signal, context](rt::Response response) {
-            return preflightCodexStream(std::move(response), state, signal, context);
+          .preflight = [state = options.codexStreamPreflight, signal = options.signal, context](rt::Response streamResponse) {
+            return preflightCodexStream(std::move(streamResponse), state, signal, context);
           },
           .discard = [state = options.codexStreamPreflight] { return discardCodexStream(state); },
           .onRetry = [telemetry = context ? context->responseTelemetry : nullptr] { if (telemetry) ++telemetry->inStreamRetries; },

@@ -4,16 +4,37 @@
 #include "uos/authority/native_codex.hpp"
 #include "uos/authority/native_codex_evaluation.hpp"
 #include "uos/codex/capacity_routing.hpp"
+#include "uos/codex/overage_settings.hpp"
+#include "uos/codex/reset_settings.hpp"
 #include "uos/kv.hpp"
 #include "uos/models/codex_models_availability.hpp"
 #include "uos/provider/selection.hpp"
 #include "uos/rt/json.hpp"
 #include "uos/rt/weak.hpp"
+#include "uos/utils.hpp"
 
 #include <exception>
 #include <unordered_set>
 #include <utility>
 #include <variant>
+
+namespace uos::codex::capacity_routing {
+  rt::Task<std::optional<bool>> readQuotaUsageProbePolicy(std::shared_ptr<rt::Kv> kv, std::string accountId) {
+    try {
+      if (!kv) co_return std::nullopt;
+      const auto hash = co_await utils::sha256Hex(std::move(accountId));
+      if (!(co_await overage_settings::readOverageUsage(kv, hash))) co_return false;
+      const auto reset = co_await reset_settings::readCodexResetUsage(kv, hash);
+      if (reset.allowed) co_return true;
+      if (reset.entries.size() == 1 && reset.entries.front().value.isObject()) {
+        const auto& enabled = reset.entries.front().value["enabled"];
+        if (enabled.isBool() && !enabled.asBool()) co_return false;
+      }
+    } catch (...) {
+    }
+    co_return std::nullopt;
+  }
+}
 
 namespace uos::codex::routing_serial {
   namespace {
@@ -216,8 +237,13 @@ namespace uos::codex::routing_serial {
     for (const CodexAuthState& auth : pool.accounts) {
       const CodexRoutingSlotIdentity* mapped = byId.get(auth.account_id);
       if (mapped == nullptr) continue;
-      const CodexRoutingAccountEvaluation evaluated =
+      CodexRoutingAccountEvaluation evaluated =
         routing_evaluation::evaluateCodexRoutingAccount(state, auth, *mapped, model, observationsByAccount, now, unavailableAccounts);
+      if (evaluated.routedAccount && evaluated.routedAccount->quotaUsageProbeRequired) {
+        const auto kv = co_await capacity_routing::openRoutingKv();
+        const auto policy = co_await capacity_routing::readQuotaUsageProbePolicy(kv, auth.account_id);
+        if (policy == false) evaluated.routedAccount->quotaUsageProbeRequired = false;
+      }
       byAccountId.set(auth.account_id, evaluated);
       routing_evaluation::foldCodexRoutingEvaluation(accumulator, evaluated);
     }

@@ -367,6 +367,103 @@ namespace uos::codex::banked_reset_pool {
       std::string episodeHash;
     };
 
+    struct LivePoolWindow {
+      double slot;
+      bool hasExpiredClaim;
+      banked_reset::CodexBankedResetFence fence;
+    };
+
+    using LivePoolWindows = std::variant<std::vector<LivePoolWindow>, PoolStepOutcome>;
+
+    // Keep every blocked account's window in the submission CAS, including
+    // accounts that cannot be selected. Concurrent callers can see different
+    // inventories, so ranking alone cannot serialize claims on different slots.
+    rt::Task<LivePoolWindows> readLivePoolWindows(std::shared_ptr<rt::Kv> kv, std::vector<ResolvedPoolCandidate> complete,
+                                                  CodexBankedResetDependencies dependencies, double nowMs) {
+      std::vector<LivePoolWindow> windows;
+      try {
+        for (const auto& candidate : complete) {
+          const auto& account = candidate.context.account;
+          auto key = banked_reset::codexResetRedemptionKey(account.accountIdHash, account.quotaGeneration);
+          const auto entry = co_await kv->get(key, strongRead());
+          const auto snapshot = entry.value.toJson();
+          bool hasExpiredClaim = false;
+          if (!entry.value.isNull()) {
+            const auto record = banked_reset::parseCodexResetRedemptionRecord(snapshot);
+            if (!record) co_return PoolStepOutcome{.outcome = poolOutcome("skipped", "redemption_record_invalid")};
+            if (!banked_reset_claim::matchesContext(*record, candidate.context)) {
+              co_return PoolStepOutcome{.outcome = poolOutcome("skipped", "redemption_record_context_mismatch")};
+            }
+            hasExpiredClaim = record->state == ::uos::types::CodexResetRedemptionState::claimed && record->lease_expires_at_ms <= nowMs;
+            if (!hasExpiredClaim) {
+              if (record->state != ::uos::types::CodexResetRedemptionState::verified) {
+                co_return PoolStepOutcome{.outcome = poolOutcome("pending", "transaction_in_progress")};
+              }
+              dependencies.provider = candidate.pool.provider;
+              rt::Promise<CodexBankedResetOutcome> reconciling(
+                banked_reset_submission::reconcileCodexBankedReset(candidate.pool.candidate, std::move(dependencies)));
+              const auto reset = co_await reconciling.wait();
+              if (reset.kind != "verified") {
+                co_return PoolStepOutcome{.outcome = poolOutcome("skipped", "routing_fence_stale")};
+              }
+              co_return PoolStepOutcome{.outcome = poolOutcome(reset.kind, reset.reason, candidate.pool, reset)};
+            }
+          }
+          windows.push_back({candidate.pool.slot, hasExpiredClaim,
+                             {std::move(key), [snapshot](const json::value& current) { return rt::deepEqual(current, snapshot); }}});
+        }
+      } catch (...) {
+        co_return PoolStepOutcome{.outcome = poolOutcome("skipped", "kv_unavailable")};
+      }
+      co_return windows;
+    }
+
+    rt::Task<std::optional<PoolStepOutcome>> filterLivePoolEligibility(std::shared_ptr<rt::Kv> kv, PoolEpisode& episode,
+                                                                      const std::vector<LivePoolWindow>& windows, double nowMs) {
+      const auto day = banked_reset::utcDay(nowMs);
+      if (!day) co_return PoolStepOutcome{.outcome = poolOutcome("skipped", "invalid_clock")};
+      std::vector<ResolvedPoolCandidate> eligible;
+      std::optional<CodexBankedResetPoolCandidate> firstCapped;
+      try {
+        for (const auto& candidate : episode.eligible) {
+          const auto window = std::find_if(windows.begin(), windows.end(), [&](const auto& item) { return item.slot == candidate.pool.slot; });
+          if (window == windows.end()) co_return PoolStepOutcome{.outcome = poolOutcome("skipped", "full_pool_missing")};
+          if (window->hasExpiredClaim) continue;
+          const auto key = banked_reset::codexResetAccountDailyKey(candidate.context.account.accountIdHash, *day);
+          const auto entry = co_await kv->get(key, strongRead());
+          if (!entry.value.isNull()) {
+            const auto budget = banked_reset::parseAccountDayRecord(rt::storedJsonView(entry.value, STORED_JSON_VIEW_OPTIONS), *day);
+            if (!budget) co_return PoolStepOutcome{.outcome = poolOutcome("skipped", "account_day_record_invalid")};
+            if (budget->submission_count >= 1) {
+              if (!firstCapped) firstCapped = candidate.pool;
+              continue;
+            }
+          }
+          eligible.push_back(candidate);
+        }
+      } catch (...) {
+        co_return PoolStepOutcome{.outcome = poolOutcome("skipped", "kv_unavailable")};
+      }
+      if (eligible.empty()) {
+        if (firstCapped) co_return PoolStepOutcome{.outcome = poolOutcome("skipped", "account_day_limit_reached", firstCapped)};
+        co_return PoolStepOutcome{.outcome = poolOutcome("pending", "unsubmitted_transaction")};
+      }
+      episode.eligible = std::move(eligible);
+      co_return std::nullopt;
+    }
+
+    rt::Task<bool> livePoolWindowsCurrent(std::shared_ptr<rt::Kv> kv, const std::vector<LivePoolWindow>& windows) {
+      try {
+        for (const auto& window : windows) {
+          const auto entry = co_await kv->get(window.fence.key, strongRead());
+          if (!window.fence.isCurrent(entry.value.toJson())) co_return false;
+        }
+      } catch (...) {
+        co_return false;
+      }
+      co_return true;
+    }
+
     // One `{ entry, usage }` of preparePoolEpisode's settings reads.
     struct PoolSettings {
       ResolvedPoolCandidate entry;
@@ -409,7 +506,19 @@ namespace uos::codex::banked_reset_pool {
       for (const PoolSettings& setting : settings) {
         if (setting.usage.allowed) eligible.push_back(setting.entry);
       }
-      if (eligible.empty()) co_return PoolStepOutcome{.outcome = poolOutcome("skipped", "usage_disabled")};
+      if (eligible.empty()) {
+        auto outcome = poolOutcome("skipped", "usage_disabled");
+        const bool explicitlyDisabled = std::all_of(settings.begin(), settings.end(), [](const PoolSettings& setting) {
+          if (setting.usage.entries.size() != 1 || !setting.usage.entries.front().value.isObject()) return false;
+          const auto& enabled = setting.usage.entries.front().value["enabled"];
+          return enabled.isBool() && !enabled.asBool();
+        });
+        if (explicitlyDisabled) {
+          rt::Promise<std::optional<std::string>> checking(stalePoolFenceReason(kv, complete));
+          outcome.allCandidatesExplicitlyDisabled = !(co_await checking.wait());
+        }
+        co_return PoolStepOutcome{.outcome = std::move(outcome)};
+      }
       std::vector<rt::KvEntryMaybe<>> settingsEntries;
       for (const PoolSettings& setting : settings) {
         for (const rt::KvEntryMaybe<>& entry : setting.usage.entries) settingsEntries.push_back(entry);
@@ -665,7 +774,7 @@ namespace uos::codex::banked_reset_pool {
 
     /** The live tail: one durable submission attempt for the selected credit. */
     rt::Task<CodexBankedResetPoolOutcome> runLivePoolSubmission(CodexBankedResetDependencies dependencies, std::vector<ResolvedPoolCandidate> complete,
-                                                                PoolSelection selection) {
+                                                                std::vector<LivePoolWindow> windows, PoolSelection selection) {
       if (!selection.selected) co_return poolOutcome("skipped", selection.decisionReason);
       const SelectedPoolCredit& selected = *selection.selected;
       // The durable claim/submission path must fence every blocked account that
@@ -676,6 +785,9 @@ namespace uos::codex::banked_reset_pool {
       for (const ResolvedPoolCandidate& resolved : complete) {
         for (const banked_reset::CodexBankedResetFence& fence : resolved.pool.candidate.fences) fullPoolFences.push_back(fence);
       }
+      for (const auto& window : windows) {
+        if (window.slot != selected.resolved.pool.slot) fullPoolFences.push_back(window.fence);
+      }
       banked_reset::CodexBankedResetCandidate candidate = selected.resolved.pool.candidate;
       candidate.fences = std::move(fullPoolFences);
       candidate.selectedCredit = selected.credit;
@@ -683,6 +795,9 @@ namespace uos::codex::banked_reset_pool {
       selectedDependencies.provider = selected.resolved.pool.provider;
       rt::Promise<CodexBankedResetOutcome> attempting(banked_reset_submission::attemptCodexBankedReset(std::move(candidate), std::move(selectedDependencies)));
       const CodexBankedResetOutcome reset = co_await attempting.wait();
+      // A racing submission can consume the previously available day budget
+      // after selection. Keep the new local claim fenced until the next request.
+      if (reset.reason == "account_day_limit_reached") co_return poolOutcome("pending", "account_day_budget_changed", selected.resolved.pool);
       co_return poolOutcome(reset.kind, reset.reason, selected.resolved.pool, reset);
     }
   }
@@ -705,7 +820,7 @@ namespace uos::codex::banked_reset_pool {
     rt::Promise<std::variant<PoolEpisode, PoolStepOutcome>> preparing(preparePoolEpisode(kv, ordered, hash, *nowMs));
     std::variant<PoolEpisode, PoolStepOutcome> prepared = co_await preparing.wait();
     if (PoolStepOutcome* settled = std::get_if<PoolStepOutcome>(&prepared)) co_return std::move(settled->outcome);
-    const PoolEpisode& episode = std::get<PoolEpisode>(prepared);
+    PoolEpisode& episode = std::get<PoolEpisode>(prepared);
     rt::Promise<std::optional<std::string>> checking(stalePoolFenceReason(kv, episode.complete));
     const std::optional<std::string> staleFence = co_await checking.wait();
     if (rt::truthy(staleFence)) co_return poolOutcome("skipped", *staleFence);
@@ -714,8 +829,28 @@ namespace uos::codex::banked_reset_pool {
     std::optional<CodexBankedResetPoolOutcome> duplicateShadow = co_await deduplicating.wait();
     if (duplicateShadow) co_return std::move(*duplicateShadow);
 
+    std::vector<LivePoolWindow> liveWindows;
+    if (config.mode == "live") {
+      rt::Promise<LivePoolWindows> reading(readLivePoolWindows(kv, episode.complete, dependencies, *nowMs));
+      auto live = co_await reading.wait();
+      if (auto* settled = std::get_if<PoolStepOutcome>(&live)) co_return std::move(settled->outcome);
+      liveWindows = std::move(std::get<std::vector<LivePoolWindow>>(live));
+      rt::Promise<std::optional<PoolStepOutcome>> filtering(filterLivePoolEligibility(kv, episode, liveWindows, *nowMs));
+      if (auto settled = co_await filtering.wait()) {
+        if (!(co_await livePoolWindowsCurrent(kv, liveWindows))) co_return poolOutcome("pending", "redemption_fence_stale");
+        const auto current = readClock(clock);
+        if (!current || banked_reset::utcDay(*current) != banked_reset::utcDay(*nowMs)) co_return poolOutcome("pending", "account_day_budget_changed");
+        co_return std::move(settled->outcome);
+      }
+    }
+
     rt::Promise<std::variant<PoolObserved, PoolStepOutcome>> observing(observePoolInventories(kv, episode.eligible, clock));
     std::variant<PoolObserved, PoolStepOutcome> observed = co_await observing.wait();
+    if (!liveWindows.empty()) {
+      if (!(co_await livePoolWindowsCurrent(kv, liveWindows))) co_return poolOutcome("pending", "redemption_fence_stale");
+      const auto current = readClock(clock);
+      if (!current || banked_reset::utcDay(*current) != banked_reset::utcDay(*nowMs)) co_return poolOutcome("pending", "account_day_budget_changed");
+    }
     if (PoolStepOutcome* settled = std::get_if<PoolStepOutcome>(&observed)) co_return std::move(settled->outcome);
     const PoolObserved& observation = std::get<PoolObserved>(observed);
     rt::Promise<std::variant<PoolSelection, PoolStepOutcome>> selecting(selectPoolCredits(observation.inventoryResults, observation.nowMs, hash));
@@ -732,7 +867,7 @@ namespace uos::codex::banked_reset_pool {
       CodexBankedResetPoolOutcome persisted = co_await persisting.wait();
       co_return persisted;
     }
-    rt::Promise<CodexBankedResetPoolOutcome> submitting(runLivePoolSubmission(dependencies, episode.complete, selection));
+    rt::Promise<CodexBankedResetPoolOutcome> submitting(runLivePoolSubmission(dependencies, episode.complete, std::move(liveWindows), selection));
     CodexBankedResetPoolOutcome submitted = co_await submitting.wait();
     co_return submitted;
   }

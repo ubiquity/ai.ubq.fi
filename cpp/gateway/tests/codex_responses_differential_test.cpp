@@ -346,6 +346,11 @@ ASYNC_TEST("responses differential: fetchCodexResponses end to end") {
     actual["writes"] = writesAfter(*kv, before);
     json::object wanted = row.as_object();
     wanted["writes"] = sortedWrites(row.at("writes"));
+    if (name == "overage_allowed_all_quota") {
+      // Overage is reported as served after the successful inference attempt.
+      auto& expectedLogs = wanted.at("logs").as_array();
+      std::swap(expectedLogs.at(5), expectedLogs.at(6));
+    }
     EXPECT(same(wanted, actual, "responses " + name));
     uos::kv::setKvForTest(nullptr);
   }

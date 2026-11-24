@@ -33,6 +33,9 @@
 // All upstream fetches and credential refreshes use the fixture's synthetic responses; no real credentials are read.
 #include "tests/helpers/responses_conformance_client.hpp"
 #include "tests/helpers/live_relay_harness.hpp"
+#include "uos/codex/capacity_routing.hpp"
+#include "uos/codex/overage_settings.hpp"
+#include "uos/codex/reset_settings.hpp"
 #include "uos/live/calls.hpp"
 #include "uos/handler/serve_handler.hpp"
 #include "uos/handler/index.hpp"
@@ -43,6 +46,7 @@ namespace rt=uos::rt;namespace json=uos::json;namespace harness=uos::tests::help
 namespace {
 namespace wire=uos::runtime::http;
 using uos::tests::helpers::loopback_http::ScopedLoopbackFetch;
+const std::string RESET_PATH = "/backend-api/wham/rate-limit-reset-credits";
 struct HttpFixture;
 HttpFixture* currentFixture=nullptr;
 struct HttpFixture : harness::Fixture {
@@ -51,6 +55,7 @@ struct HttpFixture : harness::Fixture {
   std::string origin,upstreamOrigin;
   std::vector<std::string> methods;
   bool stopped=false;
+  bool routeResetProvider = false;
   rt::Headers lastIncomingHeaders;
   HttpFixture(){currentFixture=this;}
   ~HttpFixture(){currentFixture=nullptr;}
@@ -70,9 +75,11 @@ struct HttpFixture : harness::Fixture {
     });
     const auto upstreamAddress=co_await upstream->ready.wait();upstreamOrigin="http://127.0.0.1:"+rt::numberToString(upstreamAddress.port);
     live::upstream::setLiveUpstreamBasesForTest({.callsBaseUrl=upstreamOrigin});
-    fetch.reset();fetch=std::make_unique<rt::GlobalFetchOverride>(rt::Fetch([refreshUrl](rt::RequestInfo input,rt::RequestInit init)->rt::Task<rt::Response>{
+    fetch.reset();fetch=std::make_unique<rt::GlobalFetchOverride>(rt::Fetch([this, refreshUrl](rt::RequestInfo input,rt::RequestInit init)->rt::Task<rt::Response>{
       std::string url;if(const auto* text=std::get_if<std::string>(&input))url=*text;else if(const auto* value=std::get_if<rt::URL>(&input))url=value->href();else url=std::get<rt::Request>(input).url();
       if(url==uos::codex::auth::CODEX_REFRESH_TOKEN_URL)url=refreshUrl;
+      if (routeResetProvider && (url == "https://chatgpt.com" + RESET_PATH || url == "https://chatgpt.com" + RESET_PATH + "/consume"))
+        url = upstreamOrigin + rt::URL(url).pathname();
       if(rt::URL(url).hostname()!="127.0.0.1")throw rt::JsError("Unmapped external URL refused by loopback HTTP fixture");
       auto responseTask=rt::defaultFetch()(url,init);auto response=co_await std::move(responseTask);co_return response;
     }));
@@ -94,6 +101,21 @@ struct HttpFixture : harness::Fixture {
 };
 rt::Task<rt::Response> create(rt::Request req){ASSERT(currentFixture);auto task=currentFixture->request(req);auto response=co_await std::move(task);co_return response;}
 rt::Task<json::value> errorOf(rt::Response response){auto task=response.json();const auto value=co_await std::move(task);co_return *rt::get(value,"error");}
+
+rt::Task<void> seedWeeklyCapacity(const HttpFixture& fixture, std::string accountId, double slot, bool allowOverage) {
+  namespace codex = uos::codex;
+  const auto hash = co_await uos::utils::sha256Hex(accountId);
+  co_await codex::overage_settings::writeOverageUsage(fixture.kv, hash, allowOverage);
+  codex::overage_settings::resetOverageUsageCacheForTest();
+  const double now = rt::dateNow();
+  const codex::routing_state::CodexCapacityRoutingObservationInput weekly{
+    .slot = slot, .account_id = std::move(accountId), .state = "available", .source_observed_at_ms = now, .snapshot_at_ms = now,
+    .windows = {codex::routing_state::CodexCapacityRoutingWindow{18'000, 24, now + 3'600'000},
+                codex::routing_state::CodexCapacityRoutingWindow{604'800, 100, now + 6 * 86'400'000}},
+  };
+  const std::vector observations{weekly};
+  co_await codex::capacity_routing::recordCodexCapacityRoutingObservations(observations, now);
+}
 }
 ASYNC_TEST("POST /v1/live answers 413 for an oversize body with a declared Content-Length"){
   HttpFixture fixture;auto seed=fixture.seed();co_await std::move(seed);
@@ -151,6 +173,84 @@ ASYNC_TEST("POST /v1/live fails closed when the selected account disappears whil
   HttpFixture fixture;const std::vector<uos::types::CodexAuthState> accounts{harness::expiredCodexAccount(std::string(harness::ACCOUNT_A)),harness::codexAccount(std::string(harness::ACCOUNT_B))};auto seed=fixture.setAuthPool(accounts);co_await std::move(seed);
   fixture.refresh=[&fixture](std::string)->rt::Task<rt::Response>{const std::vector<uos::types::CodexAuthState> remaining{harness::codexAccount(std::string(harness::ACCOUNT_B))};auto task=fixture.setAuthPool(remaining);co_await std::move(task);co_return rt::Response::json(json::object{{"access_token","replacement"},{"refresh_token","replacement-refresh"}});};
   auto task=create(harness::callRequest());auto response=co_await std::move(task);EXPECT_EQ(response.status(),503);auto errorTask=errorOf(response);const auto error=co_await std::move(errorTask);EXPECT_EQ(rt::getString(error,"code"),std::optional<std::string_view>("codex_auth_missing"));EXPECT_EQ(fixture.calls.size(),0U);EXPECT_EQ(fixture.refreshTokens.size(),1U);auto settle=fixture.close();co_await std::move(settle);
+}
+
+ASYNC_TEST("POST /v1/live honors explicit reset opt-out and independently checks overage consent") {
+  namespace codex = uos::codex;
+  for (const bool allowOverage : {false, true}) {
+    HttpFixture fixture;
+    const std::string accountId(harness::ACCOUNT_A);
+    std::vector accounts{harness::codexAccount(accountId)};
+    co_await fixture.setAuthPool(std::move(accounts));
+    const auto hash = co_await uos::utils::sha256Hex(accountId);
+    const rt::KvValue resetConsent(json::object{{"enabled", false}});
+    co_await fixture.kv->set(codex::reset_settings::codexResetUsageKey(hash), resetConsent);
+    co_await seedWeeklyCapacity(fixture, accountId, 0, allowOverage);
+
+    const auto response = co_await create(harness::callRequest());
+    EXPECT_EQ(response.status(), allowOverage ? 201 : 429);
+    EXPECT_EQ(fixture.calls.size(), allowOverage ? 1U : 0U);
+    if (allowOverage && !fixture.calls.empty()) {
+      EXPECT_EQ(rt::URL(fixture.calls.front().url).pathname(), "/realtime/calls");
+      EXPECT_EQ(fixture.calls.front().headers.get("chatgpt-account-id"), std::optional<std::string>(accountId));
+      EXPECT_EQ(response.headers().get("location"), std::optional<std::string>("/v1/live/" + std::string(harness::CALL_ID)));
+    }
+    co_await fixture.close();
+  }
+}
+
+ASYNC_TEST("POST /v1/live consumes one weekly reset before dispatching the actual call") {
+  HttpFixture fixture;
+  fixture.routeResetProvider = true;
+  const std::string accountId(harness::ACCOUNT_A);
+  std::vector accounts{harness::codexAccount(accountId)};
+  co_await fixture.setAuthPool(std::move(accounts));
+  co_await seedWeeklyCapacity(fixture, accountId, 0, true);
+  fixture.responder = [](harness::UpstreamCall call) {
+    const auto path = rt::URL(call.url).pathname();
+    if (path == RESET_PATH) {
+      const json::object credit{{"id", "live-weekly-credit"}, {"status", "available"}, {"reset_type", "codex_rate_limits"}, {"expires_at", nullptr}};
+      return rt::fulfilledTask(rt::Response::json(json::object{{"available_count", 1}, {"credits", json::array{credit}}}));
+    }
+    if (path == RESET_PATH + "/consume")
+      return rt::fulfilledTask(rt::Response::json(json::object{{"code", "reset"}, {"windows_reset", 1}}));
+    return rt::fulfilledTask(harness::acceptedAnswer());
+  };
+  const auto response = co_await create(harness::callRequest());
+  EXPECT_EQ(response.status(), 201);
+  EXPECT_EQ(response.headers().get("location"), std::optional<std::string>("/v1/live/" + std::string(harness::CALL_ID)));
+  const std::vector<std::string> methods{"GET", "POST", "POST"};
+  EXPECT_EQ(fixture.methods, methods);
+  std::vector<std::string> paths;
+  for (const auto& call : fixture.calls) {
+    paths.push_back(rt::URL(call.url).pathname());
+    EXPECT_EQ(call.headers.get("chatgpt-account-id"), std::optional<std::string>(accountId));
+  }
+  const std::vector<std::string> expected{RESET_PATH, RESET_PATH + "/consume", "/realtime/calls"};
+  EXPECT_EQ(paths, expected);
+  co_await fixture.close();
+}
+
+ASYNC_TEST("POST /v1/live retries a current invalid account with consented overage without redeeming a reset") {
+  HttpFixture fixture;
+  fixture.routeResetProvider = true;
+  const std::string exhausted(harness::ACCOUNT_A);
+  const std::string invalid(harness::ACCOUNT_B);
+  std::vector accounts{harness::codexAccount(invalid), harness::codexAccount(exhausted)};
+  co_await fixture.setAuthPool(std::move(accounts));
+  co_await seedWeeklyCapacity(fixture, exhausted, 1, true);
+  fixture.responder = [invalid](harness::UpstreamCall call) {
+    if (call.headers.get("chatgpt-account-id") == invalid)
+      return rt::fulfilledTask(rt::Response("stale realtime credentials", rt::ResponseInit{.status = 401}));
+    return rt::fulfilledTask(harness::acceptedAnswer());
+  };
+  const auto response = co_await create(harness::callRequest());
+  EXPECT_EQ(response.status(), 201);
+  ASSERT(fixture.calls.size() == 2);
+  EXPECT_EQ(fixture.calls[0].headers.get("chatgpt-account-id"), std::optional<std::string>(invalid));
+  EXPECT_EQ(fixture.calls[1].headers.get("chatgpt-account-id"), std::optional<std::string>(exhausted));
+  for (const auto& call : fixture.calls) EXPECT_EQ(rt::URL(call.url).pathname(), "/realtime/calls");
+  co_await fixture.close();
 }
 
 ASYNC_TEST("live call handling matches the Bun differential response bytes"){

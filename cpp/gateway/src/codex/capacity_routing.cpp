@@ -1,6 +1,7 @@
 #include "uos/codex/capacity_routing.hpp"
 
 #include "uos/authority/native_codex_evaluation.hpp"
+#include "uos/codex/banked_reset.hpp"
 #include "uos/kv.hpp"
 #include "uos/provider/capacity_contract.hpp"
 #include "uos/rt/clock.hpp"
@@ -9,6 +10,7 @@
 #include "uos/rt/string.hpp"
 #include "uos/utils.hpp"
 
+#include <algorithm>
 #include <exception>
 #include <tuple>
 #include <utility>
@@ -414,26 +416,81 @@ namespace uos::codex::capacity_routing {
     co_return applyLocally();
   }
 
-  /**
-   * Persist a class block from one fresh exhausted capacity observation. The
-   * pure transition owns validity and identity rules; this wrapper serializes it
-   * through the same compare-and-set path as every other routing mutation.
-   */
+  namespace {
+    std::vector<double> previousResetDeadlines(const CodexRoutingSlot& slot, double resetAtMs) {
+      std::vector<double> deadlines;
+      const auto addDeadline = [&](const std::optional<double>& deadline, bool stable) {
+        if (deadline && stable && *deadline != resetAtMs && std::find(deadlines.begin(), deadlines.end(), *deadline) == deadlines.end())
+          deadlines.push_back(*deadline);
+      };
+      addDeadline(slot.observed_reset_at_ms, slot.observed_reset_at_is_stable);
+      if (slot.quota_blocks_by_class) {
+        for (const auto& [key, block] : *slot.quota_blocks_by_class) {
+          addDeadline(block.observed_reset_at_ms, block.observed_reset_at_is_stable);
+        }
+      }
+      return deadlines;
+    }
+
+    bool resetWasNeverSubmitted(const rt::KvEntryMaybe<>& entry, const std::string& accountHash, const std::string& generation) {
+      if (entry.value.isNull()) return true;
+      const json::value record = entry.value.toJson();
+      const auto* submitted = rt::get(record, "submitted_at_ms");
+      return rt::getNumber(record, "v") == 1 && rt::getString(record, "account_id_hash") == accountHash &&
+             rt::getString(record, "quota_generation") == generation && rt::getString(record, "state") == "claimed" &&
+             submitted != nullptr && submitted->is_null();
+    }
+
+    rt::Task<bool> checkPreviousResetWindows(std::shared_ptr<rt::Kv> kv, rt::AtomicOperation& operation,
+                                             const std::string& accountId, const std::vector<double>& deadlines) {
+      if (deadlines.empty()) co_return true;
+      if (accountId.empty()) co_return false;
+      const auto accountHash = co_await utils::sha256Hex(accountId);
+      for (const double deadline : deadlines) {
+        const auto hash = co_await utils::sha256Hex(banked_reset::codexResetQuotaGenerationInput(accountHash, deadline));
+        const std::string generation = "v1:" + hash;
+        auto reading = kv->get(banked_reset::codexResetRedemptionKey(accountHash, generation), strongRead());
+        const auto entry = co_await std::move(reading);
+        if (!resetWasNeverSubmitted(entry, accountHash, generation)) co_return false;
+        operation.check(entry);
+      }
+      co_return true;
+    }
+  }
+
   rt::Task<bool> reconcileCapacityQuotaBlock(RoutingAccount account, CodexCapacityRoutingObservation observation) {
     return reconcileCapacityQuotaBlock(std::move(account), std::move(observation), rt::dateNow());
   }
 
   rt::Task<bool> reconcileCapacityQuotaBlock(RoutingAccount account, CodexCapacityRoutingObservation observation, double now) {
-    bool changed = false;
-    CodexRoutingTransform transform = [&changed, &account, &observation, now](const CodexAccountRoutingState& state) -> std::optional<CodexAccountRoutingState> {
-      std::optional<CodexAccountRoutingState> next =
-        capacityDecisions::applyCapacityQuotaBlock(state, nativeCodexAccountMetadata(account), observation, now, rt::dateNow());
-      if (next) changed = true;
-      return next;
-    };
-    rt::Promise<std::optional<CodexAccountRoutingState>> updating(updateRoutingState(std::move(transform)));
-    co_await updating.wait();
-    co_return changed;
+    const auto metadata = nativeCodexAccountMetadata(account);
+    const auto resetAtMs = capacityDecisions::capacityExhaustedResetAtMs(observation, capacityDecisions::requestedModelView(account.requestedModel), now);
+    if (!resetAtMs) co_return false;
+    try {
+      const auto kv = co_await openRoutingKv();
+      if (!kv) co_return false;
+      for (int attempt = 0; attempt < 3; ++attempt) {
+        auto reading = kv->get(CODEX_ACCOUNT_ROUTING_KV_KEY, strongRead());
+        const auto entry = co_await std::move(reading);
+        const auto durable = parseCodexAccountRoutingState(entry.value.toJson());
+        if (!durable) co_return false;
+        const auto current = capacityDecisions::withoutLegacyTimeoutCircuits(*durable);
+        const auto next = capacityDecisions::applyCapacityQuotaBlock(current, metadata, observation, now, rt::dateNow());
+        if (!next) co_return false;
+        const auto slot = capacityDecisions::slotFor(current, metadata);
+        const auto deadlines = previousResetDeadlines(slot, *resetAtMs);
+        auto operation = kv->atomic();
+        operation->check(entry);
+        // An upgrade may correct an earlier primary deadline to the weekly
+        // deadline for the same provider spend, even after the first date passed.
+        // The routing write and old ledger revision must move together.
+        if (!(co_await checkPreviousResetWindows(kv, *operation, account.auth.account_id, deadlines))) co_return false;
+        const auto committed = co_await commitRoutingCandidate(std::move(operation), *next);
+        if (committed) co_return true;
+      }
+    } catch (...) {
+    }
+    co_return false;
   }
 
   /** Routing state reads and writes fail closed when the KV binding itself is unavailable. */
@@ -445,6 +502,11 @@ namespace uos::codex::capacity_routing {
     } catch (...) {
     }
     co_return nullptr;
+  }
+
+  void setCapacityRoutingObservationCache(std::vector<CodexCapacityRoutingObservation> observations, double now) {
+    cachedCapacityObservations = std::move(observations);
+    cachedCapacityObservationsLoadedAtMs = now;
   }
 
   rt::Task<std::vector<CodexCapacityRoutingObservation>> loadCodexCapacityRoutingObservations(::uos::types::CodexAuthPoolState pool, bool forceKv) {

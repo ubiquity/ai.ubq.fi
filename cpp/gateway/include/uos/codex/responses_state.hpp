@@ -75,8 +75,8 @@ namespace uos::codex::responses_state {
 
   struct PendingOverageFallback {
     std::string reason;
-    auth::CodexDispatchAccountEntry accountEntry;
-    routing_state::RoutingAccount routing;
+    routing_state::CodexBlockedRoutingAccount routing;
+    routing_state::CodexActiveAccountSnapshot activeSnapshot;
   };
 
   struct EvaluatedBlockedReset {
@@ -361,6 +361,7 @@ namespace uos::codex::responses_state {
     TransportState transportState;
     // `Set<number>` of 0-based slots.
     rt::OrderedSet<double> refreshedSlots;
+    rt::OrderedSet<std::string> quotaUsageProbeAccounts;
     RetryState retryState;
     // `Map<number, CodexBankedResetCandidate>` keyed by 0-based slot, in insertion order.
     rt::OrderedMap<double, dispatch::CodexBankedResetCandidate> bankedResetCandidates;

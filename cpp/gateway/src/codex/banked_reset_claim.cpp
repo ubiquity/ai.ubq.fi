@@ -85,8 +85,7 @@ namespace uos::codex::banked_reset_claim {
       rt::Promise<std::string> hashingCredentialVersion(hash(credentialVersionInput));
       const std::string credentialVersionHash = co_await hashingCredentialVersion.wait();
       const std::string credentialVersion = "v1:" + credentialVersionHash;
-      const std::string quotaResetAtText = rt::numberToString(candidate.quotaResetAtMs);
-      const std::string quotaGenerationInput = joinWithNul({"uos_ai", "codex_reset_generation", accountIdHash, quotaResetAtText});
+      const std::string quotaGenerationInput = banked_reset::codexResetQuotaGenerationInput(accountIdHash, candidate.quotaResetAtMs);
       rt::Promise<std::string> hashingQuotaGeneration(hash(quotaGenerationInput));
       const std::string quotaGenerationHash = co_await hashingQuotaGeneration.wait();
       const std::string quotaGeneration = "v1:" + quotaGenerationHash;

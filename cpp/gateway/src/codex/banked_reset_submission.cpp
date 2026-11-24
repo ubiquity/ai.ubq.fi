@@ -710,7 +710,12 @@ namespace uos::codex::banked_reset_submission {
         co_return resolved;
       }
       if (existing->state != CodexResetRedemptionState::claimed) co_return StepAllow{.allowNewSubmission = false};
-      if (reconcileOnly) co_return StepOutcome{.outcome = outcome("pending", "unsubmitted_transaction", context, existing)};
+      if (reconcileOnly) {
+        const auto nowMs = readClock(dependencies.now ? dependencies.now : rt::globalDateNow());
+        if (!nowMs) co_return StepOutcome{.outcome = outcome("pending", "invalid_clock", context, existing)};
+        const std::string reason = existing->lease_expires_at_ms <= *nowMs ? "unsubmitted_transaction" : "transaction_in_progress";
+        co_return StepOutcome{.outcome = outcome("pending", reason, context, existing)};
+      }
       const std::optional<std::string> reason = banked_reset_claim::liveSubmissionPolicyReason(dependencies, isManual(candidate));
       if (rt::truthy(reason)) co_return StepOutcome{.outcome = outcome("pending", newSubmissionReason(reason), context, existing)};
       co_return StepAllow{.allowNewSubmission = true};

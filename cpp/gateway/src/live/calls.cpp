@@ -4,7 +4,10 @@
 #include "uos/codex/account_routing.hpp"
 #include "uos/codex/auth.hpp"
 #include "uos/codex/auth_refresh.hpp"
+#include "uos/codex/capacity_routing.hpp"
 #include "uos/codex/dispatch.hpp"
+#include "uos/codex/overage_settings.hpp"
+#include "uos/codex/responses_operations.hpp"
 #include "uos/codex/routing_mutations.hpp"
 #include "uos/codex/routing_state.hpp"
 #include "uos/http.hpp"
@@ -91,7 +94,8 @@ namespace uos::live::calls {
         return codex::dispatch::routingErrorResponse(429, "Codex subscription capacity is exhausted for realtime voice; retry after the reported reset.", std::string(codex::auth::CODEX_QUOTA_BLOCKED_ERROR_CODE), blocked->retryAtMs);
       return codex::dispatch::routingErrorResponse(503, "Codex routing state is temporarily unavailable; retry the request.", "codex_auth_missing");
     }
-    using LiveCallAccountSelection = std::variant<codex::routing_state::RoutingAccount, rt::Response>;
+    using QuotaBlocked = codex::routing_state::RouteSelectionQuotaBlocked;
+    using LiveCallAccountSelection = std::variant<codex::routing_state::RoutingAccount, QuotaBlocked, rt::Response>;
     rt::Task<LiveCallAccountSelection> selectLiveCallAccount(rt::OrderedSet<std::string> attemptedAccountIds, std::optional<std::string> model) {
       std::optional<::uos::types::CodexAuthPoolState> pool; rt::Reason failure;
       try {
@@ -105,6 +109,7 @@ namespace uos::live::calls {
           }
         }
         pool = entry.pool;
+        co_await codex::overage_settings::loadOverageUsageSettings(*pool);
       }
       catch (...) { failure = std::current_exception(); }
       if (failure) {
@@ -126,14 +131,30 @@ namespace uos::live::calls {
         for (const auto& candidate : eligible->accounts) if (!attemptedAccountIds.has(candidate.auth.account_id)) co_return candidate;
         co_return codex::dispatch::routingErrorResponse(503, "Codex routing state exposed no account for this realtime call; retry the request.", "codex_auth_missing");
       }
+      if (const auto* blocked = std::get_if<QuotaBlocked>(&selection)) co_return *blocked;
       co_return liveRoutingFailureResponse(selection);
     }
     struct LiveCallAttempt { std::string accountId; codex::routing_state::RoutingAccount routing; ::uos::types::CodexAuthState auth; };
-    using LiveCallAttemptResult = std::variant<LiveCallAttempt, rt::Response>;
-    rt::Task<LiveCallAttemptResult> resolveLiveCallAttempt(rt::OrderedSet<std::string> attemptedAccountIds, std::optional<std::string> model) {
+    using LiveCallAttemptResult = std::variant<LiveCallAttempt, QuotaBlocked, rt::Response>;
+    rt::Task<LiveCallAttemptResult> resolveLiveCallAttempt(rt::OrderedSet<std::string> attemptedAccountIds, std::optional<std::string> model, rt::AbortSignal signal) {
       auto task = selectLiveCallAccount(attemptedAccountIds, model); rt::Promise<LiveCallAccountSelection> pending(std::move(task)); auto selection = co_await pending.wait();
+      if (auto* routing = std::get_if<codex::routing_state::RoutingAccount>(&selection); routing && routing->quotaUsageProbeRequired) {
+        const auto pool = co_await codex::auth::getAuthPoolEntry(true, true);
+        const auto claimed = co_await codex::routing_mutations::claimCodexRoutingProbe(pool.pool, *routing);
+        if (claimed) {
+          try {
+            if (co_await codex::capacity_routing::refreshCodexQuotaUsage(*claimed, signal) == codex::capacity_routing::QuotaUsageProbeResult::refreshed)
+              selection = co_await selectLiveCallAccount(attemptedAccountIds, model);
+          } catch (...) {
+          }
+          co_await codex::capacity_routing::releaseCodexQuotaUsageProbe(*claimed);
+        }
+      }
       if (const auto* response = std::get_if<rt::Response>(&selection)) co_return *response;
+      if (const auto* blocked = std::get_if<QuotaBlocked>(&selection)) co_return *blocked;
       const auto account = std::get<codex::routing_state::RoutingAccount>(selection); const auto accountId = account.auth.account_id;
+      if (account.quotaUsageProbeRequired)
+        co_return codex::dispatch::routingErrorResponse(429, "Codex capacity is temporarily unavailable; retry the request.", "codex_capacity_unavailable");
       rt::Reason failure;
       try {
         rt::Promise<codex::auth::CodexAuthAccountEntry> currentPending(codex::auth_refresh::getCurrentAccountEntry(accountId, true)); auto current = co_await currentPending.wait();
@@ -175,19 +196,31 @@ namespace uos::live::calls {
     const auto& parts = std::get<LiveCallCreateParts>(parsed); const auto serializedBody = rt::jsonStringify(json::object{{"sdp", parts.sdp}, {"session", parts.session}});
     const auto headers = upstream::liveCallsUpstreamHeaders(req); const auto model = utils::getString(rt::get(parts.session, "model"));
     rt::OrderedSet<std::string> attemptedAccountIds; std::optional<rt::Response> captured;
+    bool recoveryAttempted = false;
     for (int attempt = 1; attempt <= LIVE_CALL_MAX_UPSTREAM_ATTEMPTS; ++attempt) {
-      auto task = resolveLiveCallAttempt(attemptedAccountIds, model); rt::Promise<LiveCallAttemptResult> resolvedPending(std::move(task)); auto resolved = co_await resolvedPending.wait();
+      auto task = resolveLiveCallAttempt(attemptedAccountIds, model, req.signal()); rt::Promise<LiveCallAttemptResult> resolvedPending(std::move(task)); auto resolved = co_await resolvedPending.wait();
       if (const auto* response = std::get_if<rt::Response>(&resolved)) co_return captured.value_or(*response);
-      const auto account = std::get<LiveCallAttempt>(resolved); attemptedAccountIds.add(account.accountId);
+      std::optional<LiveCallAttempt> dispatched;
       std::optional<rt::Response> upstreamResponse; rt::Reason failure;
       try {
-        auto fetch = codex::dispatch::fetchCodexResponseWithAuth(account.auth, upstream::liveCallsUrl(), serializedBody, headers, req.signal()); rt::Promise<rt::Response> pending(std::move(fetch));
-        upstreamResponse = co_await pending.wait();
+        if (const auto* blocked = std::get_if<QuotaBlocked>(&resolved)) {
+          if (std::exchange(recoveryAttempted, true)) co_return captured.value_or(liveRoutingFailureResponse(*blocked));
+          auto recovery = codex::responses_operations::recoverBlockedSubscription({upstream::liveCallsUrl(), serializedBody, headers, model, req.signal(), attemptedAccountIds});
+          const auto recovered = co_await std::move(recovery);
+          if (!recovered) co_return captured.value_or(liveRoutingFailureResponse(*blocked));
+          dispatched = LiveCallAttempt{recovered->routing.auth.account_id, recovered->routing, recovered->routing.auth};
+          upstreamResponse = recovered->response;
+        } else {
+          dispatched = std::get<LiveCallAttempt>(resolved);
+          upstreamResponse = co_await codex::dispatch::fetchCodexResponseWithAuth(dispatched->auth, upstream::liveCallsUrl(), serializedBody, headers, req.signal());
+        }
       } catch (...) { failure = std::current_exception(); }
       if (failure) {
-        rt::Promise<void> recorded(codex::dispatch::recordCodexThrownHealth(account.accountId, failure)); co_await recorded.wait();
+        if (dispatched) co_await codex::dispatch::recordCodexThrownHealth(dispatched->accountId, failure);
         co_return captured.value_or(liveCallDispatchFailureResponse(failure));
       }
+      const auto& account = *dispatched;
+      attemptedAccountIds.add(account.accountId);
       const auto response = *upstreamResponse; const bool credentialFailure = response.status() == 401 || response.status() == 403;
       if (credentialFailure) {
         auto mark = codex::routing_mutations::markCodexCredentialInvalid(account.routing); rt::Promise<void> marked(std::move(mark)); co_await marked.wait();
@@ -201,7 +234,13 @@ namespace uos::live::calls {
       }
       auto record = codex::dispatch::recordCodexResponseHealth(account.accountId, response, account.auth, std::string("success")); rt::Promise<void> recorded(std::move(record)); co_await recorded.wait();
       if (!credentialFailure || attempt == LIVE_CALL_MAX_UPSTREAM_ATTEMPTS) {
-        rt::Promise<rt::Response> relay(relayLiveCallResponse(response, account.accountId, principal)); auto result = co_await relay.wait(); co_return result;
+        auto result = co_await relayLiveCallResponse(response, account.accountId, principal);
+        if (response.ok() && account.routing.probeGeneration) {
+          const auto location = response.headers().get("location");
+          if (location && upstream::parseLiveCallIdFromLocation(*location)) co_await codex::routing_mutations::markCodexSuccess(account.routing);
+          else co_await codex::routing_mutations::releaseCodexRoutingProbe(account.routing);
+        }
+        co_return result;
       }
       rt::Promise<void> transitions(codex::dispatch::awaitPendingCodexProbeTransitions()); co_await transitions.wait();
       rt::Promise<rt::Response> capture(captureLiveCallAttempt(response, req.signal())); captured = co_await capture.wait();
