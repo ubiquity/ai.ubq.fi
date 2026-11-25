@@ -39,6 +39,9 @@ namespace uos::inference_admission {
     double maxQueueWaitMs = 0;
   };
 
+  // Native service LimitNOFILE=4096 provisions these active/queued sockets plus
+  // the HTTP/HTTPS idle pools and runtime headroom; see ops/README.md. Keep the
+  // service budget and its socket fixture in sync if these defaults change.
   inline constexpr InferenceAdmissionLimits DEFAULT_INFERENCE_ADMISSION_LIMITS{512, 128, 5'000};
 
   struct InferenceAdmissionSnapshot {
