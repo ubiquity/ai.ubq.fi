@@ -89,9 +89,10 @@ namespace uos::provider::presentation {
      }},
     {"gemini",
      {
-       .label = "Google Antigravity (Gemini)",
+       .label = "Gemini",
        .tier = "subscription",
-       .detail = "Text-only Gemini models through the Antigravity subscription.",
+       .detail =
+         "Antigravity Starter subscription through the official CLI headless command. Gemini 3.8 Flash is text-only; credentials, quota resets, and credit settings remain owned by the signed-in CLI.",
        .endpoints = {"/v1/responses", "/v1/chat/completions"},
        .health_key = "gemini",
      }},

@@ -395,7 +395,9 @@ ASYNC_TEST("admin provider picker reports the roster, catalog counts, and the sa
   json::array rows{
     json::object{{"id", "codex"}, {"model_count", 1}, {"status", "available"}, {"configured", true}, {"subscriptions", json::array{}}},
     json::object{{"id", "claude_code"}, {"model_count", 0}, {"status", "unavailable"}, {"configured", false}},
-    json::object{{"id", "gemini"}, {"model_count", 0}, {"status", "unavailable"}, {"configured", false},
+    json::object{{"id", "gemini"}, {"label", "Google Antigravity (Gemini)"},
+      {"detail", "Text-only Gemini models through the Antigravity subscription."},
+      {"model_count", 0}, {"status", "unavailable"}, {"configured", false},
       {"setup_status", "disabled"}, {"selectable", false}, {"endpoints", json::array{}}},
     json::object{{"id", "surplus"}, {"model_count", 2}, {"status", "available"}, {"configured", true}},
     json::object{{"id", "openlux"}, {"model_count", 0}, {"status", "unavailable"}, {"configured", false}},
@@ -477,9 +479,11 @@ ASYNC_TEST("every selectable provider carries a complete presentation and a heal
     const auto* defined = id == presentation::GATEWAY_PROVIDER_ID ? &presentation::GATEWAY_PROVIDER_PRESENTATION : presentation::PROVIDER_PRESENTATION.get(id);
     EXPECT(defined != nullptr);
     const auto& copy = *defined;
-    EXPECT_EQ(rt::getString(row, "label"), copy.label); EXPECT_EQ(rt::getString(row, "tier"), copy.tier);
+    EXPECT_EQ(rt::getString(row, "label"), id == "gemini" ? "Google Antigravity (Gemini)" : copy.label);
+    EXPECT_EQ(rt::getString(row, "tier"), copy.tier);
     for (const auto& tier : presentation::PROVIDER_TIERS) if (tier.id == copy.tier) EXPECT_EQ(rt::getString(row, "tier_label"), tier.label);
-    EXPECT_EQ(rt::getString(row, "detail"), copy.detail); EXPECT(!copy.detail.empty());
+    EXPECT_EQ(rt::getString(row, "detail"), id == "gemini" ? "Text-only Gemini models through the Antigravity subscription." : copy.detail);
+    EXPECT(!copy.detail.empty());
     EXPECT_JSON(row.at("endpoints"), json::value_from(copy.endpoints), id + " endpoints");
     EXPECT_EQ(rt::getString(row, "health_key"), copy.health_key); EXPECT(healthBody.as_object().contains(copy.health_key));
     EXPECT(std::find(uos::provider::health::RECORD_PROVIDER_IDS.begin(), uos::provider::health::RECORD_PROVIDER_IDS.end(), copy.health_key) != uos::provider::health::RECORD_PROVIDER_IDS.end());
