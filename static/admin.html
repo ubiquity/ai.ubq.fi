@@ -718,13 +718,13 @@
         >
           <article data-card aria-labelledby="card-providers">
             <header>
-              <h2 id="card-providers">Active providers</h2>
+              <h2 id="card-providers">Provider routing</h2>
               <p>
-                Check every provider the gateway may dispatch to. Unchecked providers leave inference routing, and the
+                Choose which providers are allowed by the routing filter. Unchecked providers leave inference routing, and the
                 models only they serve disappear from <code>/v1/models</code>, the public catalog, and the Codex
                 catalog. Each configured Codex subscription is selectable on its own, so the subscription tier can be
-                narrowed to one account. The waterfall order itself never changes. Saving an empty selection removes the
-                filter, so every provider is active again.
+                narrowed to one account. The waterfall order itself never changes.
+                Saving an empty selection removes the filter and allows any configured provider.
               </p>
             </header>
             <div data-card-body>
@@ -749,7 +749,7 @@
                 <div data-provider-filters role="group" aria-label="Filter by tier"></div>
                 <label data-check="only-active">
                   <input id="providers-selection-only-active" type="checkbox" />
-                  <span>Only active</span>
+                  <span>Only checked</span>
                 </label>
               </div>
               <div data-provider-status>
@@ -1133,6 +1133,6 @@
         </button>
       </section>
     </div>
-    <script type="module" src="/admin.js?v=gemini-inference-20261118"></script>
+    <script type="module" src="/admin.js?v=antigravity-routing-20261125"></script>
   </body>
 </html>

@@ -9289,6 +9289,9 @@ let providerRoster = [];
 let providerTiers = [];
 const providerLabelFor = (id) => providerRosterEntry(id)?.label ?? id;
 const providerTierLabelFor = (tier) => providerTiers.find((entry) => entry.id === tier)?.label ?? tier;
+const providerIntegrationUnavailable = (entry) => Boolean(entry.setup_status && entry.setup_status !== "configured");
+const modelProviderFilterEntries = () =>
+  providerRoster.filter((entry) => entry.selectable !== false && !providerIntegrationUnavailable(entry));
 const MODEL_REASONING_ORDER = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
 const MODEL_TOKEN_FORMAT = new Intl.NumberFormat("en-US");
 const MODEL_DATE_FORMAT = new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "2-digit" });
@@ -9471,7 +9474,7 @@ const updateModelProviderFilterChips = () => {
 /** One chip per roster provider, so a provider the panel has never heard of still gets a filter. */
 const renderModelProviderFilters = () => {
   const chips = [buildModelProviderFilterChip("all", "All")];
-  for (const entry of providerRoster) chips.push(buildModelProviderFilterChip(entry.id, providerLabelFor(entry.id)));
+  for (const entry of modelProviderFilterEntries()) chips.push(buildModelProviderFilterChip(entry.id, entry.label));
   modelsProviderFilters.replaceChildren(...chips);
   updateModelProviderFilterChips();
 };
@@ -9949,6 +9952,7 @@ const PROVIDER_ONLY_ACTIVE_STORAGE_KEY = "uos_ai.admin.providers_only_active";
 /** The staged selection and the saved one; the roster itself comes from the API. */
 let providerSelection = new Set();
 let providersSavedSelection = new Set();
+let providersSavedFilterActive = false;
 let providerTierFilter = "all";
 let providersVisibleIds = new Set();
 let providerSelectionLoadedAt = 0;
@@ -9966,11 +9970,8 @@ const setProvidersSelectionBadge = (state, text) => setBadge(providersSelectionB
 
 const providerRosterEntry = (id) => providerRoster.find((entry) => entry.id === id) ?? null;
 
-/** The loaded roster, so a retired provider never reaches the API again. */
-/** Selectable roster ids: rows the server marks display-only never join a selection. */
-const providersRosterIds = () => providerRoster.filter((entry) => entry.selectable !== false).map((entry) => entry.id);
-/** Roster order for rendering, display-only rows included. */
-const providersDisplayOrderIds = () => providerRoster.map((entry) => entry.id);
+const providersRosterIds = () => providerRoster.map((entry) => entry.id);
+const providersSelectableIds = () => providerRoster.filter((entry) => entry.selectable !== false).map((entry) => entry.id);
 
 /** One tier chip per tier the payload lists, plus the unfiltered "all" chip. */
 const buildProviderTierFilterChip = (id, label) => {
@@ -10042,10 +10043,10 @@ const providersMissingSelectionIds = () => {
 
 /**
  * An empty saved selection is the documented "no filter" state, so the console
- * shows every provider as active and never offers to save that empty state
- * back: unchecking everything would silently re-enable everything.
+ * checks the selectable providers. Save still requires a selectable provider
+ * because an empty list allows every provider through the filter.
  */
-const providersEffectiveSelection = (providerIds) => new Set(providerIds.length ? providerIds : providersRosterIds());
+const providersEffectiveSelection = (providerIds) => new Set(providerIds.length ? providerIds : providersSelectableIds());
 
 const providersSelectionFromIds = (ids) =>
   providersEffectiveSelection(Array.isArray(ids) ? ids.filter((id) => typeof id === "string" && id) : []);
@@ -10056,22 +10057,26 @@ const providersHasUnsavedChanges = () =>
 
 const providersSelectionIsEmpty = () => providerSelection.size === 0;
 
-const providersHasActiveTier = () => providersRosterIds().some((id) => isProviderChecked(id));
+const providersHasActiveTier = () => providersSelectableIds().some((id) => isProviderChecked(id));
 
 /**
  * Selected ids in roster order, then the narrowed subscriptions, then staged
- * ids the roster no longer describes, or an empty list when every active
- * provider is checked (which is the no-filter state). A missing id is part of
- * the operator's restriction until "Remove missing" drops it, so it is never
+ * ids the roster no longer describes. An empty list clears the filter, so only
+ * collapse to it when every provider is checked and there are no setup blocks.
+ * A missing id is part of the operator's restriction until "Remove missing" drops it, so it is never
  * silently left out: a selection of only missing ids would otherwise serialize
  * to the empty list and re-enable every provider. The `codex` umbrella already
  * covers every configured subscription, so a missing subscription beside it is
  * not sent, exactly as the API would absorb it.
  */
 const providersSelectedIds = () => {
-  const rosterIds = providersRosterIds();
-  if (providersSelectionIsEmpty() || rosterIds.every((id) => providerSelection.has(id))) return [];
-  const selected = rosterIds.filter((id) => providerSelection.has(id));
+  if (
+    providersSelectionIsEmpty() ||
+    providerRoster.every(
+      (entry) => entry.selectable !== false && !providerIntegrationUnavailable(entry) && providerSelection.has(entry.id)
+    )
+  ) return [];
+  const selected = providersRosterIds().filter((id) => providerSelection.has(id));
   const umbrella = providerSelection.has("codex");
   for (const subscription of providerSubscriptions()) {
     if (providerSubscriptionSelected(subscription.id) && !umbrella) {
@@ -10115,12 +10120,7 @@ const providersVisibleEntries = () => {
   const onlyActive = providersOnlyActiveInput.checked;
   const visible = providerRoster.filter((entry) => {
     if (providerTierFilter !== "all" && entry.tier !== providerTierFilter) return false;
-    if (
-      onlyActive &&
-      !providerSelection.has(entry.id) &&
-      !(entry.id === "codex" && providerCodexSelection().selected > 0)
-    )
-      return false;
+    if (onlyActive && (entry.selectable === false || !isProviderChecked(entry.id))) return false;
     return providersEntryMatchesQuery(entry, query);
   });
   if (providersSortSelect.value === "models") {
@@ -10131,7 +10131,7 @@ const providersVisibleEntries = () => {
   if (providersSortSelect.value === "id") {
     return visible.sort((left, right) => left.label.localeCompare(right.label) || left.id.localeCompare(right.id));
   }
-  const rosterIds = providersDisplayOrderIds();
+  const rosterIds = providersRosterIds();
   return visible.sort((left, right) => rosterIds.indexOf(left.id) - rosterIds.indexOf(right.id));
 };
 
@@ -10152,6 +10152,11 @@ const providerHealthFor = (entry) => {
   };
 };
 
+const providerRoutingText = (id, checked) => {
+  if (checked !== providersSavedSelection.has(id)) return checked ? "Allow routing on save" : "Block routing on save";
+  return checked ? "Routing allowed" : "Routing blocked";
+};
+
 const buildProviderOption = (entry) => {
   const id = entry.id;
   const codex = id === "codex" ? providerCodexSelection() : null;
@@ -10165,8 +10170,7 @@ const buildProviderOption = (entry) => {
 
   const checkbox = document.createElement("input");
   checkbox.type = "checkbox";
-  if (entry.selectable === false) {
-    // Rows the server marks display-only stay informational, never selectable.
+  if (entry.selectable === false && !providersSavedSelection.has(id)) {
     checkbox.disabled = true;
     option.dataset.providerInfo = "true";
   } else {
@@ -10189,7 +10193,8 @@ const buildProviderOption = (entry) => {
   tier.dataset.providerTierBadge = entry.tier;
   tier.textContent = entry.tier_label ?? providerTierLabelFor(entry.tier);
   badges.append(tier);
-  const health = providerHealthFor(entry);
+  const showCatalog = entry.selectable !== false && !providerIntegrationUnavailable(entry);
+  const health = showCatalog ? providerHealthFor(entry) : null;
   if (health) {
     const healthBadge = document.createElement("span");
     healthBadge.dataset.providerHealthBadge = health.state ?? "unknown";
@@ -10203,8 +10208,16 @@ const buildProviderOption = (entry) => {
   detail.textContent = entry.detail;
   body.append(detail);
 
-  const facts = [`${formatNumber(Number(entry.model_count ?? 0))} catalog models`, (entry.endpoints ?? []).join(" · ")];
-  if (entry.status && entry.status !== "available") facts.push("Catalog unavailable");
+  const excluded = entry.setup_status === "configured" && !isProviderChecked(id, providersSavedSelection);
+  const facts = [];
+  if (entry.setup_status === "disabled") facts.push("Gateway integration off");
+  else if (entry.setup_status === "follower") facts.push("Gateway integration off on this follower");
+  else if (entry.setup_status === "cli_unconfigured") facts.push("Antigravity CLI not configured");
+  else if (entry.setup_status === "configured") facts.push("CLI configured");
+  if (showCatalog && !excluded) {
+    facts.push(`${formatNumber(Number(entry.model_count ?? 0))} catalog models`, ...(entry.endpoints ?? []));
+    if (entry.status && entry.status !== "available") facts.push("Catalog unavailable");
+  }
   if (codex?.total) {
     facts.push(
       codex.all
@@ -10214,7 +10227,13 @@ const buildProviderOption = (entry) => {
   } else if (health?.accountCount) facts.push(`${formatNumber(health.accountCount)} accounts`);
   const meta = document.createElement("span");
   meta.dataset.providerMeta = "";
-  meta.textContent = facts.join(" · ");
+  if (entry.setup_status) {
+    const routing = document.createElement("span");
+    routing.dataset.providerRouting = "";
+    routing.textContent = providerRoutingText(id, checked);
+    meta.append(routing, " · ");
+  }
+  meta.append(facts.join(" · "));
   body.append(meta);
 
   option.append(checkbox, body);
@@ -10292,6 +10311,7 @@ const invalidateProviderSelection = (message) => {
   providerTiers = [];
   providerSelection = new Set();
   providersSavedSelection = new Set();
+  providersSavedFilterActive = false;
   providersVisibleIds = new Set();
   providerSelectionLoadedAt = 0;
   providerSelectionSaveError = "";
@@ -10352,35 +10372,39 @@ const providersRoutingWarnings = () => {
 
 const providersHealthWarning = () => {
   const missing = providerRoster.filter(
-    (entry) => isProviderChecked(entry.id) && providerHealthFor(entry)?.configured === false
+    (entry) =>
+      entry.selectable !== false && !providerIntegrationUnavailable(entry) &&
+      isProviderChecked(entry.id) && providerHealthFor(entry)?.configured === false
   );
   if (!missing.length) return "";
   const labels = missing.map((entry) => entry.label ?? entry.id);
   return `${labels.join(", ")} ${
     labels.length === 1 ? "is" : "are"
-  } active without a configured credential, so requests to ${
+  } allowed without a configured credential, so requests to ${
     labels.length === 1 ? "it" : "them"
   } will fail until a key is stored.`;
 };
 
 const updateProvidersStatus = () => {
-  const total = providerRoster.length;
+  const selectableIds = providersSelectableIds();
+  const total = selectableIds.length;
   const selected = providerSelection.size;
   const visibleCount = providersVisibleIds.size;
+  const visibleSelectableIds = selectableIds.filter((id) => providersVisibleIds.has(id));
+  const visibleSelectableCount = visibleSelectableIds.length;
   // A narrowed Codex tier stores subscription ids, not `codex`, so its row is
   // checked without being full: Uncheck shown counts every checked row, while
   // Check shown stays enabled until each shown row is fully selected.
-  const visibleChecked = [...providersVisibleIds].filter((id) => isProviderChecked(id)).length;
-  const visibleFull = [...providersVisibleIds].filter((id) => providerSelection.has(id)).length;
+  const visibleChecked = visibleSelectableIds.filter((id) => isProviderChecked(id)).length;
+  const visibleFull = visibleSelectableIds.filter((id) => providerSelection.has(id)).length;
   const unsaved = providersHasUnsavedChanges();
   const saving = providerSelectionSaving;
   const missingSelectionIds = providersMissingSelectionIds();
-  const filterActive = providersSelectedIds().length > 0;
+  const filterActive = unsaved ? providersSelectedIds().length > 0 : providersSavedFilterActive;
 
   const codex = providerCodexSelection();
-  // A narrowed Codex tier is active, so it belongs in the active list with the
-  // subscription count that is doing the work.
-  const activeLabels = providersRosterIds()
+  // Include a narrowed Codex tier with the selected subscription count.
+  const allowedLabels = selectableIds
     .filter((id) => isProviderChecked(id))
     .map((id) => {
       const label = providerRosterEntry(id)?.label ?? id;
@@ -10390,18 +10414,16 @@ const updateProvidersStatus = () => {
   if (!providerSelectionLoadedAt && total === 0) {
     providersSummary.textContent = "Waiting for the provider roster.";
   } else if (selected === 0) {
-    providersSummary.textContent = "Nothing checked: check the providers that should stay active.";
+    providersSummary.textContent = "Nothing checked. Select the providers the gateway may use.";
   } else if (!filterActive) {
-    providersSummary.textContent = `All ${formatNumber(
-      total
-    )} providers checked: no filter is saved, so every provider is active.`;
+    providersSummary.textContent = "No provider filter is saved. The gateway can route to any configured provider.";
   } else {
     // A restriction naming only missing subscriptions leaves no tier active;
     // the routing warnings below say why.
-    const activeList = activeLabels.length ? `: ${activeLabels.join(", ")}` : "";
+    const allowedList = allowedLabels.length ? ` · ${allowedLabels.join(", ")}` : "";
     providersSummary.textContent =
-      `${formatNumber(activeLabels.length)} of ${formatNumber(total)} providers active${activeList}.` +
-      (visibleCount < total ? ` Showing ${formatNumber(visibleCount)}.` : "");
+      `${formatNumber(allowedLabels.length)} of ${formatNumber(total)} providers allowed${allowedList}.` +
+      (visibleCount < providerRoster.length ? ` Showing ${formatNumber(visibleCount)}.` : "");
   }
 
   const warnings = [providersEmptyWarning(), ...providersRoutingWarnings(), providersHealthWarning()].filter(Boolean);
@@ -10412,22 +10434,22 @@ const updateProvidersStatus = () => {
   else if (providerSelectionSaveError) setProvidersSelectionBadge("bad", providerSelectionSaveError);
   else if (unsaved) setProvidersSelectionBadge("warning", "Unsaved changes");
   else if (providerSelectionLoadedAt) {
-    const activeTiers = providersRosterIds().filter((id) => isProviderChecked(id, providersSavedSelection)).length;
-    setProvidersSelectionBadge("ok", filterActive ? `${formatNumber(activeTiers)} active` : "No filter");
+    const allowedTiers = selectableIds.filter((id) => isProviderChecked(id, providersSavedSelection)).length;
+    setProvidersSelectionBadge("ok", filterActive ? `${formatNumber(allowedTiers)} allowed` : "No filter");
   } else setProvidersSelectionBadge("unknown", "Not loaded");
 
   updateProviderTierFilterChips();
 
-  providersCheckAllBtn.disabled = saving || visibleCount === 0 || visibleFull === visibleCount;
+  providersCheckAllBtn.disabled = saving || visibleSelectableCount === 0 || visibleFull === visibleSelectableCount;
   providersUncheckAllBtn.disabled = saving || visibleChecked === 0;
-  providersInvertBtn.disabled = saving || visibleCount === 0;
+  providersInvertBtn.disabled = saving || visibleSelectableCount === 0;
   const scoped = providersFilterIsActive();
   providersCheckAllBtn.textContent = scoped
-    ? `Check ${formatNumber(visibleCount)} shown`
-    : `Check all ${formatNumber(visibleCount)}`;
+    ? `Check ${formatNumber(visibleSelectableCount)} shown`
+    : `Check all ${formatNumber(visibleSelectableCount)}`;
   providersUncheckAllBtn.textContent = scoped
-    ? `Uncheck ${formatNumber(visibleCount)} shown`
-    : `Uncheck all ${formatNumber(visibleCount)}`;
+    ? `Uncheck ${formatNumber(visibleSelectableCount)} shown`
+    : `Uncheck all ${formatNumber(visibleSelectableCount)}`;
   providersDropMissingBtn.disabled = saving || missingSelectionIds.length === 0;
   providersDropMissingBtn.textContent = missingSelectionIds.length
     ? `Remove ${formatNumber(missingSelectionIds.length)} missing`
@@ -10447,7 +10469,7 @@ const renderProvidersPicker = () => {
   } else if (!visible.length) {
     renderProvidersMessage(
       providersOnlyActiveInput.checked
-        ? "No active provider matches the current filters."
+        ? "No checked provider matches the current filters."
         : "No provider matches the current filters."
     );
   } else {
@@ -10478,6 +10500,8 @@ const applyProvidersSelection = (mutate) => {
     if (option) {
       option.dataset.checked = checked ? "true" : "false";
       option.dataset.providerPartial = partial ? "true" : "false";
+      const routing = option.querySelector("[data-provider-routing]");
+      if (routing) routing.textContent = providerRoutingText(id, checked);
     }
     for (const row of entry.querySelectorAll("[data-provider-subscription]")) {
       const subscriptionId = row.dataset.subscriptionId;
@@ -10528,7 +10552,7 @@ const loadProviderSelection = async (options = {}) => {
       : [];
     // A filter the roster no longer lists would hide every row with no chip lit
     // to explain it, so it falls back to the unfiltered state.
-    if (modelsProviderFilter !== "all" && !providerRosterEntry(modelsProviderFilter)) {
+    if (modelsProviderFilter !== "all" && !modelProviderFilterEntries().some((entry) => entry.id === modelsProviderFilter)) {
       modelsProviderFilter = "all";
       storage.set(MODEL_PROVIDER_STORAGE_KEY, "all");
     }
@@ -10537,6 +10561,7 @@ const loadProviderSelection = async (options = {}) => {
       storage.set(PROVIDER_TIER_STORAGE_KEY, "all");
     }
     providersSavedSelection = providersSelectionFromIds(payload.data.selection?.provider_ids);
+    providersSavedFilterActive = payload.data.filter_active === true;
     providerSelection = new Set(providersSavedSelection);
     providerSelectionSaveError = "";
     providerSelectionLoadedAt = Date.now();
@@ -10590,7 +10615,8 @@ const saveProviderSelection = async () => {
     providerSelectionSaveError = "";
     const savedIds = Array.isArray(payload?.provider_ids) ? payload.provider_ids : submittedIds;
     providersSavedSelection = providersSelectionFromIds(savedIds);
-    const activeTiers = providersRosterIds().filter((id) => isProviderChecked(id, providersSavedSelection)).length;
+    providersSavedFilterActive = savedIds.length > 0;
+    const allowedTiers = providersSelectableIds().filter((id) => isProviderChecked(id, providersSavedSelection)).length;
     // Replay later checkbox edits on the saved set, not on the serialized ids:
     // all checked providers serialize to [], and Codex subscriptions share an umbrella.
     const nextSelection = new Set(providersSavedSelection);
@@ -10606,11 +10632,11 @@ const saveProviderSelection = async () => {
     toast.success(
       savedIds.length === 0
         ? "Filter cleared"
-        : `${formatNumber(activeTiers)} provider${activeTiers === 1 ? "" : "s"} active`,
+        : `${formatNumber(allowedTiers)} provider${allowedTiers === 1 ? "" : "s"} allowed`,
       {
         description:
           savedIds.length === 0
-            ? "Every provider is eligible for routing again."
+            ? "The routing filter allows all providers."
             : "Routing, model listings, and the Codex catalog now skip the unchecked providers.",
       }
     );
@@ -10667,7 +10693,7 @@ providersOnlyActiveInput.addEventListener("change", () => {
 
 /** The `codex` umbrella and the individual subscription ids never coexist. */
 const setProviderChecked = (providerId, checked) => {
-  if (providerRosterEntry(providerId)?.selectable === false) return;
+  if (providerRosterEntry(providerId)?.selectable === false && !providersSavedSelection.has(providerId)) return;
   if (providerId !== "codex") {
     if (checked) providerSelection.add(providerId);
     else providerSelection.delete(providerId);
