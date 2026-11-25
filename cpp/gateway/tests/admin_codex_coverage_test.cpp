@@ -125,8 +125,8 @@ ASYNC_TEST("admin provider selection get serves the roster and reports an unavai
   ASSERT(providers);
   std::vector<std::string_view> ids;
   for (const auto& row : *providers) ids.push_back(rt::getString(row, "id").value_or(""));
-  std::vector<std::string_view> expected;
-  for (const auto id : uos::provider::selection::SELECTABLE_PROVIDER_IDS) if (id != "gemini") expected.push_back(id);
+  const auto& roster = uos::provider::selection::SELECTABLE_PROVIDER_IDS;
+  const std::vector<std::string_view> expected(roster.begin(), roster.end());
   EXPECT_EQ(ids, expected);
   EXPECT_EQ(rt::getBool(body.at("data"), "filter_active"), false);
   uos::kv::setKvForTest(nullptr);

@@ -723,7 +723,8 @@
                 Check every provider the gateway may dispatch to. Unchecked providers leave inference routing, and the
                 models only they serve disappear from <code>/v1/models</code>, the public catalog, and the Codex
                 catalog. Each configured Codex subscription is selectable on its own, so the subscription tier can be
-                narrowed to one account. The waterfall order stays fixed. An empty saved filter allows any configured provider.
+                narrowed to one account. The waterfall order itself never changes. Saving an empty selection removes the
+                filter and allows any configured provider.
               </p>
             </header>
             <div data-card-body>
