@@ -39,7 +39,7 @@ namespace uos::inference_admission {
     double maxQueueWaitMs = 0;
   };
 
-  inline constexpr InferenceAdmissionLimits DEFAULT_INFERENCE_ADMISSION_LIMITS{64, 128, 5'000};
+  inline constexpr InferenceAdmissionLimits DEFAULT_INFERENCE_ADMISSION_LIMITS{512, 128, 5'000};
 
   struct InferenceAdmissionSnapshot {
     double active = 0;
