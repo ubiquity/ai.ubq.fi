@@ -398,7 +398,7 @@ ASYNC_TEST("admin provider picker reports the roster, catalog counts, and the sa
     json::object{{"id", "gemini"}, {"label", "Google Antigravity (Gemini)"},
       {"detail", "Text-only Gemini models through the Antigravity subscription."},
       {"model_count", 0}, {"status", "unavailable"}, {"configured", false},
-      {"setup_status", "disabled"}, {"selectable", false}, {"endpoints", json::array{}}},
+      {"setup_status", "disabled"}, {"selectable", true}, {"endpoints", json::array{}}},
     json::object{{"id", "surplus"}, {"model_count", 2}, {"status", "available"}, {"configured", true}},
     json::object{{"id", "openlux"}, {"model_count", 0}, {"status", "unavailable"}, {"configured", false}},
     json::object{{"id", "deepseek"}, {"model_count", 1}, {"status", "available"}, {"configured", true}},
@@ -421,10 +421,15 @@ ASYNC_TEST("admin provider picker reports the roster, catalog counts, and the sa
   EXPECT_JSON(body.at("data").at("tiers"), tiers, "waterfall tier order");
   EXPECT_JSON(body.at("data").at("selection").at("provider_ids"), (json::array{"surplus"}), "saved selection");
   EXPECT_EQ(rt::getBool(body.at("data"), "filter_active"), true);
-  const auto unavailable = selectionRequest(json::object{{"provider_ids", json::array{"gemini"}}});
-  AWAIT(refused, admin::handleAdminProviderSelectionSet(unavailable));
-  EXPECT_EQ(refused.status(), 400);
-  database->seedSelection({"gemini", "surplus"});
+  const auto allowGemini = selectionRequest(json::object{{"provider_ids", json::array{"surplus", "gemini"}}});
+  AWAIT(allowed, admin::handleAdminProviderSelectionSet(allowGemini));
+  EXPECT_EQ(allowed.status(), 200);
+  AWAIT(reloaded, admin::handleAdminProviderSelectionGet(dependencies));
+  AWAIT(reloadedBody, reloaded.json());
+  EXPECT_JSON(reloadedBody.at("data").at("selection").at("provider_ids"), (json::array{"gemini", "surplus"}), "save and reload Gemini with gateway integration disabled");
+  EXPECT_JSON(reloadedBody.at("data").at("providers"), expected, "routing preference does not change gateway readiness");
+  AWAIT(modelIds, listModelIds());
+  EXPECT(std::none_of(modelIds.begin(), modelIds.end(), [](const std::string& id) { return id.starts_with("gemini-"); }));
   const auto retainGemini = selectionRequest(json::object{{"provider_ids", json::array{"gemini", "codex"}}});
   AWAIT(retained, admin::handleAdminProviderSelectionSet(retainGemini));
   EXPECT_EQ(retained.status(), 200);
@@ -449,7 +454,7 @@ ASYNC_TEST("every selectable provider carries a complete presentation and a heal
   ASSERT(unconfigured != unavailableProviders.end());
   EXPECT_EQ(rt::getString(*unconfigured, "label"), "Google Antigravity (Gemini)");
   EXPECT_EQ(rt::getString(*unconfigured, "setup_status"), "cli_unconfigured");
-  EXPECT_EQ(rt::getBool(*unconfigured, "selectable"), false);
+  EXPECT_EQ(rt::getBool(*unconfigured, "selectable"), true);
   EXPECT_EQ(rt::getNumber(*unconfigured, "model_count"), 0);
   rt::fs::mkdirSync(home + "/.local/bin", {.recursive = true, .mode = 0700});
   rt::fs::mkdirSync(home + "/.gemini/antigravity-cli", {.recursive = true, .mode = 0700});

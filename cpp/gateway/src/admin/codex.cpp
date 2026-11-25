@@ -278,7 +278,7 @@ rt::Task<rt::Response> handleAdminProviderSelectionGet(CatalogDependencies depen
       row["detail"] = "Text-only Gemini models through the Antigravity subscription.";
       row["setup_status"] = setupStatus;
       row["configured"] = configured;
-      row["selectable"] = configured;
+      row["selectable"] = true;
       if (!configured) {
         row["endpoints"] = json::array{};
         row["model_count"] = 0;
@@ -303,13 +303,6 @@ rt::Task<rt::Response> handleAdminProviderSelectionSet(rt::Request req) {
     if (!sel::isProviderSelectionId(std::string_view(value))) unknown.push_back(value);
   }
   if (!unknown.empty()) co_return paramError("unknown provider ids: " + rt::join(unknown, ", "), "provider_ids");
-  const auto geminiId = provider::gemini::GEMINI_PROVIDER_ID;
-  if (std::ranges::find(submitted, geminiId) != submitted.end() && !provider::gemini::geminiCliConfigured()) {
-    const auto saved = co_await sel::loadProviderSelection(database);
-    if (!saved || std::ranges::find(saved->provider_ids, geminiId) == saved->provider_ids.end()) {
-      co_return paramError("Google Antigravity is unavailable on this gateway", "provider_ids");
-    }
-  }
   const auto stored = co_await sel::storeProviderSelection(database, submitted); if (!stored) co_return error(500, "Deno KV is not available; cannot persist the provider selection", "server_error", true);
   co_return http::json(200, json::object{{"ok", true}, {"stored", true}, {"provider_ids", json::value_from(stored->provider_ids)}, {"updated_at_ms", stored->updated_at_ms}});
 }
