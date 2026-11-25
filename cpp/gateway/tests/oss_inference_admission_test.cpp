@@ -427,20 +427,26 @@ ASYNC_TEST("admission removes expired principals' empty waiting state") {
   rt::clearTimeout(alive);
 }
 
-ASYNC_TEST("the shared guard exposes the fixed internal limits to the integration") {
-  EXPECT_EQ(DEFAULT_INFERENCE_ADMISSION_LIMITS.maxActive, 64.0);
+ASYNC_TEST("the shared guard admits a 500-stream burst from one principal") {
+  EXPECT_EQ(DEFAULT_INFERENCE_ADMISSION_LIMITS.maxActive, 512.0);
   EXPECT_EQ(DEFAULT_INFERENCE_ADMISSION_LIMITS.maxWaiting, 128.0);
   EXPECT_EQ(DEFAULT_INFERENCE_ADMISSION_LIMITS.maxQueueWaitMs, 5'000.0);
   const InferenceAdmissionSnapshot before = inferenceAdmissionSnapshot();
   EXPECT_EQ(before.maxActive, DEFAULT_INFERENCE_ADMISSION_LIMITS.maxActive);
   EXPECT_EQ(before.maxWaiting, DEFAULT_INFERENCE_ADMISSION_LIMITS.maxWaiting);
+  ASSERT(before.maxActive - before.active >= 500);
 
-  const rt::Promise<InferenceAdmissionResult> shared = acquireInferenceAdmission();
-  const InferenceAdmissionResult admittedResult = co_await settled(shared);
-  const Admitted admitted = admittedOrThrow(admittedResult, "expected the shared guard to admit one request");
-  EXPECT_EQ(admitted.waitedMs, 0.0);
-  EXPECT_EQ(inferenceAdmissionSnapshot().active, before.active + 1);
-  admitted.release();
+  const InferenceAdmissionRequest agent{.principal = "agent-pool"};
+  std::vector<Admitted> permits;
+  for (int i = 0; i < 500; ++i) {
+    const auto pending = acquireInferenceAdmission(agent);
+    const auto result = co_await settled(pending);
+    permits.push_back(admittedOrThrow(result, "expected every stream in the burst to be admitted"));
+    EXPECT_EQ(permits.back().waitedMs, 0.0);
+  }
+  EXPECT_EQ(inferenceAdmissionSnapshot().active, before.active + 500);
+  EXPECT_EQ(inferenceAdmissionSnapshot().waiting, before.waiting);
+  for (const auto& permit : permits) permit.release();
   EXPECT_EQ(inferenceAdmissionSnapshot().active, before.active);
 }
 

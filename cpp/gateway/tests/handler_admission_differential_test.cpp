@@ -76,7 +76,7 @@ ASYNC_TEST("localOverloadResponse matches Bun for both overload causes") {
 }
 
 ASYNC_TEST("admissionController switches between the shared and the test controller") {
-  EXPECT(same(snapshotOf(admission::admissionController()), R"({"active":0,"waiting":0,"principals":0,"maxActive":64,"maxWaiting":128})"));
+  EXPECT(same(snapshotOf(admission::admissionController()), R"({"active":0,"waiting":0,"principals":0,"maxActive":512,"maxWaiting":128})"));
   const inference_admission::InferenceAdmissionController custom =
     inference_admission::createInferenceAdmissionController({.maxActive = 1, .maxWaiting = 2, .maxQueueWaitMs = 50});
   admission::setInferenceAdmissionControllerForTest(custom);
@@ -89,11 +89,11 @@ ASYNC_TEST("admissionController switches between the shared and the test control
   EXPECT(same(snapshotOf(admission::admissionController()), R"({"active":1,"waiting":0,"principals":0,"maxActive":1,"maxWaiting":2})"));
   if (const auto* granted = std::get_if<inference_admission::InferenceAdmissionGranted>(&first)) granted->release();
   admission::setInferenceAdmissionControllerForTest(std::nullopt);
-  EXPECT(same(snapshotOf(admission::admissionController()), R"({"active":0,"waiting":0,"principals":0,"maxActive":64,"maxWaiting":128})"));
+  EXPECT(same(snapshotOf(admission::admissionController()), R"({"active":0,"waiting":0,"principals":0,"maxActive":512,"maxWaiting":128})"));
   inference_admission::InferenceAdmissionRequest sharedRequest;
   const rt::Promise<inference_admission::InferenceAdmissionResult> sharedAcquire = admission::admissionController().acquire(std::move(sharedRequest));
   const inference_admission::InferenceAdmissionResult shared = co_await sharedAcquire.wait();
   EXPECT(std::holds_alternative<inference_admission::InferenceAdmissionGranted>(shared));
-  EXPECT(same(snapshotOf(admission::admissionController()), R"({"active":1,"waiting":0,"principals":0,"maxActive":64,"maxWaiting":128})"));
+  EXPECT(same(snapshotOf(admission::admissionController()), R"({"active":1,"waiting":0,"principals":0,"maxActive":512,"maxWaiting":128})"));
   if (const auto* granted = std::get_if<inference_admission::InferenceAdmissionGranted>(&shared)) granted->release();
 }
