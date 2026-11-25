@@ -569,7 +569,7 @@ TEST("admin analytics view places capacity history before current providers") {
   EXPECT_MATCH(adminHtml, R"re(id="view-tab-analytics"[\s\S]*?>\s*Analytics\s*<)re", "");
   EXPECT_NO_MATCH(adminHtml, R"re(Fifteen-minute capacity, cached-input, and cache-write history)re", "");
   EXPECT_MATCH(adminHtml, R"re(admin\.css\?v=claude-usage-refresh-20261025)re", "");
-  EXPECT_MATCH(adminHtml, R"re(admin\.js\?v=antigravity-provider-20261125)re", "");
+  EXPECT_MATCH(adminHtml, R"re(admin\.js\?v=antigravity-routing-20261125)re", "");
   EXPECT_MATCH(adminScript, R"re(endpoints\.has\("\/v1\/decisions"\))re", "");
   EXPECT_MATCH(adminScript, R"re(toLocaleString\(undefined,)re", "");
   EXPECT_MATCH(adminScript, R"re(timeZoneName: "short")re", "");
