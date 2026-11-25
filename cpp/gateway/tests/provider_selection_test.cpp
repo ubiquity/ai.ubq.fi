@@ -395,6 +395,8 @@ ASYNC_TEST("admin provider picker reports the roster, catalog counts, and the sa
   json::array rows{
     json::object{{"id", "codex"}, {"model_count", 1}, {"status", "available"}, {"configured", true}, {"subscriptions", json::array{}}},
     json::object{{"id", "claude_code"}, {"model_count", 0}, {"status", "unavailable"}, {"configured", false}},
+    json::object{{"id", "gemini"}, {"model_count", 0}, {"status", "unavailable"}, {"configured", false},
+      {"setup_status", "disabled"}, {"selectable", false}, {"endpoints", json::array{}}},
     json::object{{"id", "surplus"}, {"model_count", 2}, {"status", "available"}, {"configured", true}},
     json::object{{"id", "openlux"}, {"model_count", 0}, {"status", "unavailable"}, {"configured", false}},
     json::object{{"id", "deepseek"}, {"model_count", 1}, {"status", "available"}, {"configured", true}},
@@ -420,12 +422,33 @@ ASYNC_TEST("admin provider picker reports the roster, catalog counts, and the sa
   const auto unavailable = selectionRequest(json::object{{"provider_ids", json::array{"gemini"}}});
   AWAIT(refused, admin::handleAdminProviderSelectionSet(unavailable));
   EXPECT_EQ(refused.status(), 400);
+  database->seedSelection({"gemini", "surplus"});
+  const auto retainGemini = selectionRequest(json::object{{"provider_ids", json::array{"gemini", "codex"}}});
+  AWAIT(retained, admin::handleAdminProviderSelectionSet(retainGemini));
+  EXPECT_EQ(retained.status(), 200);
+  AWAIT(retainedBody, retained.json());
+  EXPECT_JSON(retainedBody.at("provider_ids"), (json::array{"codex", "gemini"}), "preserve unavailable Gemini when editing another provider");
+  const auto removeGemini = selectionRequest(json::object{{"provider_ids", json::array{"codex"}}});
+  AWAIT(removed, admin::handleAdminProviderSelectionSet(removeGemini));
+  EXPECT_EQ(removed.status(), 200);
+  EXPECT_JSON(database->storedSelection().at("provider_ids"), (json::array{"codex"}), "allow removing unavailable Gemini");
 }
 ASYNC_TEST("every selectable provider carries a complete presentation and a health key the view reports") {
   const auto database = std::make_shared<SelectionKv>(); Fixture fixture(database); rt::env::set("DEEPSEEK_API_KEY", "fixture-deepseek-key");
   const std::string home = rt::fs::mkdtempSync(rt::os::tmpdir() + "/gemini-picker-");
   const auto cleanup = rt::scopeExit([home] { rt::fs::rmSync(home, {.recursive = true, .force = true}); });
   const rt::env::ScopedOverride antigravity{{"HOME", home}, {"UOS_GATEWAY_ENABLE_ANTIGRAVITY", "1"}};
+  const auto unavailableDependencies = fixtureDependencies();
+  AWAIT(unconfiguredResponse, admin::handleAdminProviderSelectionGet(unavailableDependencies));
+  AWAIT(unconfiguredBody, unconfiguredResponse.json());
+  const auto& unavailableProviders = unconfiguredBody.at("data").at("providers").as_array();
+  const auto antigravityRow = [](const auto& row) { return rt::getString(row, "id") == "gemini"; };
+  const auto unconfigured = std::find_if(unavailableProviders.begin(), unavailableProviders.end(), antigravityRow);
+  ASSERT(unconfigured != unavailableProviders.end());
+  EXPECT_EQ(rt::getString(*unconfigured, "label"), "Google Antigravity (Gemini)");
+  EXPECT_EQ(rt::getString(*unconfigured, "setup_status"), "cli_unconfigured");
+  EXPECT_EQ(rt::getBool(*unconfigured, "selectable"), false);
+  EXPECT_EQ(rt::getNumber(*unconfigured, "model_count"), 0);
   rt::fs::mkdirSync(home + "/.local/bin", {.recursive = true, .mode = 0700});
   rt::fs::mkdirSync(home + "/.gemini/antigravity-cli", {.recursive = true, .mode = 0700});
   rt::fs::writeFileSync(home + "/.local/bin/agy", "fixture", {.flag = "wx", .mode = 0700});
@@ -436,10 +459,12 @@ ASYNC_TEST("every selectable provider carries a complete presentation and a heal
   const auto& providers = body.at("data").at("providers").as_array(); std::vector<std::string> ids;
   for (const auto& row : providers) ids.push_back(std::string(*rt::getString(row, "id")));
   std::vector<std::string> roster; appendIds(roster, sel::SELECTABLE_PROVIDER_IDS); EXPECT_EQ(ids, roster);
-  const auto gemini = std::find_if(providers.begin(), providers.end(), [](const auto& row) { return rt::getString(row, "id") == "gemini"; });
+  const auto gemini = std::find_if(providers.begin(), providers.end(), antigravityRow);
   ASSERT(gemini != providers.end());
   EXPECT_EQ(rt::getNumber(*gemini, "model_count"), std::optional<double>(3));
   EXPECT_EQ(rt::getBool(*gemini, "configured"), true);
+  EXPECT_EQ(rt::getBool(*gemini, "selectable"), true);
+  EXPECT_EQ(rt::getString(*gemini, "setup_status"), "configured");
   const auto gateway = std::find_if(providers.begin(), providers.end(), [](const auto& row) { return rt::getString(row, "id") == presentation::GATEWAY_PROVIDER_ID; });
   EXPECT(gateway != providers.end()); EXPECT(rt::getBool(*gateway, "selectable") != false);
   std::vector<std::string> actualTiers, expectedTiers;

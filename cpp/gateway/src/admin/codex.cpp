@@ -262,12 +262,27 @@ rt::Task<rt::Response> handleAdminProviderSelectionGet(CatalogDependencies depen
   json::array providers;
   for (auto idView : sel::SELECTABLE_PROVIDER_IDS) {
     const std::string id(idView);
+    if (id == provider::presentation::GATEWAY_PROVIDER_ID) continue;
     const auto* source = catalog.sources.get(id);
-    if (id == provider::presentation::GATEWAY_PROVIDER_ID || (id == provider::gemini::GEMINI_PROVIDER_ID && !source)) continue;
     const auto presentation = provider::presentation::providerPresentation(id);
     const std::optional<bool> credential = id == "openrouter" ? std::optional(provider::openrouter::readOpenRouterApiKey().has_value()) : std::nullopt;
     json::object row{{"id", id}, {"label", presentation.label}, {"tier", presentation.tier}, {"tier_label", tierLabel(presentation.tier)}, {"detail", presentation.detail}, {"endpoints", json::value_from(presentation.endpoints)}, {"health_key", presentation.health_key}, {"model_count", *counts.get(id)}, {"status", credential ? (*credential ? "available" : "unavailable") : source ? source->status : "unavailable"}, {"configured", credential.value_or(source ? source->configured.value_or(source->status == "available") : false)}};
     if (id == "codex") row["subscriptions"] = subscriptions;
+    if (id == provider::gemini::GEMINI_PROVIDER_ID) {
+      const bool configured = provider::gemini::geminiCliConfigured();
+      const char* setupStatus = "disabled";
+      if (configured) setupStatus = "configured";
+      else if (upstream_auth::followerMode()) setupStatus = "follower";
+      else if (provider::gemini::geminiOperatorOptIn()) setupStatus = "cli_unconfigured";
+      row["setup_status"] = setupStatus;
+      row["configured"] = configured;
+      row["selectable"] = configured;
+      if (!configured) {
+        row["endpoints"] = json::array{};
+        row["model_count"] = 0;
+        row["status"] = "unavailable";
+      }
+    }
     providers.push_back(row);
   }
   const auto& gateway = provider::presentation::GATEWAY_PROVIDER_PRESENTATION; const bool ready = deepseek::waterfall::deepSeekWaterfallCatalogEnabled(std::nullopt);
@@ -283,10 +298,16 @@ rt::Task<rt::Response> handleAdminProviderSelectionSet(rt::Request req) {
   for (const auto& id : *ids) {
     auto value = rt::trim(id.as_string());
     submitted.push_back(value);
-    if (!sel::isProviderSelectionId(std::string_view(value)) ||
-        (value == provider::gemini::GEMINI_PROVIDER_ID && !provider::gemini::geminiCliConfigured())) unknown.push_back(value);
+    if (!sel::isProviderSelectionId(std::string_view(value))) unknown.push_back(value);
   }
   if (!unknown.empty()) co_return paramError("unknown provider ids: " + rt::join(unknown, ", "), "provider_ids");
+  const auto geminiId = provider::gemini::GEMINI_PROVIDER_ID;
+  if (std::ranges::find(submitted, geminiId) != submitted.end() && !provider::gemini::geminiCliConfigured()) {
+    const auto saved = co_await sel::loadProviderSelection(database);
+    if (!saved || std::ranges::find(saved->provider_ids, geminiId) == saved->provider_ids.end()) {
+      co_return paramError("Google Antigravity is unavailable on this gateway", "provider_ids");
+    }
+  }
   const auto stored = co_await sel::storeProviderSelection(database, submitted); if (!stored) co_return error(500, "Deno KV is not available; cannot persist the provider selection", "server_error", true);
   co_return http::json(200, json::object{{"ok", true}, {"stored", true}, {"provider_ids", json::value_from(stored->provider_ids)}, {"updated_at_ms", stored->updated_at_ms}});
 }
