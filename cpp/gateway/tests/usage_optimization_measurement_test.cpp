@@ -237,7 +237,7 @@ ASYNC_TEST("usage optimization fixture records per-auth KV commands, atomic comm
   EXPECT(budgetFor(budgets, "uos_allowlist:success").commands > 0); EXPECT(budgetFor(budgets, "admin_allowlist:success").commands > 0);
   EXPECT_EQ(budgetFor(budgets, "codex_auth_pool:retry").serialized_request_bytes, static_cast<double>(rt::utf8ByteLength(rt::jsonStringify(retryBody)) * 2));
   unsigned rollupReads = 0, rollupCommits = 0, disconnectRollups = 0, disconnectV3Commits = 0, disconnectReplayCommits = 0,
-    disconnectAdminCommits = 0;
+    disconnectTelemetryCommits = 0;
   bool allowlistLedger = false, committed = false;
   for (const auto& row : kv->commands) {
     const bool rollup = std::any_of(row.keys.begin(), row.keys.end(), usageRollupKey);
@@ -246,13 +246,13 @@ ASYNC_TEST("usage optimization fixture records per-auth KV commands, atomic comm
       if (rollup) ++disconnectRollups;
       if (row.command == "atomic.commit" && row.atomicResult == "committed" && std::any_of(row.keys.begin(), row.keys.end(), [](const auto& key) { return keyAt(key, 0, "uos_ai") && keyAt(key, 1, "api_key_usage") && keyAt(key, 2, "v3"); })) ++disconnectV3Commits;
       if (row.command == "atomic.commit" && row.atomicResult == "committed" && std::any_of(row.keys.begin(), row.keys.end(), [](const auto& key) { return keyAt(key, 0, "uos_ai") && keyAt(key, 1, "sentinel_replay"); })) ++disconnectReplayCommits;
-      if (row.command == "atomic.commit" && row.atomicResult == "committed" && std::any_of(row.keys.begin(), row.keys.end(), [](const auto& key) { return keyAt(key, 0, "uos_ai") && keyAt(key, 1, "admin_error_log"); })) ++disconnectAdminCommits;
+      if (row.command == "atomic.commit" && row.atomicResult == "committed" && std::any_of(row.keys.begin(), row.keys.end(), [](const auto& key) { return keyAt(key, 0, "uos_ai") && keyAt(key, 1, "prompt_cache_telemetry_gate"); })) ++disconnectTelemetryCommits;
     }
     if ((row.scenario == "uos_allowlist:success" || row.scenario == "admin_allowlist:success") && std::any_of(row.keys.begin(), row.keys.end(), [](const auto& key) { return keyAt(key, 0, "uos_ai") && keyAt(key, 1, "api_key_usage"); })) allowlistLedger = true;
     if (row.command == "atomic.commit" && row.atomicResult == "committed") committed = true;
   }
   EXPECT_EQ(rollupReads, 1U); EXPECT_EQ(rollupCommits, 1U); EXPECT_EQ(budgetFor(budgets, "bounded_api_key:client_disconnect").atomic_commits, 5);
-  EXPECT_EQ(disconnectRollups, 0U); EXPECT_EQ(disconnectV3Commits, 2U); EXPECT_EQ(disconnectReplayCommits, 2U); EXPECT_EQ(disconnectAdminCommits, 1U);
+  EXPECT_EQ(disconnectRollups, 0U); EXPECT_EQ(disconnectV3Commits, 2U); EXPECT_EQ(disconnectReplayCommits, 2U); EXPECT_EQ(disconnectTelemetryCommits, 1U);
   EXPECT(budgetFor(budgets, "bounded_api_key:concurrent_admission").atomic_commits >= 2); EXPECT(!allowlistLedger); EXPECT(committed);
   json::array observations;
   for (const auto& budget : budgets) observations.push_back(json::object{{"scenario", budget.scenario}, {"reads", budget.read_commands}, {"writes", budget.write_mutations}, {"atomic_commits", budget.atomic_commits},
