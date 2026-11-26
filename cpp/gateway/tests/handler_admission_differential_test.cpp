@@ -97,3 +97,45 @@ ASYNC_TEST("admissionController switches between the shared and the test control
   EXPECT(same(snapshotOf(admission::admissionController()), R"({"active":1,"waiting":0,"principals":0,"maxActive":512,"maxWaiting":128})"));
   if (const auto* granted = std::get_if<inference_admission::InferenceAdmissionGranted>(&shared)) granted->release();
 }
+
+ASYNC_TEST("default admission saturation keeps the ordinary bounded overload response") {
+  const auto controller = inference_admission::createInferenceAdmissionController();
+  std::vector<inference_admission::InferenceAdmissionGranted> active;
+  for (int index = 0; index < 512; ++index) {
+    const auto pending = controller.acquire({.principal = "socket-fixture"});
+    const auto result = co_await pending.wait();
+    ASSERT(std::holds_alternative<inference_admission::InferenceAdmissionGranted>(result));
+    active.push_back(std::get<inference_admission::InferenceAdmissionGranted>(result));
+  }
+  const rt::AbortController callers;
+  std::vector<rt::Promise<inference_admission::InferenceAdmissionResult>> waiting;
+  for (int index = 0; index < 128; ++index) {
+    waiting.push_back(controller.acquire({.signal = callers.signal(), .principal = "socket-fixture"}));
+  }
+  EXPECT_EQ(controller.snapshot().active, 512.0);
+  EXPECT_EQ(controller.snapshot().waiting, 128.0);
+  const auto pending = controller.acquire({.principal = "excess"});
+  const auto result = co_await pending.wait();
+  ASSERT(std::holds_alternative<inference_admission::InferenceAdmissionLocalOverload>(result));
+  const auto overload = std::get<inference_admission::InferenceAdmissionLocalOverload>(result);
+  EXPECT_EQ(overload.cause, "queue_limit");
+  auto response = admission::localOverloadResponse(overload.cause);
+  EXPECT_EQ(response.status(), 503);
+  EXPECT_EQ(response.headers().get("retry-after"), std::optional<std::string>("5"));
+  const auto text = co_await response.text();
+  const auto body = rt::jsonParse(text);
+  const auto* error = rt::get(body, "error");
+  ASSERT(error);
+  EXPECT_EQ(rt::getString(*error, "code"), std::optional<std::string>("local_inference_overload"));
+  EXPECT_EQ(controller.snapshot().active, 512.0);
+  EXPECT_EQ(controller.snapshot().waiting, 128.0);
+
+  callers.abort();
+  for (const auto& queued : waiting) {
+    const auto cancelled = co_await queued.wait();
+    EXPECT(std::holds_alternative<inference_admission::InferenceAdmissionCallerAborted>(cancelled));
+  }
+  for (const auto& permit : active) permit.release();
+  EXPECT_EQ(controller.snapshot().active, 0.0);
+  EXPECT_EQ(controller.snapshot().waiting, 0.0);
+}

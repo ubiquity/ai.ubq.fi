@@ -13,6 +13,9 @@ WorkingDirectory=/srv/uos-native/state
 EnvironmentFile=/srv/uos-native/operator.env
 ExecStart=/srv/uos-native/package/ops/launch-native.sh /srv/uos-native/launch.json
 Restart=no
+# 512 active client/upstream pairs, queued clients, idle pools and runtime headroom.
+# Budget and fresh-unit verification: cpp/gateway/ops/README.md
+LimitNOFILE=4096
 TimeoutStopSec=15
 UMask=0077
 NoNewPrivileges=true
