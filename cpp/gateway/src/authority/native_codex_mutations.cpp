@@ -58,7 +58,18 @@ namespace uos::authority::native_codex_mutations {
   std::optional<CodexAccountRoutingState> releaseCodexRoutingProbe(const CodexAccountRoutingState& state, const CodexRoutingAccount& account, double updatedAtMs) {
     const CodexRoutingSlot current = slotFor(state, account);
     if (!slotMatchesCodexRoutingAccount(current, account) || !probeLeaseMatchesCodexRoutingAccount(current, account)) return std::nullopt;
-    CodexRoutingSlot next = routingProbeCircuit(account) == "quota" ? releaseQuotaClassProbe(current, quotaClass(account.requestedModel), requestedModelView(account.requestedModel)) : current;
+    CodexRoutingSlot next = current;
+    if (routingProbeCircuit(account) == "quota") {
+      const CodexQuotaClass requested = quotaClass(account.requestedModel);
+      if (next.probe_lease && !current.banked_reset_recovery_probe_pending && requested != "unknown" &&
+          next.probe_lease->quota_class.toOptional() == requested &&
+          quotaBlockKeyForClass(withLegacyQuotaClassMap(current), requested) == "unknown") {
+        // Resolve a formerly slot-wide lease before releasing it. The effective
+        // unknown block is eligible for this alias only when marked as migrated.
+        next.probe_lease->quota_class = CodexQuotaClass("unknown");
+      }
+      next = releaseQuotaClassProbe(next, requested, requestedModelView(account.requestedModel));
+    }
     next.account_id_hash = account.accountIdHash;
     next.upstream_timeout_blocked_until_ms =
       routingProbeCircuit(account) == "upstream_timeout" ? rt::Nullable<double>(nullptr) : current.upstream_timeout_blocked_until_ms;
