@@ -18,6 +18,12 @@
 #include <boost/asio/ip/v6_only.hpp>
 #include <boost/asio/post.hpp>
 
+#if defined(__linux__)
+#include <boost/asio/bind_cancellation_slot.hpp>
+#include <boost/asio/cancellation_signal.hpp>
+#include <sys/socket.h>
+#endif
+
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -530,6 +536,10 @@ namespace uos::runtime::http {
       std::vector<std::uint8_t> readBuffer = std::vector<std::uint8_t>(READ_SIZE);
       bool reading = false;
       bool readEnded = false;
+#if defined(__linux__)
+      bool watchingPausedRead = false;
+      asio::cancellation_signal pausedReadCancellation;
+#endif
 
       std::deque<rt::Bytes> output;
       std::size_t outputOffset = 0;
@@ -570,10 +580,39 @@ namespace uos::runtime::http {
 
       void startRead() {
         if (reading || destroyed || !upgrade.stream.is_open()) return;
+#if defined(__linux__)
+        // Remove the exception operation before resuming speculative reads.
+        if (watchingPausedRead) pausedReadCancellation.emit(asio::cancellation_type::terminal);
+#endif
         reading = true;
         auto self = shared_from_this();
         upgrade.stream.async_read_some(asio::buffer(readBuffer), [self](const boost::system::error_code& error, std::size_t count) { self->onRead(error, count); });
       }
+
+#if defined(__linux__)
+      void watchPausedReadError() {
+        if (watchingPausedRead || !upgrade.stream.is_open()) return;
+        // The reset may have arrived with the preceding successful read.
+        int pending = 0;
+        socklen_t size = sizeof(pending);
+        if (::getsockopt(upgrade.stream.native_handle(), SOL_SOCKET, SO_ERROR, &pending, &size) < 0) pending = errno;
+        if (pending != 0) {
+          destroy(errnoReason({pending, boost::system::system_category()}, "read"));
+          return;
+        }
+        // Linux epoll reports a TCP reset here even with unread data. Data
+        // readiness and a peer FIN belong to the ordinary read path.
+        watchingPausedRead = true;
+        auto self = shared_from_this();
+        upgrade.stream.async_wait(asio::socket_base::wait_error, asio::bind_cancellation_slot(
+          pausedReadCancellation.slot(), [self](const boost::system::error_code& error) {
+            self->watchingPausedRead = false;
+            if (self->destroyed) return;
+            if (error && error != asio::error::operation_aborted) self->destroy(errnoReason(error, "read"));
+            else self->pump();
+          }));
+      }
+#endif
 
       void pump() {
         if (destroyed || reading || readEnded) return;
@@ -583,6 +622,9 @@ namespace uos::runtime::http {
             break;
           case Phase::body:
             if (dumping || flowing) startRead();
+#if defined(__linux__)
+            else watchPausedReadError();
+#endif
             break;
           case Phase::waiting:
             if (input.size() < PIPELINE_LIMIT) startRead();
