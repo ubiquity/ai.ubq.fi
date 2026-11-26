@@ -118,7 +118,8 @@ namespace uos::provider::gemini {
       const auto type = rt::getString(item, "type").value_or("");
       if (type == "function_call" || type == "custom_tool_call") {
         const auto name = rt::getString(item, "name").value_or("");
-        const auto arguments = rt::get(item, "arguments") ? jsonText(*rt::get(item, "arguments")) : rt::getString(item, "input").value_or("");
+        const auto* argumentValue = rt::get(item, "arguments");
+        const std::string arguments = argumentValue ? jsonText(*argumentValue) : std::string(rt::getString(item, "input").value_or(""));
         prompt += "\n\nAssistant tool call:\n" + std::string(name) + "\nArguments:\n" + std::string(arguments);
         return;
       }
