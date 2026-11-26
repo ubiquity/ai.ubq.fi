@@ -17,12 +17,14 @@
  * The waiting bound is global, so true saturation still rejects a new arrival
  * with `local_overload` instead of growing an unbounded queue.
  *
- * Limits are fixed at construction; there is no environment, CLI, or
- * request-level knob.
+ * Production permits depend on available process resources. Queue limits are
+ * fixed and there is no environment or CLI knob.
  */
 #include "uos/rt/abort.hpp"
+#include "uos/rt/admission_resources.hpp"
 #include "uos/rt/async.hpp"
 
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <string>
@@ -48,6 +50,11 @@ namespace uos::inference_admission {
     double principals = 0;
     double maxActive = 0;
     double maxWaiting = 0;
+    /** Resource that bounds the effective capacity for baseline streams. */
+    std::string limitingResource;
+    std::optional<std::uint64_t> memoryHeadroomBytes;
+    std::optional<std::uint64_t> descriptorHeadroom;
+    double eventLoopLagMs = 0;
   };
 
   /** Why the local finite guard rejected a request instead of admitting it. */
@@ -96,6 +103,8 @@ namespace uos::inference_admission {
      * principal-less caller in one arrival-ordered group.
      */
     std::optional<std::string> principal = std::nullopt;
+    /** Accepted request body bytes used to estimate the memory charge. */
+    std::uint64_t bodyBytes = 0;
   };
 
   // `acquire(request?)`: an omitted request is `{}`.
@@ -118,6 +127,9 @@ namespace uos::inference_admission {
    */
   // Throws rt::RangeError for limits that cannot bound anything.
   InferenceAdmissionController createInferenceAdmissionController(PartialInferenceAdmissionLimits limits = {});
+
+  using AdmissionResourceSampler = std::function<rt::admission_resources::Headroom()>;
+  InferenceAdmissionController createAdaptiveInferenceAdmissionController(AdmissionResourceSampler sample = rt::admission_resources::readHeadroom);
 
   /** Acquire one permit from the shared process-wide admission guard. */
   rt::Promise<InferenceAdmissionResult> acquireInferenceAdmission(InferenceAdmissionRequest request = {});
