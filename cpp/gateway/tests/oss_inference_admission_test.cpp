@@ -492,9 +492,9 @@ ASYNC_TEST("adaptive admission reserves weighted inputs and bounds queued body m
   const auto waiting = controller.acquire({.bodyBytes = MiB + MiB / 2});
   EXPECT_EQ(controller.snapshot().waiting, 1.0);
   const auto cannotQueue = co_await acquire(controller, {.bodyBytes = 3 * MiB});
-  EXPECT_EQ(localOverloadOrThrow(cannotQueue, "expected the retained bodies to leave too little queue space").cause, "queue_limit");
+  EXPECT_EQ(localOverloadOrThrow(cannotQueue, "expected the retained bodies to leave too little queue space").cause, "queue_memory");
   const auto overflow = co_await acquire(controller, {.bodyBytes = std::numeric_limits<std::uint64_t>::max()});
-  EXPECT_EQ(localOverloadOrThrow(overflow, "expected saturated reservation to exceed the memory sample").cause, "queue_limit");
+  EXPECT_EQ(localOverloadOrThrow(overflow, "expected saturated reservation to exceed the memory sample").cause, "queue_memory");
   large.release();
   const auto recovered = admittedOrThrow(co_await settled(waiting), "expected transfer from queued body to live reservation");
   EXPECT_EQ(controller.snapshot().maxActive, 7.0);

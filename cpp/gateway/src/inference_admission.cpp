@@ -306,8 +306,11 @@ namespace uos::inference_admission {
         armProbe();
         if (waitingCount == 0 && canAdmit(request.bodyBytes))
           return rt::Promise<InferenceAdmissionResult>::resolve(admit(0, request.bodyBytes));
-        if (waitingCount >= maxWaiting || (adaptive && !adaptive->canQueue(request.bodyBytes))) {
+        if (waitingCount >= maxWaiting) {
           return rt::Promise<InferenceAdmissionResult>::resolve(InferenceAdmissionLocalOverload{.cause = "queue_limit", .waitedMs = 0});
+        }
+        if (adaptive && !adaptive->canQueue(request.bodyBytes)) {
+          return rt::Promise<InferenceAdmissionResult>::resolve(InferenceAdmissionLocalOverload{.cause = "queue_memory", .waitedMs = 0});
         }
         std::shared_ptr<Controller> self = shared_from_this();
         return rt::newPromise<InferenceAdmissionResult>([&](rt::Resolve<InferenceAdmissionResult> resolve, rt::Reject) {

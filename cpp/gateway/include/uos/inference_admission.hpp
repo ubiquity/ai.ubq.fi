@@ -58,7 +58,7 @@ namespace uos::inference_admission {
   };
 
   /** Why the local finite guard rejected a request instead of admitting it. */
-  using InferenceAdmissionLocalOverloadCause = std::string;  // "queue_limit" | "queue_wait_timeout"
+  using InferenceAdmissionLocalOverloadCause = std::string;  // "queue_limit" | "queue_memory" | "queue_wait_timeout"
 
   /**
    * One admission attempt.  `local_overload` is this guard's own finite-overload
