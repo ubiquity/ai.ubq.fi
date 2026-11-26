@@ -27,11 +27,16 @@ namespace uos::provider::gemini {
     double context_window_tokens;
   };
 
+  // Antigravity documents Gemini 4 Neon as "Up to 512K tokens":
+  // https://antigravity.google/docs/models/#gemini-4-neon
+  // Model catalogs express that binary token count as 512 * 1024.
+  inline constexpr double GEMINI_NEON_CONTEXT_WINDOW_TOKENS = 512 * 1024;
+
   inline constexpr std::array<GeminiModelDefinition, 7> GEMINI_MODELS{{
-    {"gemini-4-neon-low", "Gemini 4 Neon (Low)", "low", 524'288},
-    {"gemini-4-neon-medium", "Gemini 4 Neon (Medium)", "medium", 524'288},
-    {"gemini-4-neon-high", "Gemini 4 Neon (High)", "high", 524'288},
-    {"gemini-4-neon-xhigh", "Gemini 4 Neon (XHigh)", "xhigh", 524'288},
+    {"gemini-4-neon-low", "Gemini 4 Neon (Low)", "low", GEMINI_NEON_CONTEXT_WINDOW_TOKENS},
+    {"gemini-4-neon-medium", "Gemini 4 Neon (Medium)", "medium", GEMINI_NEON_CONTEXT_WINDOW_TOKENS},
+    {"gemini-4-neon-high", "Gemini 4 Neon (High)", "high", GEMINI_NEON_CONTEXT_WINDOW_TOKENS},
+    {"gemini-4-neon-xhigh", "Gemini 4 Neon (XHigh)", "xhigh", GEMINI_NEON_CONTEXT_WINDOW_TOKENS},
     {"gemini-3.8-flash-high", "Gemini 3.8 Flash (High)", "high", 1'048'576},
     {"gemini-3.8-flash-medium", "Gemini 3.8 Flash (Medium)", "medium", 1'048'576},
     {"gemini-3.8-flash-low", "Gemini 3.8 Flash (Low)", "low", 1'048'576},
