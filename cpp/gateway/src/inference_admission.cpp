@@ -5,6 +5,7 @@
 #include "uos/rt/number.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <memory>
 #include <unordered_map>
@@ -19,12 +20,25 @@ namespace uos::inference_admission {
     constexpr double probeIntervalMs = 100;
     constexpr double pauseLagMs = 250;
     constexpr double recoverLagMs = 100;
+    constexpr double maxContinuousSampleGapMs = 250;
+    constexpr double confirmDirectionMs = 1'000;
+    constexpr double capacitySlewTimeMs = 2'000;
+    constexpr double minSlewPerMs = 4.0 / 1'000;
+    constexpr double estimateDeadband = 0.10;
 
     std::uint64_t remaining(std::uint64_t budget, std::uint64_t used) { return budget - std::min(budget, used); }
 
     std::uint64_t streamMemory(std::uint64_t bodyBytes) {
       constexpr std::uint64_t max = std::numeric_limits<std::uint64_t>::max();
       return bodyBytes > max / 4 ? max : std::max(memoryPerStream, bodyBytes * 4);
+    }
+
+    double moveCapacityToward(double capacity, double target, double elapsedMs) {
+      const double minimumStep = minSlewPerMs * elapsedMs;
+      const double factor = std::exp2(elapsedMs / capacitySlewTimeMs);
+      if (capacity < target)
+        return std::min(target, std::max(capacity + minimumStep, capacity * factor));
+      return std::max(target, std::min(capacity - minimumStep, capacity / factor));
     }
 
     struct AdaptiveCapacity {
@@ -39,8 +53,49 @@ namespace uos::inference_admission {
       double eventLoopLagMs = 0;
       unsigned healthyProbes = 0;
       bool lagPaused = false;
+      std::optional<double> estimatedMaxActive;
+      double resourceMaxActive = 0;
+      double openingWindow = 0;
+      std::optional<double> lastTrustedSampleAt;
+      int estimateDirection = 0;
+      double sameDirectionMs = 0;
 
       explicit AdaptiveCapacity(AdmissionResourceSampler sampler) : sample(std::move(sampler)) {}
+
+      void resetContinuity() {
+        lastTrustedSampleAt.reset();
+        estimateDirection = 0;
+        sameDirectionMs = 0;
+      }
+
+      void recordCapacity(double now, double target) {
+        resourceMaxActive = target;
+        const auto elapsed = lastTrustedSampleAt ? now - *lastTrustedSampleAt : 0;
+        const auto credit = elapsed <= maxContinuousSampleGapMs ? std::clamp(elapsed, 0.0, probeIntervalMs) : 0;
+        lastTrustedSampleAt = now;
+        // Start promptly on the first usable reading. Reopening earns time
+        // per sample after a binding or sustained shortage.
+        if (!estimatedMaxActive) {
+          estimatedMaxActive = target;
+          openingWindow = target;
+          return;
+        }
+        if (target > openingWindow) {
+          openingWindow = moveCapacityToward(std::max(1.0, openingWindow), target, credit);
+        }
+
+        const auto estimate = *estimatedMaxActive;
+        int direction = 0;
+        if (target > estimate * (1 + estimateDeadband)) direction = 1;
+        else if (target < estimate * (1 - estimateDeadband)) direction = -1;
+        if (direction == 0 || direction != estimateDirection || credit == 0) sameDirectionMs = 0;
+        else sameDirectionMs = std::min(confirmDirectionMs, sameDirectionMs + credit);
+        estimateDirection = direction;
+        if (sameDirectionMs == confirmDirectionMs) {
+          if (direction < 0) openingWindow = std::min(openingWindow, target);
+          estimatedMaxActive = moveCapacityToward(estimate, target, credit);
+        }
+      }
 
       void refresh(double now, std::uint64_t active) {
         if (now < sampleAgainAt) return;
@@ -49,6 +104,13 @@ namespace uos::inference_admission {
         // The sample includes already-open client and upstream descriptors.
         // Allow one future upstream descriptor for each already-admitted request.
         descriptorCommitment = active;
+        if (lagPaused || !headroom.memoryBytes || !headroom.descriptors) {
+          resetContinuity();
+          return;
+        }
+        // Only a fresh sensor reading can move the baseline. The live weighted
+        // memory and descriptor debits still apply to each individual grant.
+        recordCapacity(now, static_cast<double>(std::min(*headroom.memoryBytes / memoryPerStream, descriptorCapacity(active))));
       }
 
       void observeLag(double lateness) {
@@ -56,17 +118,26 @@ namespace uos::inference_admission {
         if (lateness >= pauseLagMs) {
           healthyProbes = 0;
           lagPaused = true;
+          resetContinuity();
         } else if (lagPaused) {
           healthyProbes = lateness <= recoverLagMs ? healthyProbes + 1 : 0;
           if (healthyProbes >= 2) lagPaused = false;
         }
       }
 
-      bool canAdmit(std::uint64_t bodyBytes, bool queued) const {
+      bool canAdmit(std::uint64_t active, std::uint64_t bodyBytes, bool queued) const {
+        if (lagPaused || !headroom.memoryBytes || !headroom.descriptors) return false;
         const auto otherWaiting = waitingMemory - (queued ? bodyBytes : 0);
-        return !lagPaused && headroom.memoryBytes && headroom.descriptors &&
-               streamMemory(bodyBytes) <= remaining(remaining(*headroom.memoryBytes, otherWaiting), activeMemory) &&
-               descriptorsPerStream <= remaining(*headroom.descriptors, descriptorCommitment);
+        const bool hasResources = streamMemory(bodyBytes) <= remaining(remaining(*headroom.memoryBytes, otherWaiting), activeMemory) &&
+                                  descriptorsPerStream <= remaining(*headroom.descriptors, descriptorCommitment);
+        return hasResources && static_cast<double>(active) + 1 <= openingWindow;
+      }
+
+      void noteBlockedGrant() {
+        // Preserve the previous opening across a brief dip unless the lower
+        // sampled capacity blocked a live request.
+        if (!lagPaused && headroom.memoryBytes && headroom.descriptors)
+          openingWindow = std::min(openingWindow, resourceMaxActive);
       }
 
       bool canQueue(std::uint64_t bodyBytes) const {
@@ -90,6 +161,7 @@ namespace uos::inference_admission {
         snapshot.memoryHeadroomBytes = headroom.memoryBytes;
         snapshot.descriptorHeadroom = headroom.descriptors;
         snapshot.eventLoopLagMs = eventLoopLagMs;
+        snapshot.estimatedMaxActive = estimatedMaxActive.value_or(0);
         snapshot.maxActive = 0;
         if (lagPaused) snapshot.limitingResource = "event_loop_lag";
         else if (!headroom.memoryBytes) snapshot.limitingResource = "memory_unavailable";
@@ -98,7 +170,10 @@ namespace uos::inference_admission {
           const auto extraMemory = activeMemory - active * memoryPerStream;
           const auto memoryCapacity = remaining(remaining(*headroom.memoryBytes, extraMemory), waitingMemory) / memoryPerStream;
           const auto fdCapacity = descriptorCapacity(active);
-          snapshot.maxActive = static_cast<double>(std::min(memoryCapacity, fdCapacity));
+          const auto liveCapacity = static_cast<double>(std::min(memoryCapacity, fdCapacity));
+          snapshot.resourceMaxActive = resourceMaxActive;
+          snapshot.maxActive = std::min(liveCapacity, std::floor(openingWindow));
+          snapshot.recoveryLimited = snapshot.maxActive < liveCapacity;
           snapshot.limitingResource = memoryCapacity <= fdCapacity ? "memory" : "descriptors";
         }
       }
@@ -184,7 +259,7 @@ namespace uos::inference_admission {
         if (rt::Timeout(adaptive->probe.lock()).active() && now - adaptive->probeDueAt >= pauseLagMs)
           adaptive->observeLag(now - adaptive->probeDueAt);
         adaptive->refresh(now, active);
-        return adaptive->canAdmit(bodyBytes, queued);
+        return adaptive->canAdmit(active, bodyBytes, queued);
       }
 
       void detachWaiter(const std::shared_ptr<Waiter>& waiter) {
@@ -275,7 +350,10 @@ namespace uos::inference_admission {
             refuseWaiter(waiter, principal, InferenceAdmissionLocalOverload{.cause = "queue_wait_timeout", .waitedMs = waitedMs});
             continue;
           }
-          if (!available) break;
+          if (!available) {
+            if (adaptive) adaptive->noteBlockedGrant();
+            break;
+          }
           turnOrder.erase(turnOrder.begin());
           InferenceAdmissionResult granted = admit(waitedMs, waiter->bodyBytes);
           settleWaiter(waiter, std::move(granted));
@@ -304,8 +382,10 @@ namespace uos::inference_admission {
         if (callerSignal && callerSignal->aborted()) return rt::Promise<InferenceAdmissionResult>::resolve(InferenceAdmissionCallerAborted{.waitedMs = 0});
         if (adaptive && waitingCount > 0) admitWaiting();
         armProbe();
-        if (waitingCount == 0 && canAdmit(request.bodyBytes))
-          return rt::Promise<InferenceAdmissionResult>::resolve(admit(0, request.bodyBytes));
+        if (waitingCount == 0) {
+          if (canAdmit(request.bodyBytes)) return rt::Promise<InferenceAdmissionResult>::resolve(admit(0, request.bodyBytes));
+          if (adaptive) adaptive->noteBlockedGrant();
+        }
         if (waitingCount >= maxWaiting) {
           return rt::Promise<InferenceAdmissionResult>::resolve(InferenceAdmissionLocalOverload{.cause = "queue_limit", .waitedMs = 0});
         }
@@ -360,6 +440,8 @@ namespace uos::inference_admission {
           .limitingResource = "fixed",
           .memoryHeadroomBytes = {},
           .descriptorHeadroom = {},
+          .estimatedMaxActive = maxActive,
+          .resourceMaxActive = maxActive,
         };
         if (adaptive) adaptive->describe(result, active);
         return result;
