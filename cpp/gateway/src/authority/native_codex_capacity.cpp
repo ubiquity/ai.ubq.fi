@@ -641,10 +641,14 @@ namespace uos::authority::native_codex_capacity {
   CodexRoutingSlot releaseQuotaClassProbe(const CodexRoutingSlot& slot, std::string_view quotaClassKey, std::optional<std::string_view>) {
     const CodexRoutingSlot classAwareSlot = withLegacyQuotaClassMap(slot);
     const auto claimed = slot.probe_lease ? slot.probe_lease->quota_class.toOptional() : std::nullopt;
-    const bool namedClaim = claimed && isCodexCapacityModelScope(*claimed);
-    const auto key = namedClaim ? *claimed : quotaBlockKeyForClass(classAwareSlot, quotaClassKey).value_or(std::string(quotaClassKey));
-    const auto* block = namedClaim && classAwareSlot.quota_blocks_by_class ? classAwareSlot.quota_blocks_by_class->get(key) : nullptr;
-    const auto classBlock = namedClaim ? std::nullopt : quotaBlockForClass(classAwareSlot, quotaClassKey);
+    // A live lease owns the probe. Its class is authoritative even when the
+    // caller supplies another class, because a migrated legacy fallback can be
+    // the longest block and otherwise win quotaBlockKeyForClass.
+    const std::string key = claimed
+      ? std::string(*claimed)
+      : quotaBlockKeyForClass(classAwareSlot, quotaClassKey).value_or(std::string(quotaClassKey));
+    const auto* block = classAwareSlot.quota_blocks_by_class ? classAwareSlot.quota_blocks_by_class->get(key) : nullptr;
+    const auto classBlock = !block ? quotaBlockForClass(classAwareSlot, quotaClassKey) : std::nullopt;
     if (classBlock) block = &*classBlock;
     CodexRoutingSlot released = withoutQuotaClass(classAwareSlot, key);
     if (!classAwareSlot.banked_reset_recovery_probe_pending) return released;
