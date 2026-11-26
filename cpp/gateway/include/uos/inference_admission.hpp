@@ -55,6 +55,12 @@ namespace uos::inference_admission {
     std::optional<std::uint64_t> memoryHeadroomBytes;
     std::optional<std::uint64_t> descriptorHeadroom;
     double eventLoopLagMs = 0;
+    /** Sustained baseline capacity estimate, adjusted across fresh samples. */
+    double estimatedMaxActive = 0;
+    /** Baseline capacity from the latest resource sample, zero during a veto. */
+    double resourceMaxActive = 0;
+    /** The reopening rate is currently limiting the admission window. */
+    bool recoveryLimited = false;
   };
 
   /** Why the local finite guard rejected a request instead of admitting it. */
