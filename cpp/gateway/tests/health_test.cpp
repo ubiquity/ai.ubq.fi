@@ -240,7 +240,10 @@ ASYNC_TEST("public health reports release and admission with zero upstream and K
   const auto& admission = object(payload, "admission");
   EXPECT_EQ(rt::getNumber(admission, "active"), std::optional(snapshot.active));
   EXPECT_EQ(rt::getNumber(admission, "waiting"), std::optional(snapshot.waiting));
+  EXPECT_EQ(rt::getNumber(admission, "estimated_max_active"), std::optional(snapshot.estimatedMaxActive));
+  EXPECT_EQ(rt::getNumber(admission, "resource_max_active"), std::optional(snapshot.resourceMaxActive));
   EXPECT_EQ(rt::getNumber(admission, "max_active"), std::optional(snapshot.maxActive));
+  EXPECT_EQ(rt::getBool(admission, "recovery_limited"), std::optional(snapshot.recoveryLimited));
   EXPECT_EQ(rt::getNumber(admission, "max_waiting"), std::optional(snapshot.maxWaiting));
   EXPECT_EQ(rt::getString(admission, "limiting_resource"), std::optional<std::string_view>(snapshot.limitingResource));
   EXPECT_EQ(rt::getNumber(admission, "event_loop_lag_ms"), std::optional(snapshot.eventLoopLagMs));

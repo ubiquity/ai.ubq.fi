@@ -396,7 +396,10 @@ namespace uos::health {
       body.emplace("admission", json::object{
         {"active", rt::makeNumber(admission.active)},
         {"waiting", rt::makeNumber(admission.waiting)},
+        {"estimated_max_active", rt::makeNumber(admission.estimatedMaxActive)},
+        {"resource_max_active", rt::makeNumber(admission.resourceMaxActive)},
         {"max_active", rt::makeNumber(admission.maxActive)},
+        {"recovery_limited", admission.recoveryLimited},
         {"max_waiting", rt::makeNumber(admission.maxWaiting)},
         {"limiting_resource", admission.limitingResource},
         {"memory_headroom_bytes", admission.memoryHeadroomBytes ? json::value(*admission.memoryHeadroomBytes) : json::value(nullptr)},
