@@ -30,6 +30,7 @@ namespace uos::rt {
       bool used = false;
       // The stream of a stream body, or the stream `.body` made from the buffer.
       std::optional<ByteStream> stream;
+      std::optional<std::uint64_t> streamSizeUpperBound;
       // The content type for a body from URLSearchParams.
       std::string contentType;
     };
@@ -750,6 +751,7 @@ namespace uos::rt {
       auto [first, second] = source.stream->tee();
       source.stream = std::move(first);
       copy.stream = std::move(second);
+      copy.streamSizeUpperBound = source.streamSizeUpperBound;
       return copy;
     }
 
@@ -979,11 +981,21 @@ namespace uos::rt {
   const std::string& Request::cache() const { return state_->cache; }
 
   std::optional<ByteStream> Request::body() const { return bodyStream(state_->body); }
+  std::optional<std::uint64_t> Request::bodySizeUpperBound() const {
+    const auto& body = state_->body;
+    if (body.kind == BodyState::Kind::stream) return body.streamSizeUpperBound;
+    if (body.bytes) return body.bytes->size();
+    return body.text ? body.text->size() : 0;
+  }
   bool Request::bodyUsed() const { return isBodyUsed(state_->body); }
   Task<std::string> Request::text() const { return readText(startConsume(state_->body)); }
   Task<json::value> Request::json() const { return readJson(startConsume(state_->body)); }
   Task<Bytes> Request::arrayBuffer() const { return readBytes(startConsume(state_->body)); }
   Task<Bytes> Request::bytes() const { return readBytes(startConsume(state_->body)); }
+
+  void detail::setRequestBodyStreamSizeUpperBound(const Request& request, std::uint64_t upperBound) {
+    request.state()->body.streamSizeUpperBound = upperBound;
+  }
 
   void detail::transferBody(const Request& input, const Request& outgoing) {
     BodyState& source = input.state()->body;

@@ -26,7 +26,7 @@
 // src/provider/anthropic_response_wire.cpp src/responses_failover_stream.cpp src/catalog/promotion.cpp src/storage/sqlite_readonly.cpp src/codex/banked_reset_submission.cpp
 // src/paid_fallback/ledger_settlement.cpp src/authority/native_codex_429.cpp src/provider/removed_provider_telemetry.cpp src/codex/banked_reset_provider.cpp
 // src/codex/native_auth_transport.cpp src/provider/anthropic_chat_stream.cpp src/storage/native_kv.cpp src/codex/responses_error.cpp src/runtime/websocket.cpp
-// src/health.cpp src/provider/claude_code_access.cpp
+// src/health.cpp src/inference_admission.cpp src/provider/claude_code_access.cpp
 #include "uos/admin/index.hpp"
 #include "uos/cache/prompt_analytics_core.hpp"
 #include "uos/rt/fs.hpp"

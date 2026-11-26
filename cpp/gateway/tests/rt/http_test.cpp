@@ -4,6 +4,7 @@
 #include "uos/rt/test_async.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <limits>
 #include <optional>
@@ -1833,6 +1834,30 @@ ASYNC_TEST("Request, Response and body behaviour matches Bun on generated scenar
     }
   }
   EXPECT_EQ(mismatches, 0);
+}
+
+ASYNC_TEST("request body size metadata preserves body reads and clone semantics") {
+  const Request request("http://a/", RequestInit{.method = "POST", .headers = Headers{{"content-length", "1"}}, .body = Bytes{1, 2, 3}});
+  EXPECT_EQ(request.bodySizeUpperBound(), std::optional<std::uint64_t>(3));
+  EXPECT(!request.bodyUsed());
+  const auto clone = request.clone();
+  EXPECT_EQ(clone.bodySizeUpperBound(), request.bodySizeUpperBound());
+  EXPECT_EQ(co_await clone.bytes(), (Bytes{1, 2, 3}));
+  EXPECT(!request.bodyUsed());
+  const Request empty("http://a/");
+  EXPECT_EQ(empty.bodySizeUpperBound(), std::optional<std::uint64_t>(0));
+
+  UnderlyingSource<ByteChunk> source;
+  source.start = [](auto controller) { controller.enqueue(Bytes{4, 5}); controller.close(); };
+  const Request streamed("http://a/", RequestInit{.method = "POST", .body = ByteStream(std::move(source))});
+  EXPECT(!streamed.bodySizeUpperBound().has_value());
+  detail::setRequestBodyStreamSizeUpperBound(streamed, 7);
+  const Request copied = streamed.clone();
+  const Request replaced(copied, RequestInit{.body = std::string("new")});
+  EXPECT_EQ(copied.bodySizeUpperBound(), std::optional<std::uint64_t>(7));
+  EXPECT_EQ(replaced.bodySizeUpperBound(), std::optional<std::uint64_t>(3));
+  EXPECT(!streamed.bodyUsed());
+  EXPECT_EQ(co_await copied.bytes(), (Bytes{4, 5}));
 }
 
 ASYNC_TEST("Decoded file bytes survive scrubbing the raw request body") {

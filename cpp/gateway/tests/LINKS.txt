@@ -318,7 +318,7 @@ tests/admin_codex_scope_experiment_test.cpp: src/admin/codex.cpp src/http.cpp sr
     src/provider/removed_provider_telemetry.cpp src/codex/banked_reset_provider.cpp src/codex/native_auth_transport.cpp
     src/provider/anthropic_chat_stream.cpp src/storage/native_kv.cpp src/codex/responses_error.cpp
     src/runtime/websocket.cpp src/kv_conversion/profile_json.cpp
-tests/claude_code_models_test.cpp: src/health.cpp src/provider/claude_code_access.cpp src/admin/codex.cpp src/http.cpp
+tests/claude_code_models_test.cpp: src/health.cpp src/inference_admission.cpp src/provider/claude_code_access.cpp src/admin/codex.cpp src/http.cpp
     src/provider/presentation.cpp src/request.cpp src/cache/prompt_analytics_read.cpp
     src/cache/scope_experiment_targets.cpp tests/helpers/prompt_cache_scope_experiment_harness.cpp
     tests/helpers/codex_diff_kv.cpp src/cache/prompt_analytics_core.cpp src/debug_routing.cpp

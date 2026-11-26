@@ -771,6 +771,8 @@ namespace uos::runtime::http {
         incoming->url = rt::decodeUtf8(target, {.ignoreBOM = true});
         incoming->httpVersion = http11 ? "1.1" : "1.0";
         incoming->rawHeaders = std::move(rawHeaders);
+        // The oversized Chat error path dispatches the head and discards the body.
+        if (!oversized) incoming->bodySizeUpperBound_ = chunked ? parser.bodyBytesRemaining : remaining;
         if (oversized) input.clear();
         else input.erase(input.begin(), input.begin() + static_cast<std::ptrdiff_t>(consumed));
         if (isUpgrade && server && server->impl().listenerCount("upgrade") > 0) {
@@ -1724,7 +1726,10 @@ namespace uos::runtime::http {
         // `incoming.url ?? "/"`: a server request always has its target.
         const rt::URL url(incoming->url, "http://" + host);
         rt::Request request(url, std::move(init));
-        if (body) requestBodies.set(request, *body);
+        if (body) {
+          rt::detail::setRequestBodyStreamSizeUpperBound(request, incoming->bodySizeUpperBound());
+          requestBodies.set(request, *body);
+        }
         return request;
       } catch (...) {
         if (body) body->dispose();
