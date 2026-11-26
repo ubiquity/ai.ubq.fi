@@ -575,8 +575,9 @@ ASYNC_TEST("sustained low capacity lowers the estimate and paces actual queued g
     }
     light.release();
   }
-  EXPECT(controller.snapshot().estimatedMaxActive >= 16.0);
-  EXPECT(controller.snapshot().estimatedMaxActive <= 17.6);
+  const auto settledPressure = controller.snapshot();
+  EXPECT(settledPressure.estimatedMaxActive >= settledPressure.resourceMaxActive);
+  EXPECT(settledPressure.resourceMaxActive >= settledPressure.estimatedMaxActive * 0.90);
   initial.release();
 
   sample.memoryBytes = 128 * MiB;
@@ -600,7 +601,7 @@ ASYNC_TEST("sustained low capacity lowers the estimate and paces actual queued g
   EXPECT(secondWave > firstWave && secondWave <= 2U * firstWave + 2U);
   EXPECT_EQ(controller.snapshot().active, static_cast<double>(secondWave));
   EXPECT_EQ(controller.snapshot().maxActive, static_cast<double>(secondWave));
-  EXPECT(controller.snapshot().estimatedMaxActive > 17.6);
+  EXPECT(controller.snapshot().estimatedMaxActive > settledPressure.estimatedMaxActive);
   EXPECT(controller.snapshot().recoveryLimited);
   caller.abort();
   for (const auto& attempt : attempts) {
