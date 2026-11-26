@@ -57,7 +57,9 @@ The `admission` object on `GET /health` reports current `active` and `waiting` c
 | `max_active` | The enforced window, capped by the current resource limit and the pace of recovery. |
 | `recovery_limited` | Whether the recovery window currently limits admissions below the resource ceiling. |
 
-The first trustworthy sample initializes the estimate and window. The 10% deadband absorbs small fluctuations, such as a few requests opening or closing sockets on a gateway with capacity for thousands. The estimate adjusts after one second of consistent readings outside the deadband. Each fresh sample contributes up to 100 ms of evidence. A safety pause or a gap over 250 ms resets the streak. The estimate can double or halve over two seconds of qualifying samples. As headroom returns, the window can double over two seconds of fresh samples, with a minimum growth rate of four slots per second and a one-slot restart from zero.
+The first trustworthy sample initializes the estimate and window. The 10% deadband absorbs small fluctuations, such as a few requests opening or closing sockets on a gateway with capacity for thousands. The estimate adjusts after one second of consistent readings outside the deadband. Each fresh sample contributes up to 100 ms of evidence. A safety pause or a gap over 250 ms resets the streak. The estimate can double or halve over two seconds of qualifying samples.
+
+A lower resource ceiling caps grants immediately. When the ceiling blocks a grant or stays below the recovery window for one second, it also reduces that window. A brief dip with spare admission capacity can clear as soon as headroom returns. When the window has narrowed, it can double over two seconds of fresh samples, with a minimum growth rate of four slots per second and a one-slot restart from zero.
 
 A request reserves the greater of 1 MiB and four times its input size bound. The 1 MiB baseline rounds up the observed 0.86 MiB per additional stream in the 63 KB Codex burst. Fixed-length uploads use their validated length, buffered inputs use their actual size, and unknown-length uploads use their route's body budget.
 

@@ -10,4 +10,4 @@ The shared gateway admits new inference streams according to memory available to
 
 ## 2026-11-26 — Stable capacity estimates and gradual recovery
 
-The controller changes the long-term capacity estimate gradually in both directions. A lower measured resource ceiling immediately reduces the admission window. The window grows gradually as headroom returns under fresh demand. Missing readings and scheduling delays can suspend grants. `GET /health` reports the stable estimate, the latest resource ceiling, and the enforced admission window.
+The controller changes the long-term capacity estimate gradually in both directions. A lower measured resource ceiling immediately caps admissions. Pressure that blocks a grant or persists across fresh readings also narrows the recovery window. That window grows gradually as headroom returns. Missing readings and scheduling delays can suspend grants. `GET /health` reports the stable estimate, the latest resource ceiling, and the enforced admission window.
