@@ -46,6 +46,12 @@ lifetime. AddressSanitizer builds skip the trimming policy. The existing
 seccomp policy permits `prctl`, `madvise`, `munmap` and `brk` under Landlock.
 [Allocator measurements](findings/cppgw-memory-3-allocator-20261122.md)
 
+### Inference admission
+
+The `admission` object on `GET /health` reports active streams, waiting requests, the estimated capacity for small requests, and the resource currently limiting admission. The estimate can change during a run. Larger prompts reserve more working memory, so they can reduce the number of streams that fit. The gateway lets active requests finish when headroom falls.
+
+Use `memory_headroom_bytes` and `descriptor_headroom` to inspect the available resources after safety reserves. `event_loop_lag_ms` measures local scheduling delay. An upstream model can take longer to respond even when the local event loop is responsive. Excess requests may wait up to five seconds. Clients receive a retryable HTTP 503 when the gateway cannot admit them within its waiting budget.
+
 ### Process memory telemetry
 
 `GET /health` and the request terminal log include a `memory` object. Its
