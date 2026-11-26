@@ -126,8 +126,12 @@ def seed(args, state, command, environment, mock, auth):
 def terminals(log, reader, count, pending, *, failure=False, check_memory=False, provider="chatgpt_codex"):
     deadline = time.monotonic() + 10
     while len(pending) < count:
+        position = reader.tell()
         line = reader.readline()
-        if not line:
+        if not line.endswith("\n"):
+            # A live regular file can reach EOF in the middle of a log write.
+            # Retry the whole line once more bytes arrive, even a partial prefix.
+            reader.seek(position)
             require(time.monotonic() < deadline, f"Timed out waiting for {count} delivered terminals in {log}")
             time.sleep(0.01)
             continue
