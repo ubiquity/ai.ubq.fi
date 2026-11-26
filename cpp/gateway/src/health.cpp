@@ -49,6 +49,7 @@
 #include "uos/deepseek/index.hpp"
 #include "uos/deepseek/waterfall.hpp"
 #include "uos/http.hpp"
+#include "uos/inference_admission.hpp"
 #include "uos/kv.hpp"
 #include "uos/metered_quota.hpp"
 #include "uos/models/codex_models_fetch.hpp"
@@ -391,6 +392,17 @@ namespace uos::health {
       const auto gitSha = config::runtimeGitSha(); const auto deploymentId = config::runtimeDeploymentId();
       json::object body{{"status", "available"}, {"release", json::object{{"git_sha", gitSha}, {"deployment_id", deploymentId}}}};
       body.emplace("memory", rt::memory::snapshot(true));
+      const auto admission = inference_admission::inferenceAdmissionSnapshot();
+      body.emplace("admission", json::object{
+        {"active", rt::makeNumber(admission.active)},
+        {"waiting", rt::makeNumber(admission.waiting)},
+        {"max_active", rt::makeNumber(admission.maxActive)},
+        {"max_waiting", rt::makeNumber(admission.maxWaiting)},
+        {"limiting_resource", admission.limitingResource},
+        {"memory_headroom_bytes", admission.memoryHeadroomBytes ? json::value(*admission.memoryHeadroomBytes) : json::value(nullptr)},
+        {"descriptor_headroom", admission.descriptorHeadroom ? json::value(*admission.descriptorHeadroom) : json::value(nullptr)},
+        {"event_loop_lag_ms", rt::makeNumber(admission.eventLoopLagMs)},
+      });
       if (upstreamAuth) body.emplace("upstream_auth", std::move(*upstreamAuth));
       if (!confinementMode.empty()) body.emplace("confinement", confinementMode);
       return http::json(200, body, {{"Cache-Control", "no-store"}, {"x-uos-git-sha", gitSha}, {"x-uos-deployment-id", deploymentId}});

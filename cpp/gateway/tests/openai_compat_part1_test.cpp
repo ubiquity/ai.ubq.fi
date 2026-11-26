@@ -24,7 +24,7 @@
 // src/provider/anthropic_response_wire.cpp src/responses_failover_stream.cpp src/catalog/promotion.cpp src/storage/sqlite_readonly.cpp src/codex/banked_reset_submission.cpp
 // src/paid_fallback/ledger_settlement.cpp src/authority/native_codex_429.cpp src/provider/removed_provider_telemetry.cpp src/codex/banked_reset_provider.cpp
 // src/codex/native_auth_transport.cpp src/provider/anthropic_chat_stream.cpp src/storage/native_kv.cpp src/codex/responses_error.cpp src/runtime/websocket.cpp
-// src/health.cpp src/provider/claude_code_access.cpp tests/helpers/admin_auth_harness.cpp src/kv_conversion/profile_json.cpp
+// src/health.cpp src/inference_admission.cpp src/provider/claude_code_access.cpp tests/helpers/admin_auth_harness.cpp src/kv_conversion/profile_json.cpp
 // Port of the exact now-callable direct admin case in tests/openai-compat-part1.test.ts.
 // Remaining source cases need Responses/Chat/handler assembly and belong to their final owners.
 // This case touches KV get/set only: the existing admin auth KV fake is equivalent for this

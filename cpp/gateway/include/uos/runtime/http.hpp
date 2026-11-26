@@ -129,6 +129,8 @@ namespace uos::runtime::http {
       const std::shared_ptr<Socket>& socket() const noexcept { return socket_; }
       // `incoming.complete`: the whole body was received.
       bool complete() const;
+      // Bytes made available to the application by the native request parser.
+      std::uint64_t bodySizeUpperBound() const noexcept { return bodySizeUpperBound_; }
 
       // http_body::IncomingMessage: flowing-mode control ("data" events flow
       // after resume(), on a later microtask), listeners, readableEnded ("end"
@@ -150,6 +152,7 @@ namespace uos::runtime::http {
       std::shared_ptr<ConnectionState> connection_;
       std::shared_ptr<Socket> socket_;
       Emitter events_;
+      std::uint64_t bodySizeUpperBound_ = 0;
       bool complete_ = false;
       bool readableEnded_ = false;
     };

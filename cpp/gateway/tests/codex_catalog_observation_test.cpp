@@ -23,7 +23,7 @@
 // src/codex/routing_serial.cpp src/provider/anthropic_chat_stream.cpp src/authority/native_codex.cpp src/codex/routing_evaluation.cpp
 // src/storage/sqlite_readonly.cpp src/metered_quota.cpp src/provider/capacity_analytics.cpp
 // src/cache/prompt_analytics_read.cpp src/storage/native_kv.cpp src/codex/overage_settings.cpp tests/helpers/codex_diff_kv.cpp
-// src/health.cpp src/provider/claude_code_access.cpp
+// src/health.cpp src/inference_admission.cpp src/provider/claude_code_access.cpp
 // Port of all six tests/codex-catalog-observation.test.ts cases, in source order.
 // Representation-only gap: TS lines77-116 monkeypatch Response.clone/text and clone reader methods.
 // The instance clone/read/release call counts and clone-only cancellation Promise are not exposed by

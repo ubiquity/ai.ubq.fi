@@ -200,6 +200,9 @@ namespace uos::rt {
     const std::string& cache() const;
 
     std::optional<ByteStream> body() const;
+    // Retained buffer size or the native transport's stream bound. An opaque
+    // stream without transport metadata has no known bound.
+    std::optional<std::uint64_t> bodySizeUpperBound() const;
     bool bodyUsed() const;
     [[nodiscard]] Task<std::string> text() const;
     [[nodiscard]] Task<json::value> json() const;
@@ -223,6 +226,8 @@ namespace uos::rt {
   using RequestInfo = std::variant<std::string, URL, Request>;
 
   namespace detail {
+    // Inbound adapters attach parser-validated metadata before dispatch.
+    void setRequestBodyStreamSizeUpperBound(const Request& request, std::uint64_t upperBound);
     // fetch(request): moves `input`'s body into `outgoing` (which has none),
     // leaving `input` used, as Bun's fetch consumes a Request's body.
     void transferBody(const Request& input, const Request& outgoing);
