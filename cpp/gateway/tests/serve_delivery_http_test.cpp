@@ -33,6 +33,7 @@
 //   tests/helpers/counting_kv.cpp tests/helpers/loopback_http.cpp src/runtime/http.cpp src/runtime/http_body.cpp src/runtime/http_upgrade.cpp
 #include "tests/helpers/terminal_log_harness.hpp"
 #include "tests/helpers/loopback_http.hpp"
+#include "tests/helpers/responses_conformance_client.hpp"
 #include "uos/handler/admission.hpp"
 #include "uos/runtime/http.hpp"
 #include "uos/runtime/http_tasks.hpp"
@@ -142,6 +143,7 @@ ASYNC_TEST("the gateway rejects oversized Chat uploads at the head with the norm
 
 ASYNC_TEST("native HTTP reserves decoded request bytes at inference admission") {
   fixture::Isolation isolation;
+  tests::helpers::responses_conformance_client::stageGatewayAssets();
   const auto savedConfig = config::config;
   const auto restore = rt::scopeExit([savedConfig] { config::config = savedConfig; });
   config::config.isDeploy = true;
