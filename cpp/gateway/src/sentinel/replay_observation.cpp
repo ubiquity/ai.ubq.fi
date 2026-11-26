@@ -594,7 +594,14 @@ namespace uos::sentinel::replay_observation {
     });
     request::observeRawBodyOnce(
       req, [candidate](std::shared_ptr<rt::Bytes> bytes) { candidate->body = std::move(bytes); },
-      [candidate](const std::string& reason) { candidate->body_omitted_reason = reason; }, request::RawBodyStage::received);
+      [candidate](const std::string& reason) {
+        candidate->body_omitted_reason = reason;
+        if (reason == "body_invalid" && candidate->body) {
+          zero(*candidate->body);
+          candidate->body = nullptr;
+        }
+      },
+      request::RawBodyStage::received);
     return candidate;
   }
 
