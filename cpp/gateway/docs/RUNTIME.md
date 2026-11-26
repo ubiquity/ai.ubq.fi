@@ -48,9 +48,20 @@ seccomp policy permits `prctl`, `madvise`, `munmap` and `brk` under Landlock.
 
 ### Inference admission
 
-The `admission` object on `GET /health` reports active and waiting requests alongside the most recent admission sample. Reading health leaves the sampler idle. `max_active` estimates how many baseline-sized requests fit under that sample. A request reserves the greater of 1 MiB and four times its input size bound. The 1 MiB baseline rounds up the observed 0.86 MiB per additional stream in the 63 KB Codex burst. Fixed-length uploads use their validated length, buffered inputs use their actual size, and unknown-length uploads use their route's body budget.
+The `admission` object on `GET /health` reports current `active` and `waiting` counts and reads the controller's cached capacity. The capacity fields describe total concurrent baseline-sized requests. The number of open baseline slots is at most `max(0, max_active - active)`.
 
-The sampler reserves 20% of host memory and of each visible, finite Linux cgroup v2 memory limit. The tightest budget controls admission. It also reserves 32 process descriptors and budgets for client and upstream sockets. `memory_headroom_bytes` and `descriptor_headroom` show the last usable budgets after those reserves. Missing required readings pause new grants. Existing streams retain their permits while the gateway is under pressure.
+| Field | Meaning |
+| --- | --- |
+| `estimated_max_active` | The primary capacity reading for operators. It tracks sustained changes in the resources available for inference. |
+| `resource_max_active` | The instantaneous ceiling from the latest resource readings, or zero during a safety pause. |
+| `max_active` | The enforced window, capped by the current resource limit and the pace of recovery. |
+| `recovery_limited` | Whether the recovery window currently limits admissions below the resource ceiling. |
+
+The first trustworthy sample initializes the estimate and window. The 10% deadband absorbs small fluctuations, such as a few requests opening or closing sockets on a gateway with capacity for thousands. The estimate adjusts after one second of consistent readings outside the deadband. Each fresh sample contributes up to 100 ms of evidence. A safety pause or a gap over 250 ms resets the streak. The estimate can double or halve over two seconds of qualifying samples. As headroom returns, the window can double over two seconds of fresh samples, with a minimum growth rate of four slots per second and a one-slot restart from zero.
+
+A request reserves the greater of 1 MiB and four times its input size bound. The 1 MiB baseline rounds up the observed 0.86 MiB per additional stream in the 63 KB Codex burst. Fixed-length uploads use their validated length, buffered inputs use their actual size, and unknown-length uploads use their route's body budget.
+
+The sampler reserves 20% of host memory and of each visible, finite Linux cgroup v2 memory limit. The tightest budget controls admission. It also reserves 32 process descriptors and budgets for client and upstream sockets. `memory_headroom_bytes` and `descriptor_headroom` show the last usable budgets after those reserves. Missing required readings pause new grants. Existing streams retain their permits while the gateway is under pressure. A lowered process descriptor limit, such as 192 descriptors, can immediately reduce the enforced window based on current descriptor use.
 
 The controller samples at most once per 100 ms of demand. If its local event-loop probe is at least 250 ms late, it pauses new grants until two probes arrive no more than 100 ms late. `limiting_resource` identifies memory, descriptors, scheduling delay, or a missing reading. `event_loop_lag_ms` measures local scheduling delay independently of provider latency.
 
