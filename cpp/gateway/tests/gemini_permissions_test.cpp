@@ -7,6 +7,7 @@
 #include "uos/rt/process.hpp"
 #include "uos/rt/test_async.hpp"
 
+#include <algorithm>
 #include <cerrno>
 #include <filesystem>
 #include <stdexcept>
@@ -135,6 +136,10 @@ TEST("Antigravity denies direct execution of a different ELF and limits loader v
   EXPECT_EQ(profiles.gateway.execute, (std::vector<std::string>{fixture.agy, loader}));
   EXPECT_EQ(profiles.antigravity->execute, profiles.gateway.execute);
   EXPECT_EQ(profiles.antigravity->write, std::vector<std::string>{fixture.cliState});
+  auto libmPath = fs::path("/usr/lib/aarch64-linux-gnu/libm.so.6");
+  if (!fs::is_regular_file(libmPath)) libmPath = fs::path("/usr/lib/libm.so.6");
+  const auto libm = fs::canonical(libmPath).string();
+  EXPECT(std::find(profiles.antigravity->read.begin(), profiles.antigravity->read.end(), libm) != profiles.antigravity->read.end());
   std::fflush(nullptr);
   const pid_t child = ::fork();
   ASSERT(child >= 0);
