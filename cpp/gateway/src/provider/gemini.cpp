@@ -79,10 +79,25 @@ namespace uos::provider::gemini {
         instructions && !rt::trim(*instructions).empty() ? std::optional<std::string>(*instructions) : std::nullopt};
     }
 
-    bool hasDeclaredTools(const json::object& rawRecord) {
-      const auto* tools = rt::get(rawRecord, "tools");
-      return tools && !tools->is_null() && !(tools->is_array() && tools->as_array().empty());
+    const json::object* declaredTool(const json::value& tool) {
+      if (!tool.is_object()) return nullptr;
+      const auto* function = rt::getObject(tool, "function");
+      return function ? function : &tool.as_object();
     }
+
+    bool hasDeclaredTool(const json::object& rawRecord, std::string_view name) {
+      const auto* tools = rt::getArray(rawRecord, "tools");
+      if (!tools) return false;
+      return std::any_of(tools->begin(), tools->end(), [name](const auto& tool) {
+        const auto* function = declaredTool(tool);
+        return function && rt::getString(*function, "name") == name;
+      });
+    }
+
+    struct ToolCall {
+      std::string name;
+      std::string arguments;
+    };
 
     std::optional<std::string> textFromContent(const ::uos::types::MessageContentItem& item) {
       if (const auto* text = std::get_if<::uos::types::MessageContentItemInputText>(&item)) return text->text;
@@ -94,6 +109,41 @@ namespace uos::provider::gemini {
       std::string text;
       std::optional<std::string> schema{};
     };
+
+    std::string jsonText(const json::value& value) {
+      return value.is_string() ? rt::toString(value) : rt::jsonStringify(value);
+    }
+
+    void appendGenericInputItem(std::string& prompt, const json::object& item) {
+      const auto type = rt::getString(item, "type").value_or("");
+      if (type == "function_call" || type == "custom_tool_call") {
+        const auto name = rt::getString(item, "name").value_or("");
+        const auto arguments = rt::get(item, "arguments") ? jsonText(*rt::get(item, "arguments")) : rt::getString(item, "input").value_or("");
+        prompt += "\n\nAssistant tool call:\n" + std::string(name) + "\nArguments:\n" + std::string(arguments);
+        return;
+      }
+      if (type == "function_call_output" || type == "custom_tool_call_output") {
+        const auto callId = rt::getString(item, "call_id").value_or("");
+        const auto* output = rt::get(item, "output");
+        prompt += "\n\nTool result for " + std::string(callId) + ":\n" + (output ? jsonText(*output) : std::string());
+        return;
+      }
+      if (type == "reasoning") return;
+      throw GeminiError(400, "gemini_unsupported_content", "Gemini subscription does not support input item type " + std::string(type) + ".");
+    }
+
+    void appendToolProtocol(std::string& prompt, const json::object& rawRecord) {
+      const auto* tools = rt::get(rawRecord, "tools");
+      if (!tools || tools->is_null() || (tools->is_array() && tools->as_array().empty())) {
+        prompt += "\n\nAnswer the latest user request directly. Do not invoke tools, browse, execute commands, or modify files.";
+        return;
+      }
+      prompt += "\n\nThe Codex client owns tool execution. Available tool declarations:\n" + rt::jsonStringify(*tools);
+      prompt += "\n\nWhen a tool is needed, reply with exactly one JSON object and no markdown or other text: "
+                R"({"type":"tool_call","name":"<exact tool name>","arguments":{...}})";
+      prompt += "\nUse only a name present in the declarations and supply arguments that satisfy its parameter schema. "
+                "The client will execute the call and return a function_call_output item. When no tool is needed, answer normally without a tool_call object.";
+    }
 
     void appendMessage(std::string& prompt, std::string_view role, const std::vector<::uos::types::MessageContentItem>& content) {
       std::vector<std::string> text;
@@ -138,10 +188,10 @@ namespace uos::provider::gemini {
           appendMessage(result.text, role, message->content);
           continue;
         }
-        throw GeminiError(400, "gemini_unsupported_content", "Gemini subscription accepts message text only; tool and generated-item replay is not supported.");
+        appendGenericInputItem(result.text, std::get<json::object>(item));
       }
       if (rt::trim(result.text).empty()) throw GeminiError(400, "gemini_empty_prompt", "Gemini subscription requires non-empty input.");
-      result.text += "\n\nAnswer the latest user request directly. Do not invoke tools, browse, execute commands, or modify files.";
+      appendToolProtocol(result.text, rawRecord);
       result.schema = jsonSchemaForResponses(rawRecord);
       return result;
     }
@@ -163,13 +213,31 @@ namespace uos::provider::gemini {
             appendMessage(result.text, role, message->content);
             continue;
           }
-          throw GeminiError(400, "gemini_unsupported_content", "Gemini subscription accepts message text only; tool calls and tool outputs are not supported.");
+          appendGenericInputItem(result.text, std::get<json::object>(item));
         }
       }
       if (rt::trim(result.text).empty()) throw GeminiError(400, "gemini_empty_prompt", "Gemini subscription requires non-empty messages.");
-      result.text += "\n\nAnswer the latest user request directly. Do not invoke tools, browse, execute commands, or modify files.";
+      appendToolProtocol(result.text, rawRecord);
       result.schema = jsonSchemaForChat(rawRecord);
       return result;
+    }
+
+    std::optional<ToolCall> parseToolCall(const std::string& response, const json::object& rawRecord) {
+      const std::string trimmed = rt::trim(response);
+      if (trimmed.empty() || trimmed.front() != '{') return std::nullopt;
+      json::value parsed;
+      try {
+        parsed = rt::jsonParse(trimmed);
+      } catch (...) {
+        return std::nullopt;
+      }
+      if (!parsed.is_object()) return std::nullopt;
+      const auto type = rt::getString(parsed, "type");
+      if (type != std::optional<std::string_view>("tool_call") && type != std::optional<std::string_view>("function_call")) return std::nullopt;
+      const auto name = rt::getString(parsed, "name");
+      if (!name || !hasDeclaredTool(rawRecord, *name)) return std::nullopt;
+      const auto* arguments = rt::get(parsed, "arguments");
+      return ToolCall{std::string(*name), arguments ? jsonText(*arguments) : std::string("{}")};
     }
 
     std::string agyPath() {
@@ -305,8 +373,7 @@ namespace uos::provider::gemini {
 
   std::optional<std::string> geminiUpstreamModelFor(std::string_view model) {
     const std::string trimmed = rt::trim(model);
-    if (std::find(GEMINI_MODEL_IDS.begin(), GEMINI_MODEL_IDS.end(), trimmed) == GEMINI_MODEL_IDS.end()) return std::nullopt;
-    return trimmed;
+    return geminiModelDefinition(trimmed) ? std::optional<std::string>(std::move(trimmed)) : std::nullopt;
   }
 
   bool isGeminiModel(std::string_view model) { return geminiUpstreamModelFor(model).has_value(); }
@@ -455,9 +522,8 @@ namespace uos::provider::gemini {
     }
 
     std::string reasoningForModel(const std::string& model) {
-      if (rt::endsWith(model, "-high")) return "high";
-      if (rt::endsWith(model, "-medium")) return "medium";
-      return "low";
+      const auto* definition = geminiModelDefinition(model);
+      return definition ? std::string(definition->reasoning_effort) : std::string();
     }
 
     std::string normalizedId(std::string_view raw, std::string_view prefix) {
@@ -480,10 +546,20 @@ namespace uos::provider::gemini {
     }
 
     json::object syntheticCompletion(const std::string& id, const std::string& model, double created, const std::string& text,
-      const std::optional<tel::UsageTokens>& usage) {
+      const std::optional<tel::UsageTokens>& usage, const std::optional<ToolCall>& toolCall = std::nullopt,
+      const std::string& callId = "") {
+      json::object message{{"role", "assistant"}};
+      std::string finishReason = "stop";
+      if (toolCall) {
+        message["content"] = nullptr;
+        message["tool_calls"] = json::array{json::object{{"id", callId}, {"type", "function"},
+          {"function", json::object{{"name", toolCall->name}, {"arguments", toolCall->arguments}}}}};
+        finishReason = "tool_calls";
+      } else {
+        message["content"] = text;
+      }
       json::object result{{"id", id}, {"object", "chat.completion"}, {"created", rt::makeNumber(created)}, {"model", model},
-        {"choices", json::array{json::object{{"index", rt::makeNumber(0.0)}, {"message", json::object{{"role", "assistant"}, {"content", text}}},
-          {"finish_reason", "stop"}}}}};
+        {"choices", json::array{json::object{{"index", rt::makeNumber(0.0)}, {"message", std::move(message)}, {"finish_reason", finishReason}}}}};
       if (usage) result["usage"] = chatUsageObject(*usage);
       return result;
     }
@@ -593,7 +669,6 @@ namespace uos::provider::gemini {
     try {
       const auto model = geminiUpstreamModelFor(modelRaw);
       if (!model) throw GeminiError(400, "gemini_model_unknown", "Gemini subscription does not support model " + modelRaw + ".");
-      if (hasDeclaredTools(rawRecord)) throw GeminiError(400, "gemini_tools_unsupported", "Gemini subscription Chat Completions is text-only and does not translate caller tools.");
       auto prepared = prepareCommon(rawRecord, promptForChat(rawRecord));
       prepared.reasoning = reasoningForModel(*model);
       streamRequested = prepared.stream;
@@ -618,6 +693,8 @@ namespace uos::provider::gemini {
     const auto usage = geminiUsageTokens(turn->usage);
     const double created = rt::Math::floor(rt::dateNow() / 1000);
     const std::string id = normalizedId(turn->conversationId.value_or(""), "chatcmpl-");
+    const auto toolCall = parseToolCall(turn->response, rawRecord);
+    const std::string callId = toolCall ? normalizedId(turn->conversationId.value_or("") + toolCall->name + toolCall->arguments, "call_") : std::string();
     if (usageContext && usageContext->responseTelemetry) usageContext->responseTelemetry->providerRequestId = turn->conversationId;
     if (effectiveOptions.refreshQuota) {
       rt::spawn(admin::gemini_quota::refreshSnapshot(rt::path::resolve(rt::process::cwd(), ".data"),
@@ -632,13 +709,20 @@ namespace uos::provider::gemini {
     rt::Headers headers{{"x-uos-upstream", "gemini"}};
     if (turn->conversationId) headers.set("x-uos-provider-request-id", *turn->conversationId);
     if (!streamRequested) {
-      auto body = syntheticCompletion(id, modelRaw, created, turn->response, usage);
+      auto body = syntheticCompletion(id, modelRaw, created, turn->response, usage, toolCall, callId);
       if (!turn->deniedActions.empty()) body["uos_warnings"] = json::array{"Antigravity requested a tool that headless gateway inference cannot approve."};
       co_return http::json(200, body, headers);
     }
+    json::object delta{{"role", "assistant"}};
+    const std::string finishReason = toolCall ? "tool_calls" : "stop";
+    if (toolCall) {
+      delta["tool_calls"] = json::array{json::object{{"index", rt::makeNumber(0.0)}, {"id", callId}, {"type", "function"},
+        {"function", json::object{{"name", toolCall->name}, {"arguments", toolCall->arguments}}}}};
+    } else {
+      delta["content"] = turn->response;
+    }
     std::string stream = "data: " + rt::jsonStringify(json::object{{"id", id}, {"object", "chat.completion.chunk"}, {"created", rt::makeNumber(created)},
-      {"model", modelRaw}, {"choices", json::array{json::object{{"index", rt::makeNumber(0.0)}, {"delta", json::object{{"role", "assistant"}, {"content", turn->response}}},
-        {"finish_reason", "stop"}}}}}) + "\n\n";
+      {"model", modelRaw}, {"choices", json::array{json::object{{"index", rt::makeNumber(0.0)}, {"delta", std::move(delta)}, {"finish_reason", finishReason}}}}}) + "\n\n";
     if (includeUsage && usage) stream += "data: " + rt::jsonStringify(json::object{{"id", id}, {"object", "chat.completion.chunk"}, {"created", rt::makeNumber(created)},
       {"model", modelRaw}, {"choices", json::array{}}, {"usage", chatUsageObject(*usage)}}) + "\n\n";
     stream += "data: [DONE]\n\n";
@@ -661,7 +745,6 @@ namespace uos::provider::gemini {
     try {
       const auto model = geminiUpstreamModelFor(modelRaw);
       if (!model) throw GeminiError(400, "gemini_model_unknown", "Gemini subscription does not support model " + modelRaw + ".");
-      if (hasDeclaredTools(rawRecord)) throw GeminiError(400, "gemini_tools_unsupported", "Gemini subscription Responses is text-only and does not translate caller tools.");
       const auto input = ::uos::responses_request::normalizeResponsesInput(rt::get(rawRecord, "input"));
       if (const auto* invalidInput = std::get_if<::uos::responses_request::ResponsesStepNotOk>(&input)) co_return invalidInput->response;
       auto prepared = prepareCommon(rawRecord, promptForResponses(rawRecord,
@@ -691,9 +774,11 @@ namespace uos::provider::gemini {
     const std::string rawId = turn->conversationId.value_or("");
     const std::string responseId = normalizedId(rawId, "resp_");
     const std::string chatId = normalizedId(rawId, "chatcmpl-");
+    const auto toolCall = parseToolCall(turn->response, rawRecord);
+    const std::string callId = toolCall ? normalizedId(rawId + toolCall->name + toolCall->arguments, "call_") : std::string();
     if (usageContext && usageContext->responseTelemetry) usageContext->responseTelemetry->providerRequestId = turn->conversationId;
     const auto echo = responsesEcho(rawRecord);
-    const auto completion = syntheticCompletion(chatId, modelRaw, created, turn->response, usage);
+    const auto completion = syntheticCompletion(chatId, modelRaw, created, turn->response, usage, toolCall, callId);
     rt::Headers headers{{"x-uos-upstream", "gemini"}};
     if (turn->conversationId) headers.set("x-uos-provider-request-id", *turn->conversationId);
     if (effectiveOptions.refreshQuota) {
@@ -711,8 +796,15 @@ namespace uos::provider::gemini {
     if (!streamRequested) co_return http::json(200, body, headers);
     auto translator = deepseek::responses_stream::createDeepSeekResponsesStreamTranslator(modelRaw, responseId, echo, created);
     auto events = translator.open();
-    json::object completionChunk{{"choices", json::array{json::object{{"index", rt::makeNumber(0.0)},
-      {"delta", json::object{{"role", "assistant"}, {"content", turn->response}}}, {"finish_reason", "stop"}}}}};
+    json::object delta{{"role", "assistant"}};
+    const std::string finishReason = toolCall ? "tool_calls" : "stop";
+    if (toolCall) {
+      delta["tool_calls"] = json::array{json::object{{"index", rt::makeNumber(0.0)}, {"id", callId}, {"type", "function"},
+        {"function", json::object{{"name", toolCall->name}, {"arguments", toolCall->arguments}}}}};
+    } else {
+      delta["content"] = turn->response;
+    }
+    json::object completionChunk{{"choices", json::array{json::object{{"index", rt::makeNumber(0.0)}, {"delta", std::move(delta)}, {"finish_reason", finishReason}}}}};
     if (usage) completionChunk["usage"] = chatUsageObject(*usage);
     auto pushed = translator.push(completionChunk);
     events.insert(events.end(), pushed.begin(), pushed.end());

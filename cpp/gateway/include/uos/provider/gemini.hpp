@@ -20,14 +20,29 @@
 #include <vector>
 
 namespace uos::provider::gemini {
-  inline constexpr std::array<std::string_view, 3> GEMINI_MODEL_IDS{
-    "gemini-3.8-flash-high",
-    "gemini-3.8-flash-medium",
-    "gemini-3.8-flash-low",
+  struct GeminiModelDefinition {
+    std::string_view id;
+    std::string_view display_name;
+    std::string_view reasoning_effort;
+    double context_window_tokens;
   };
+
+  inline constexpr std::array<GeminiModelDefinition, 7> GEMINI_MODELS{{
+    {"gemini-4-neon-low", "Gemini 4 Neon (Low)", "low", 524'288},
+    {"gemini-4-neon-medium", "Gemini 4 Neon (Medium)", "medium", 524'288},
+    {"gemini-4-neon-high", "Gemini 4 Neon (High)", "high", 524'288},
+    {"gemini-4-neon-xhigh", "Gemini 4 Neon (XHigh)", "xhigh", 524'288},
+    {"gemini-3.8-flash-high", "Gemini 3.8 Flash (High)", "high", 1'048'576},
+    {"gemini-3.8-flash-medium", "Gemini 3.8 Flash (Medium)", "medium", 1'048'576},
+    {"gemini-3.8-flash-low", "Gemini 3.8 Flash (Low)", "low", 1'048'576},
+  }};
   inline constexpr std::string_view GEMINI_PROVIDER_ID = "gemini";
   inline constexpr std::string_view GEMINI_OPT_IN_ENV = "UOS_GATEWAY_ENABLE_ANTIGRAVITY";
-  inline constexpr double GEMINI_CONTEXT_WINDOW_TOKENS = 1'048'576;
+
+  inline const GeminiModelDefinition* geminiModelDefinition(std::string_view model) {
+    for (const auto& definition : GEMINI_MODELS) if (definition.id == model) return &definition;
+    return nullptr;
+  }
 
   std::optional<std::string> geminiUpstreamModelFor(std::string_view model);
   bool isGeminiModel(std::string_view model);

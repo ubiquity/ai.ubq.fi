@@ -8,6 +8,7 @@
 #include "uos/models/codex_models_fetch.hpp"
 #include "uos/models/codex_models_whitelist.hpp"
 #include "uos/models/openrouter_models.hpp"
+#include "uos/provider/gemini.hpp"
 #include "uos/provider/metered.hpp"
 #include "uos/provider/openrouter.hpp"
 #include "uos/provider/selection.hpp"
@@ -70,7 +71,9 @@ namespace {
     ::uos::models::openrouter_models::warmOpenRouterModels();
     rt::Headers headers{{"Content-Type", catalog->metadata.content_type}, {"Cache-Control", "private, max-age=300, stale-while-revalidate=86400"}, {"x-uos-upstream", "chatgpt_codex"}, {"x-uos-cache", cacheState}};
     auto selected = co_await selection::loadProviderSelectionCached();
-    const bool codex = selection::isProviderEnabled("codex", selected), deepseek = selection::isProviderEnabled("deepseek", selected), waterfall = deepseek::waterfall::deepSeekWaterfallCatalogEnabled(selected), lithos = selection::isProviderEnabled("lithos", selected), cerebras = selection::isProviderEnabled("cerebras", selected), openrouter = selection::isProviderEnabled("openrouter", selected) && provider::openrouter::readOpenRouterApiKey().has_value();
+    const bool codex = selection::isProviderEnabled("codex", selected), gemini = selection::isProviderEnabled("gemini", selected) && provider::gemini::geminiCliConfigured(),
+      deepseek = selection::isProviderEnabled("deepseek", selected), waterfall = deepseek::waterfall::deepSeekWaterfallCatalogEnabled(selected), lithos = selection::isProviderEnabled("lithos", selected),
+      cerebras = selection::isProviderEnabled("cerebras", selected), openrouter = selection::isProviderEnabled("openrouter", selected) && provider::openrouter::readOpenRouterApiKey().has_value();
     auto kvp = kv::getKv(); auto database = co_await kvp.wait();
     auto wl = co_await whitelist::loadCodexModelsWhitelist(database);
     rt::Promise<Paid> paidTask(enabledPaidCatalogSources(selected)); rt::Promise<Claude> claudeTask(enabledClaudeCatalog(selected));
@@ -80,7 +83,7 @@ namespace {
     if (const auto& m = std::get<0>(paid); m && now - m->updated_at_ms >= provider::metered::METERED_MODELS_CACHE_TTL_MS) rt::spawn(provider::metered::fetchMeteredModels(), rt::ignoreRejection);
     if (const auto& s = std::get<1>(paid); s && now - s->updated_at_ms >= provider::surplus::SURPLUS_MODELS_CACHE_TTL_MS) rt::spawn(provider::surplus::fetchSurplusModels(), rt::ignoreRejection);
     auto paidRows = paidModels(paid);
-    if ((!wl || wl->model_ids.empty()) && paidRows.empty() && (!claude || claude->models.empty()) && !deepseek && !waterfall && !lithos && !cerebras && !openrouter && codex) {
+    if ((!wl || wl->model_ids.empty()) && paidRows.empty() && (!claude || claude->models.empty()) && !gemini && !deepseek && !waterfall && !lithos && !cerebras && !openrouter && codex) {
       co_return bodyResponse(catalog->body, req, headers, catalogBodyEtag(catalog->body));
     }
     json::value parsed(catalog->parsed);
@@ -97,6 +100,7 @@ namespace {
       }
     }
     if (claude && !claude->models.empty()) rows = models::withClaudeCodeModels(std::move(rows), claude->models);
+    if (gemini) rows = models::withGeminiModels(std::move(rows));
     if (deepseek) rows = models::withDeepSeekOfficialModels(std::move(rows));
     if (waterfall) rows = models::withDeepSeekWaterfallModel(std::move(rows));
     if (lithos) rows = models::withLithosModels(std::move(rows));
@@ -112,10 +116,12 @@ namespace {
     rt::Promise<Paid> paidTask(enabledPaidCatalogSources(selected, true)); rt::Promise<Claude> claudeTask(enabledClaudeCatalog(selected));
     auto catalogs = co_await rt::all(paidTask, claudeTask).wait();
     auto paid = paidModels(std::get<0>(catalogs)); const auto& claude = std::get<1>(catalogs);
-    const bool deepseek = selection::isProviderEnabled("deepseek", selected), lithos = selection::isProviderEnabled("lithos", selected), cerebras = selection::isProviderEnabled("cerebras", selected), openrouter = selection::isProviderEnabled("openrouter", selected), waterfall = deepseek::waterfall::deepSeekWaterfallCatalogEnabled(selected);
+    const bool gemini = selection::isProviderEnabled("gemini", selected) && provider::gemini::geminiCliConfigured(), deepseek = selection::isProviderEnabled("deepseek", selected),
+      lithos = selection::isProviderEnabled("lithos", selected), cerebras = selection::isProviderEnabled("cerebras", selected), openrouter = selection::isProviderEnabled("openrouter", selected), waterfall = deepseek::waterfall::deepSeekWaterfallCatalogEnabled(selected);
     const std::vector<provider::claude_code_models::ClaudeCodeModel> empty;
     auto configured = models::claudeCodeCodexModels(claude ? claude->models : empty);
     if (waterfall) configured = models::withDeepSeekWaterfallModel(std::move(configured));
+    if (gemini) configured = models::withGeminiModels(std::move(configured));
     auto append = [&](const json::array& more) { for (const auto& row : more) configured.push_back(row); };
     if (deepseek) append(models::deepSeekOfficialCodexModels());
     if (lithos) append(models::lithosCodexModels());
@@ -127,6 +133,7 @@ namespace {
     for (const auto& model : paid) rows.push_back(models::meteredCodexModelRecord(model.as_object(), records.get(rt::getString(model, "id").value_or(""))));
     if (deepseek) rows = models::withDeepSeekOfficialModels(std::move(rows));
     if (waterfall) rows = models::withDeepSeekWaterfallModel(std::move(rows));
+    if (gemini) rows = models::withGeminiModels(std::move(rows));
     if (lithos) rows = models::withLithosModels(std::move(rows));
     if (cerebras) rows = models::withCerebrasModels(std::move(rows));
     if (openrouter) rows = models::withOpenRouterModels(std::move(rows));

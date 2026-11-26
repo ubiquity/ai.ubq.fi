@@ -28,6 +28,7 @@
 #include "uos/catalog/store.hpp"
 #include "uos/catalog/types.hpp"
 #include "uos/models/openrouter_models.hpp"
+#include "uos/models/codex_models_whitelist.hpp"
 #include "tests/helpers/codex_diff_kv.hpp"
 #include "uos/catalog/index.hpp"
 #include "uos/models/catalog.hpp"
@@ -44,6 +45,7 @@
 #include "uos/rt/crypto.hpp"
 #include "uos/rt/env.hpp"
 #include "uos/rt/fetch.hpp"
+#include "uos/rt/fs.hpp"
 #include "uos/rt/string.hpp"
 
 #include "uos/rt/clock.hpp"
@@ -263,6 +265,31 @@ ASYNC_TEST("codex catalog: exact versions preserve rich JSON, isolate caches, an
   AWAIT(hit, catalog("0.144.3")); EXPECT_EQ(hit.headers().get("x-uos-cache"), "hit"); EXPECT_EQ(calls.size(), 1u);
   AWAIT(second, catalog("0.145.0")); EXPECT_EQ(second.status(), 200); EXPECT_EQ(calls.size(), 2u); AWAIT(secondBody, second.json()); EXPECT_EQ(rt::getString(secondBody, "version_marker"), "0.145.0");
   const rt::Headers headers{{"If-None-Match", etag}}; AWAIT(notModified, catalog("0.144.3", headers)); EXPECT_EQ(notModified.status(), 304); AWAIT(empty, notModified.text()); EXPECT_EQ(empty, ""); EXPECT_EQ(calls.size(), 2u);
+}
+ASYNC_TEST("codex catalog: configured Gemini Neon tiers are available to exact-version Codex clients") {
+  CatalogFixture fixture;
+  const std::string home = rt::fs::mkdtempSync("/tmp/gemini-codex-catalog-");
+  const auto cleanup = rt::scopeExit([home] { rt::fs::rmSync(home, {.recursive = true, .force = true}); });
+  rt::fs::mkdirSync(home + "/.local/bin", {.recursive = true, .mode = 0700});
+  rt::fs::mkdirSync(home + "/.gemini/antigravity-cli", {.recursive = true, .mode = 0700});
+  rt::fs::writeFileSync(home + "/.local/bin/agy", "fixture", {.flag = "wx", .mode = 0700});
+  rt::fs::writeFileSync(home + "/.gemini/antigravity-cli/antigravity-oauth-token", "fixture", {.flag = "wx", .mode = 0600});
+  const rt::env::ScopedOverride geminiEnvironment{{"HOME", home}, {"UOS_GATEWAY_ENABLE_ANTIGRAVITY", "1"}};
+  fixture.kv->put(uos::models::codex_models_whitelist::CODEX_MODELS_WHITELIST_KV_KEY, json::object{{"model_ids",
+    json::array{"gemini-4-neon-low", "gemini-4-neon-medium", "gemini-4-neon-high", "gemini-4-neon-xhigh"}}, {"updated_at_ms", rt::dateNow()}});
+  const std::string version = "0.172.0";
+  rt::GlobalFetchOverride fetch(rt::Fetch([version](rt::RequestInfo, rt::RequestInit) { return catalogResponse(catalogBody(version)); }));
+  AWAIT(response, catalog(version)); EXPECT_EQ(response.status(), 200);
+  AWAIT(payload, response.json());
+  const auto* rows = rt::getArray(payload, "models"); ASSERT(rows); EXPECT_EQ(rows->size(), 4u);
+  const auto* neon = findModel(payload, "gemini-4-neon-high"); ASSERT(neon);
+  EXPECT_EQ(rt::getString(*neon, "display_name"), "Gemini 4 Neon (High)");
+  EXPECT(rt::deepEqual(neon->at("supported_endpoint_types"), json::array{"openai-response", "openai-chat"}));
+  EXPECT(rt::deepEqual(neon->at("supported_reasoning_levels"), json::array{json::object{{"effort", "high"}, {"description", "Reasoning effort: high"}}}));
+  EXPECT_EQ(rt::getString(*neon, "default_reasoning_level"), "high");
+  EXPECT_EQ(rt::getNumber(*neon, "context_window"), 524288);
+  const auto* xhigh = findModel(payload, "gemini-4-neon-xhigh"); ASSERT(xhigh);
+  EXPECT_EQ(rt::getString(*xhigh, "default_reasoning_level"), "xhigh");
 }
 ASYNC_TEST("codex catalog: malformed versions are rejected before upstream access") {
   CatalogFixture fixture; rt::GlobalFetchOverride fetch(rt::Fetch([](rt::RequestInfo, rt::RequestInit) -> rt::Response { throw rt::JsError("invalid versions must not fetch"); }));

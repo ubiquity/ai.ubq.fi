@@ -117,15 +117,14 @@ namespace {
     CredentialCounts count;
     if (provider::gemini::geminiCliConfigured()) {
       PublicModelProvider provider{"gemini", "google", {"/v1/chat/completions", "/v1/responses"}};
-      for (const auto id : provider::gemini::GEMINI_MODEL_IDS) {
+      for (const auto& definition : provider::gemini::GEMINI_MODELS) {
         metadata::ModelMetadataHint hint;
-        hint.context_window_tokens = provider::gemini::GEMINI_CONTEXT_WINDOW_TOKENS;
-        hint.max_context_window_tokens = provider::gemini::GEMINI_CONTEXT_WINDOW_TOKENS;
-        const std::string effort = rt::endsWith(id, "-high") ? "high" : rt::endsWith(id, "-medium") ? "medium" : "low";
-        hint.supported_reasoning_levels = json::array{effort};
-        hint.default_reasoning_effort = effort;
+        hint.context_window_tokens = definition.context_window_tokens;
+        hint.max_context_window_tokens = definition.context_window_tokens;
+        hint.supported_reasoning_levels = json::array{definition.reasoning_effort};
+        hint.default_reasoning_effort = json::value(std::string(definition.reasoning_effort));
         metadata::ModelMetadataSources sources; sources.provider = hint;
-        addPublicModelCatalogEntry(models, std::string(id), provider, nullptr, sources);
+        addPublicModelCatalogEntry(models, std::string(definition.id), provider, nullptr, sources);
         ++count.gemini;
       }
     }

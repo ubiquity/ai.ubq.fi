@@ -489,21 +489,24 @@ namespace uos::input_normalization {
     return result;
   }
   json::array withConfiguredGeminiModels(const json::array& models, bool enabled) {
-    const auto configured = enabled && provider::gemini::geminiCliConfigured() ? configuredModels(provider::gemini::GEMINI_MODEL_IDS, "google") : json::array{};
+    json::array configured;
+    if (enabled && provider::gemini::geminiCliConfigured()) {
+      for (const auto& definition : provider::gemini::GEMINI_MODELS) {
+        configured.push_back(json::object{{"id", definition.id}, {"object", "model"}, {"created", 0}, {"owned_by", "google"}});
+      }
+    }
     return replaceConfigured(models, configured);
   }
   json::array withConfiguredGeminiCapabilities(const json::array& data, bool enabled) {
     if (!enabled || !provider::gemini::geminiCliConfigured()) return data;
     json::array rows;
-    for (const auto id : provider::gemini::GEMINI_MODEL_IDS) {
-      const std::string effort = rt::endsWith(id, "-high") ? "high" : rt::endsWith(id, "-medium") ? "medium" : "low";
-      const std::string display = std::string("Gemini 3.8 Flash (") + (effort == "high" ? "High" : effort == "medium" ? "Medium" : "Low") + ")";
-      json::object row{{"id", id}, {"object", "uos.model_capabilities"}, {"owned_by", "google"}, {"display_name", display},
+    for (const auto& definition : provider::gemini::GEMINI_MODELS) {
+      json::object row{{"id", definition.id}, {"object", "uos.model_capabilities"}, {"owned_by", "google"}, {"display_name", definition.display_name},
         {"upstream_provider", "gemini"}, {"supported_endpoints", json::array{"/v1/responses", "/v1/chat/completions"}},
-        {"supported_reasoning_levels", json::array{effort}}, {"default_reasoning_effort", effort}, {"reasoning_effort_wire_map", json::object{}},
-        {"context_window_tokens", rt::makeNumber(provider::gemini::GEMINI_CONTEXT_WINDOW_TOKENS)},
-        {"max_context_window_tokens", rt::makeNumber(provider::gemini::GEMINI_CONTEXT_WINDOW_TOKENS)},
-        {"auto_compact_token_limit_tokens", rt::makeNumber(provider::gemini::GEMINI_CONTEXT_WINDOW_TOKENS * 0.8)},
+        {"supported_reasoning_levels", json::array{definition.reasoning_effort}}, {"default_reasoning_effort", definition.reasoning_effort}, {"reasoning_effort_wire_map", json::object{}},
+        {"context_window_tokens", rt::makeNumber(definition.context_window_tokens)},
+        {"max_context_window_tokens", rt::makeNumber(definition.context_window_tokens)},
+        {"auto_compact_token_limit_tokens", rt::makeNumber(definition.context_window_tokens * 0.8)},
         {"context_source", "provider_documented"}, {"reasoning_source", "model_id"}};
       rows.push_back(std::move(row));
     }

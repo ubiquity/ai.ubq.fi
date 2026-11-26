@@ -149,8 +149,17 @@ namespace {
 }
 
 TEST("Gemini model ids and subscription token accounting are explicit") {
+  EXPECT_EQ(gemini::geminiUpstreamModelFor("gemini-4-neon-low").value_or(""), "gemini-4-neon-low");
+  EXPECT_EQ(gemini::geminiUpstreamModelFor("gemini-4-neon-medium").value_or(""), "gemini-4-neon-medium");
+  EXPECT_EQ(gemini::geminiUpstreamModelFor("gemini-4-neon-high").value_or(""), "gemini-4-neon-high");
+  EXPECT_EQ(gemini::geminiUpstreamModelFor("gemini-4-neon-xhigh").value_or(""), "gemini-4-neon-xhigh");
   EXPECT_EQ(gemini::geminiUpstreamModelFor("gemini-3.8-flash-low").value_or(""), "gemini-3.8-flash-low");
   EXPECT_EQ(gemini::geminiUpstreamModelFor("google/gemini-3.8-flash-low").has_value(), false);
+  const auto* neon = gemini::geminiModelDefinition("gemini-4-neon-high");
+  ASSERT(neon);
+  EXPECT_EQ(neon->display_name, "Gemini 4 Neon (High)");
+  EXPECT_EQ(neon->reasoning_effort, "high");
+  EXPECT_EQ(neon->context_window_tokens, 524288);
   const auto usage = gemini::geminiUsageTokens(json::object{{"input_tokens", 100}, {"output_tokens", 5}, {"cache_read_tokens", 80}, {"total_tokens", 105}});
   ASSERT(usage.has_value());
   EXPECT_EQ(usage->inputTokens, std::optional<double>(100));
@@ -449,25 +458,74 @@ ASYNC_TEST("Gemini admin quota controls expose the measured snapshot after opera
   co_return;
 }
 
-ASYNC_TEST("Gemini rejects caller tool declarations before dispatching the subscription CLI") {
+ASYNC_TEST("Gemini translates declared Codex tools and replays function_call_output results") {
   rt::RequestInit init;
   init.method = "POST";
   const rt::Request request("https://ai.ubq.fi/v1/responses", init);
-  bool dispatched = false;
+  int calls = 0;
   gemini::GeminiHandlerOptions options{.refreshQuota = false};
-  options.runner = [&dispatched](const gemini::GeminiCliOptions&) {
-    dispatched = true;
-    return rt::Promise<gemini::GeminiCliTurn>::resolve(gemini::GeminiCliTurn{}).wait();
+  options.runner = [&calls](const gemini::GeminiCliOptions& command) {
+    ++calls;
+    EXPECT(command.prompt.find("exec_command") != std::string::npos);
+    EXPECT(command.prompt.find("Codex client owns tool execution") != std::string::npos);
+    gemini::GeminiCliTurn turn;
+    turn.conversationId = "tool-conversation";
+    turn.usage = json::object{{"input_tokens", 10}, {"output_tokens", 4}, {"cache_read_tokens", 0}, {"total_tokens", 14}};
+    if (calls == 1) turn.response = R"({"type":"tool_call","name":"exec_command","arguments":{"cmd":"printf TOOL_OK"}})";
+    else {
+      EXPECT(command.prompt.find("Tool result for") != std::string::npos);
+      EXPECT(command.prompt.find("TOOL_OK") != std::string::npos);
+      turn.response = "TOOL_DONE";
+    }
+    return rt::Promise<gemini::GeminiCliTurn>::resolve(std::move(turn)).wait();
   };
-  const json::object raw{{"model", "gemini-3.8-flash-low"}, {"input", "Use the supplied tool."},
-    {"tools", json::array{json::object{{"type", "function"}, {"name", "fixture"}}}}};
-  AWAIT(response, gemini::handleGeminiResponses(request, raw, "gemini-3.8-flash-low", nullptr, options));
-  EXPECT_EQ(response.status(), 400);
-  EXPECT_EQ(dispatched, false);
-  AWAIT(body, response.json());
-  const auto* error = rt::getObject(body, "error");
-  ASSERT(error);
-  EXPECT_EQ(rt::getString(*error, "code"), std::optional<std::string_view>("gemini_tools_unsupported"));
+  const json::array tools{json::object{{"type", "function"}, {"name", "exec_command"}, {"description", "Run a command"},
+    {"parameters", json::object{{"type", "object"}, {"properties", json::object{{"cmd", json::object{{"type", "string"}}}}}, {"required", json::array{"cmd"}}}}}};
+  const json::object firstRaw{{"model", "gemini-4-neon-high"}, {"input", "Run the fixture tool."}, {"tools", tools}, {"stream", false}};
+  AWAIT(first, gemini::handleGeminiResponses(request, firstRaw, "gemini-4-neon-high", nullptr, options));
+  EXPECT_EQ(first.status(), 200);
+  AWAIT(firstBody, first.json());
+  const auto* output = rt::getArray(firstBody, "output");
+  ASSERT(output);
+  const json::object* call = nullptr;
+  for (const auto& item : *output) if (rt::getString(item, "type") == "function_call") call = item.if_object();
+  ASSERT(call);
+  EXPECT_EQ(rt::getString(*call, "name"), "exec_command");
+  EXPECT_EQ(rt::getString(*call, "arguments"), R"({"cmd":"printf TOOL_OK"})");
+  const auto callId = rt::getString(*call, "call_id").value_or("");
+  EXPECT(!callId.empty());
+  const json::object secondRaw{{"model", "gemini-4-neon-high"}, {"tools", tools}, {"stream", false}, {"input", json::array{
+    json::object{{"type", "message"}, {"role", "user"}, {"content", json::array{json::object{{"type", "input_text"}, {"text", "Run the fixture tool."}}}}},
+    json::object{{"type", "function_call"}, {"call_id", callId}, {"name", "exec_command"}, {"arguments", R"({"cmd":"printf TOOL_OK"})"}},
+    json::object{{"type", "function_call_output"}, {"call_id", callId}, {"output", "TOOL_OK"}}
+  }}};
+  AWAIT(second, gemini::handleGeminiResponses(request, secondRaw, "gemini-4-neon-high", nullptr, options));
+  EXPECT_EQ(second.status(), 200);
+  AWAIT(secondBody, second.json());
+  EXPECT(rt::jsonStringify(secondBody).find("TOOL_DONE") != std::string::npos);
+  EXPECT_EQ(calls, 2);
+  co_return;
+}
+
+ASYNC_TEST("Gemini streams a declared tool call as typed Responses events") {
+  const rt::Request request("https://ai.ubq.fi/v1/responses", rt::RequestInit{.method = "POST"});
+  gemini::GeminiHandlerOptions options{.refreshQuota = false};
+  options.runner = [](const gemini::GeminiCliOptions&) {
+    gemini::GeminiCliTurn turn;
+    turn.conversationId = "stream-tool-conversation";
+    turn.response = R"({"type":"tool_call","name":"exec_command","arguments":{"cmd":"printf STREAM_TOOL"}})";
+    turn.usage = json::object{{"input_tokens", 8}, {"output_tokens", 3}, {"cache_read_tokens", 0}, {"total_tokens", 11}};
+    return rt::Promise<gemini::GeminiCliTurn>::resolve(std::move(turn)).wait();
+  };
+  const json::array tools{json::object{{"type", "function"}, {"name", "exec_command"}, {"parameters", json::object{{"type", "object"}}}}};
+  const json::object raw{{"model", "gemini-4-neon-high"}, {"input", "Run the streaming tool."}, {"tools", tools}, {"stream", true}};
+  AWAIT(response, gemini::handleGeminiResponses(request, raw, "gemini-4-neon-high", nullptr, options));
+  EXPECT_EQ(response.status(), 200);
+  AWAIT(body, response.text());
+  EXPECT(body.find("response.function_call_arguments.done") != std::string::npos);
+  EXPECT(body.find("\"type\":\"function_call\"") != std::string::npos);
+  EXPECT(body.find("\"name\":\"exec_command\"") != std::string::npos);
+  EXPECT(body.find("event: response.completed") != std::string::npos);
   co_return;
 }
 

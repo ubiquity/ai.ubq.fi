@@ -9,6 +9,7 @@
 #include "uos/models/metadata.hpp"
 #include "uos/models/openrouter_models.hpp"
 #include "uos/provider/cerebras.hpp"
+#include "uos/provider/gemini.hpp"
 #include "uos/provider/lithos.hpp"
 #include "uos/provider/openrouter.hpp"
 #include "uos/recent_model_context.hpp"
@@ -277,6 +278,21 @@ json::array cerebrasCodexModels() {
   return result;
 }
 json::array withCerebrasModels(json::array models) { return appendConfigured(std::move(models), cerebrasCodexModels()); }
+json::array geminiCodexModels() {
+  json::array result;
+  if (!provider::gemini::geminiCliConfigured()) return result;
+  for (const auto& definition : provider::gemini::GEMINI_MODELS) {
+    json::object row{{"slug", definition.id}, {"display_name", definition.display_name}, {"description", "Gemini through the signed-in Google Antigravity CLI."}, {"owned_by", "google"},
+      {"supported_endpoint_types", json::array{"openai-response", "openai-chat"}},
+      {"supported_reasoning_levels", json::array{json::object{{"effort", definition.reasoning_effort}, {"description", codexReasoningEffortDescription(std::string(definition.reasoning_effort))}}}},
+      {"default_reasoning_level", definition.reasoning_effort}, {"context_window", definition.context_window_tokens}, {"max_context_window", definition.context_window_tokens},
+      {"auto_compact_token_limit", recent_model_context::deriveAutoCompactTokenLimit(definition.context_window_tokens)}};
+    shellDefaults(row, 1000);
+    result.push_back(std::move(row));
+  }
+  return result;
+}
+json::array withGeminiModels(json::array models) { return appendConfigured(std::move(models), geminiCodexModels()); }
 json::array openRouterCodexModels() {
   json::array result;
   if (!provider::openrouter::readOpenRouterApiKey()) return result;

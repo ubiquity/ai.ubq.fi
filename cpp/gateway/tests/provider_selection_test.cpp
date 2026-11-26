@@ -396,7 +396,7 @@ ASYNC_TEST("admin provider picker reports the roster, catalog counts, and the sa
     json::object{{"id", "codex"}, {"model_count", 1}, {"status", "available"}, {"configured", true}, {"subscriptions", json::array{}}},
     json::object{{"id", "claude_code"}, {"model_count", 0}, {"status", "unavailable"}, {"configured", false}},
     json::object{{"id", "gemini"}, {"label", "Google Antigravity (Gemini)"},
-      {"detail", "Text-only Gemini models through the Antigravity subscription."},
+      {"detail", "Gemini 4 Neon and Gemini 3.8 Flash with Codex tool execution through the Antigravity subscription."},
       {"model_count", 0}, {"status", "unavailable"}, {"configured", false},
       {"setup_status", "disabled"}, {"selectable", true}, {"endpoints", json::array{}}},
     json::object{{"id", "surplus"}, {"model_count", 2}, {"status", "available"}, {"configured", true}},
@@ -468,10 +468,14 @@ ASYNC_TEST("every selectable provider carries a complete presentation and a heal
   std::vector<std::string> roster; appendIds(roster, sel::SELECTABLE_PROVIDER_IDS); EXPECT_EQ(ids, roster);
   const auto gemini = std::find_if(providers.begin(), providers.end(), antigravityRow);
   ASSERT(gemini != providers.end());
-  EXPECT_EQ(rt::getNumber(*gemini, "model_count"), std::optional<double>(3));
+  EXPECT_EQ(rt::getNumber(*gemini, "model_count"), std::optional<double>(7));
   EXPECT_EQ(rt::getBool(*gemini, "configured"), true);
   EXPECT_EQ(rt::getBool(*gemini, "selectable"), true);
   EXPECT_EQ(rt::getString(*gemini, "setup_status"), "configured");
+  const auto neon = std::find_if(snapshot.models.begin(), snapshot.models.end(), [](const auto& row) { return row.id == "gemini-4-neon-high"; });
+  ASSERT(neon != snapshot.models.end());
+  EXPECT_EQ(neon->context_window_tokens, std::optional<double>(524288));
+  EXPECT_EQ(neon->default_reasoning_effort, std::optional<std::string>("high"));
   const auto gateway = std::find_if(providers.begin(), providers.end(), [](const auto& row) { return rt::getString(row, "id") == presentation::GATEWAY_PROVIDER_ID; });
   EXPECT(gateway != providers.end()); EXPECT(rt::getBool(*gateway, "selectable") != false);
   std::vector<std::string> actualTiers, expectedTiers;
@@ -487,7 +491,7 @@ ASYNC_TEST("every selectable provider carries a complete presentation and a heal
     EXPECT_EQ(rt::getString(row, "label"), id == "gemini" ? "Google Antigravity (Gemini)" : copy.label);
     EXPECT_EQ(rt::getString(row, "tier"), copy.tier);
     for (const auto& tier : presentation::PROVIDER_TIERS) if (tier.id == copy.tier) EXPECT_EQ(rt::getString(row, "tier_label"), tier.label);
-    EXPECT_EQ(rt::getString(row, "detail"), id == "gemini" ? "Text-only Gemini models through the Antigravity subscription." : copy.detail);
+    EXPECT_EQ(rt::getString(row, "detail"), id == "gemini" ? "Gemini 4 Neon and Gemini 3.8 Flash with Codex tool execution through the Antigravity subscription." : copy.detail);
     EXPECT(!copy.detail.empty());
     EXPECT_JSON(row.at("endpoints"), json::value_from(copy.endpoints), id + " endpoints");
     EXPECT_EQ(rt::getString(row, "health_key"), copy.health_key); EXPECT(healthBody.as_object().contains(copy.health_key));
