@@ -1,6 +1,7 @@
 // Links: src/runtime/permissions_linux.cpp
 #include "uos/runtime/permissions_linux.hpp"
 #include "uos/provider/gemini.hpp"
+#include "uos/rt/admission_resources.hpp"
 #include "uos/rt/crypto.hpp"
 #include "uos/rt/env.hpp"
 #include "uos/rt/fs.hpp"
@@ -77,7 +78,7 @@ TEST("shared auth follower mode overrides the Gemini opt-in before granting CLI 
 #endif
 }
 
-TEST("Gemini leaves the disabled gateway grants and ARM64 filter byte identical") {
+TEST("Gemini leaves the disabled gateway grants and ARM64 filter unchanged") {
 #if defined(__linux__) && defined(__aarch64__)
   const Fixture fixture;
   rt::env::ScopedEnvironment environment{{"HOME", fixture.home}};
@@ -86,6 +87,15 @@ TEST("Gemini leaves the disabled gateway grants and ARM64 filter byte identical"
   for (const auto* path : {"/usr/lib", "/etc/ssl", "/etc/resolv.conf", "/etc/hosts", "/etc/nsswitch.conf", "/etc/localtime", "/dev/null",
                            "/dev/urandom", "/dev/random", "/proc/self"}) {
     if (fs::exists(path)) read.push_back(fs::canonical(path).string());
+  }
+  // Admission adds only exact kernel counter files to the gateway profile.
+  const auto baselineCount = read.size();
+  rt::admission_resources::detail::appendLinuxReadPaths(read);
+  for (std::size_t index = baselineCount; index < read.size(); ++index) {
+    const auto& path = read[index];
+    const auto name = fs::path(path).filename();
+    EXPECT(path == "/proc/meminfo" || name == "memory.max" || name == "memory.current");
+    EXPECT(fs::is_regular_file(path));
   }
   const std::vector<std::string> write{fixture.data};
   const std::optional<std::vector<std::string>> immutable{std::vector<std::string>{fixture.package}};
@@ -143,6 +153,13 @@ TEST("Antigravity denies direct execution of a different ELF and limits loader v
       const auto receipt = applyLinuxPermissions(profiles.gateway);
       require(receipt.processThreadSync && receipt.filesystemThreadSync, "Missing opt-in confinement receipt");
 
+      const int meminfo = ::open("/proc/meminfo", O_RDONLY | O_CLOEXEC);
+      require(meminfo >= 0, "Gateway cannot read its exact host memory counter");
+      ::close(meminfo);
+      const int uptime = ::open("/proc/uptime", O_RDONLY | O_CLOEXEC);
+      if (uptime >= 0) ::close(uptime);
+      require(uptime < 0 && errno == EACCES, "Gateway gained an unrelated procfs read grant");
+
       pid_t unexpected = -1;
       char* args[] = {const_cast<char*>(fixture.other.c_str()), nullptr};
       char* environmentList[] = {nullptr};
@@ -159,6 +176,9 @@ TEST("Antigravity denies direct execution of a different ELF and limits loader v
         permissions.read.push_back(fixture.workspace);
         permissions.write.push_back(fixture.workspace);
         restrictLinuxChildThread(permissions);
+        const int counter = ::open("/proc/meminfo", O_RDONLY | O_CLOEXEC);
+        if (counter >= 0) ::close(counter);
+        require(counter < 0 && errno == EACCES, "Child retained the gateway's host memory counter");
         const int outside = ::open(fixture.other.c_str(), O_WRONLY | O_CLOEXEC);
         if (outside >= 0) ::close(outside);
         require(outside < 0 && errno == EACCES, "Child retained gateway state write access");

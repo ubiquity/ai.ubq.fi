@@ -9,7 +9,7 @@
 // src/codex/native_auth.cpp src/codex/native_auth_transport.cpp src/codex/overage_settings.cpp src/codex/rate_limit_429.cpp
 // src/codex/reset_settings.cpp src/codex/responses_error.cpp src/codex/routing_evaluation.cpp src/codex/routing_mutations.cpp
 // src/codex/routing_serial.cpp src/codex/routing_state.cpp src/config.cpp src/deepseek/flash_aliases.cpp
-// src/deepseek/index.cpp src/deepseek/waterfall.cpp src/defaults.cpp src/health.cpp
+// src/deepseek/index.cpp src/deepseek/waterfall.cpp src/defaults.cpp src/health.cpp src/inference_admission.cpp
 // src/http.cpp src/kv.cpp src/metered_quota.cpp src/models/codex_models.cpp
 // src/models/codex_models_availability.cpp src/models/codex_models_fetch.cpp src/models/openrouter_models.cpp src/openai_telemetry.cpp
 // src/paid_fallback/claude_code_route.cpp src/paid_fallback/health.cpp src/paid_fallback/index.cpp src/paid_fallback/ledger_admission.cpp

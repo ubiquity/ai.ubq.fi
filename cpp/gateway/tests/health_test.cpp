@@ -32,6 +32,7 @@
 #include <array>
 #include "uos/handler/index.hpp"
 #include "uos/config.hpp"
+#include "uos/inference_admission.hpp"
 #include "uos/release.hpp"
 #include "uos/kv.hpp"
 #include "uos/rt/clock.hpp"
@@ -222,14 +223,36 @@ ASYNC_TEST("provider health serializes success to 429 to success transitions") {
   pending.push_back(ph::recordCodexProviderHealth("ordered-account", "success", 200, [] { return 1000.0; })); pending.push_back(ph::recordCodexProviderHealth("ordered-account", "quota_exhausted", 429, [] { return 2000.0; })); pending.push_back(ph::recordCodexProviderHealth("ordered-account", "success", 200, [] { return 3000.0; })); co_await rt::all(std::move(pending)).wait();
   const std::function<double()> now = [] { return 3001.0; }; AWAIT(health, ph::getCodexProviderHealth("ordered-account", now)); EXPECT_EQ(health.state, "healthy"); EXPECT_EQ(health.last_observed_at_ms, std::optional(3000.0)); EXPECT_EQ(health.last_success_at_ms, std::optional(3000.0)); EXPECT_EQ(health.last_429_at_ms, std::optional(2000.0)); EXPECT_EQ(commits(scope), 3u);
 }
-ASYNC_TEST("public health is passive release provenance with zero upstream and KV work") {
-  Scope scope; auto response = h::handleHealth(); const auto payload = co_await response.json(); EXPECT_EQ(response.status(), 200); EXPECT_EQ(rt::getString(payload, "status"), std::optional<std::string_view>("available")); EXPECT(rt::getString(object(payload, "release"), "git_sha").has_value());
-    EXPECT_EQ(*rt::getString(object(payload, "release"), "git_sha"), std::string_view(uos::config::runtimeGitSha()));
+ASYNC_TEST("public health reports release and admission with zero upstream and KV work") {
+  Scope scope;
+  const auto snapshot = uos::inference_admission::inferenceAdmissionSnapshot();
+  const auto response = h::handleHealth();
+  const auto payload = co_await response.json();
+  EXPECT_EQ(response.status(), 200);
+  EXPECT_EQ(rt::getString(payload, "status"), std::optional<std::string_view>("available"));
+  const auto& release = object(payload, "release");
+  EXPECT_EQ(rt::getString(release, "git_sha"), std::optional<std::string_view>(uos::config::runtimeGitSha()));
 #ifdef UOS_PACKAGE_GIT_COMMIT
-    EXPECT_EQ(*rt::getString(object(payload, "release"), "git_sha"), std::string_view(UOS_PACKAGE_GIT_COMMIT));
-    EXPECT(*rt::getString(object(payload, "release"), "git_sha") != std::string_view("unknown"));
+  EXPECT_EQ(rt::getString(release, "git_sha"), std::optional<std::string_view>(UOS_PACKAGE_GIT_COMMIT));
+  EXPECT(rt::getString(release, "git_sha") != std::optional<std::string_view>("unknown"));
 #endif
-    EXPECT(rt::getString(object(payload, "release"), "deployment_id").has_value()); EXPECT(scope.store->commands.empty());
+  EXPECT(rt::getString(release, "deployment_id").has_value());
+  const auto& admission = object(payload, "admission");
+  EXPECT_EQ(rt::getNumber(admission, "active"), std::optional(snapshot.active));
+  EXPECT_EQ(rt::getNumber(admission, "waiting"), std::optional(snapshot.waiting));
+  EXPECT_EQ(rt::getNumber(admission, "estimated_max_active"), std::optional(snapshot.estimatedMaxActive));
+  EXPECT_EQ(rt::getNumber(admission, "resource_max_active"), std::optional(snapshot.resourceMaxActive));
+  EXPECT_EQ(rt::getNumber(admission, "max_active"), std::optional(snapshot.maxActive));
+  EXPECT_EQ(rt::getBool(admission, "recovery_limited"), std::optional(snapshot.recoveryLimited));
+  EXPECT_EQ(rt::getNumber(admission, "max_waiting"), std::optional(snapshot.maxWaiting));
+  EXPECT_EQ(rt::getString(admission, "limiting_resource"), std::optional<std::string_view>(snapshot.limitingResource));
+  EXPECT_EQ(rt::getNumber(admission, "event_loop_lag_ms"), std::optional(snapshot.eventLoopLagMs));
+  const auto* memory = rt::get(admission, "memory_headroom_bytes");
+  const auto* descriptors = rt::get(admission, "descriptor_headroom");
+  ASSERT(memory && descriptors);
+  EXPECT_EQ(*memory, snapshot.memoryHeadroomBytes ? json::value(*snapshot.memoryHeadroomBytes) : json::value(nullptr));
+  EXPECT_EQ(*descriptors, snapshot.descriptorHeadroom ? json::value(*snapshot.descriptorHeadroom) : json::value(nullptr));
+  EXPECT(scope.store->commands.empty());
 }
 ASYNC_TEST("public health reports the confinement mode recorded at native startup") {
   T2IngressScope ingress;

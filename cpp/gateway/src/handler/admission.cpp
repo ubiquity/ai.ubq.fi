@@ -33,8 +33,10 @@ namespace uos::handler::admission {
   rt::Response localOverloadResponse(const inference_admission::InferenceAdmissionLocalOverloadCause& cause) {
     const double maxQueueWaitMs = inference_admission::DEFAULT_INFERENCE_ADMISSION_LIMITS.maxQueueWaitMs;
     const double retryAfterSeconds = rt::Math::max(1.0, rt::Math::ceil(maxQueueWaitMs / 1'000));
-    const std::string message = cause == "queue_limit" ? std::string("The gateway is at its concurrent inference limit and its waiting queue is full.")
-                                                       : "The gateway could not admit this request within " + rt::numberToString(maxQueueWaitMs) + "ms.";
+    std::string message;
+    if (cause == "queue_limit") message = "The gateway is at its concurrent inference limit and its waiting queue is full.";
+    else if (cause == "queue_memory") message = "The gateway has insufficient memory headroom to retain this request in its waiting queue.";
+    else message = "The gateway could not admit this request within " + rt::numberToString(maxQueueWaitMs) + "ms.";
     http::OpenaiErrorOptions options;
     options.type = "server_error";
     options.param = std::optional<std::string>(std::nullopt);

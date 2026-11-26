@@ -22,6 +22,11 @@
 #include "uos/rt/url.hpp"
 #include "uos/rt/websocket.hpp"
 
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/read_until.hpp>
+#include <boost/asio/use_awaitable.hpp>
+#include <boost/asio/write.hpp>
+
 #include <memory>
 #include <string>
 #include <vector>
@@ -667,6 +672,78 @@ ASYNC_TEST("HTTP unfinished POST disconnect interrupts input and rejects deliver
   EXPECT_EQ(receipt.signal.aborted(), true);
   auto stopping14_ = shutdown(server);
   co_await std::move(stopping14_);
+}
+
+#if defined(__linux__)
+ASYNC_TEST("HTTP TCP reset interrupts a paused POST without draining its upload") {
+  namespace asio = boost::asio;
+  struct Observation {
+    rt::Request request;
+    rt::Promise<void> completed;
+  };
+  const auto observed = rt::withResolvers<Observation>();
+  const auto respond = rt::withResolvers<void>();
+  const auto server = serveHttp(loopbackOptions(), [observed, ready = respond.promise](rt::Request request, ServeHandlerInfo info) -> rt::Task<rt::Response> {
+    observed.resolve(Observation{request, info.completed});
+    co_await ready.wait();
+    co_return rt::Response("fixture response");
+  });
+  const auto address = co_await server.ready.wait();
+  asio::ip::tcp::socket client(rt::executor());
+  client.connect({asio::ip::address_v4::loopback(), static_cast<unsigned short>(address.port)});
+  client.set_option(asio::socket_base::send_buffer_size(4096));
+  constexpr std::size_t payloadBytes = 8 * 1024 * 1024;
+  auto wire = std::make_shared<std::string>("POST /reset HTTP/1.1\r\nHost: localhost\r\nContent-Length: " + std::to_string(payloadBytes) + "\r\n\r\n");
+  wire->append(payloadBytes, 'x');
+  const auto uploadCompleted = std::make_shared<bool>(false);
+  asio::async_write(client, asio::buffer(*wire), [wire, uploadCompleted](const boost::system::error_code& error, std::size_t) {
+    if (!error) *uploadCompleted = true;
+  });
+  const auto observation = co_await observed.promise.wait();
+  co_await rt::sleep(20);
+  EXPECT(!observation.request.bodyUsed());
+  EXPECT(!*uploadCompleted);
+
+  client.set_option(asio::socket_base::linger(true, 0));
+  client.close();
+  const auto disconnected = observation.completed.then([] { return false; }, [](rt::Reason) { return true; });
+  const auto expired = rt::withResolvers<bool>();
+  const auto timer = rt::setTimeout([expired] { expired.resolve(false); }, 1'000);
+  const auto interrupted = co_await rt::race(disconnected, expired.promise).wait();
+  rt::clearTimeout(timer);
+  EXPECT(interrupted);
+  EXPECT(observation.request.signal().aborted());
+  EXPECT(!observation.request.bodyUsed());
+  respond.resolve();
+  co_await shutdown(server);
+}
+#endif
+
+ASYNC_TEST("HTTP a paused POST can answer a client that half-closes its upload") {
+  namespace asio = boost::asio;
+  const auto observed = rt::withResolvers<rt::AbortSignal>();
+  const auto respond = rt::withResolvers<void>();
+  const auto server = serveHttp(loopbackOptions(), [observed, ready = respond.promise](rt::Request request, ServeHandlerInfo) -> rt::Task<rt::Response> {
+    observed.resolve(request.signal());
+    co_await ready.wait();
+    co_return rt::Response("fixture response");
+  });
+  const auto address = co_await server.ready.wait();
+  asio::ip::tcp::socket client(rt::executor());
+  client.connect({asio::ip::address_v4::loopback(), static_cast<unsigned short>(address.port)});
+  std::string_view wire = "POST /half-close HTTP/1.1\r\nHost: localhost\r\nContent-Length: 4\r\nConnection: close\r\n\r\nbody";
+  asio::write(client, asio::buffer(wire));
+  client.shutdown(asio::socket_base::shutdown_send);
+  const auto signal = co_await observed.promise.wait();
+  co_await rt::sleep(20);
+  EXPECT(!signal.aborted());
+  respond.resolve();
+  std::string reply;
+  co_await asio::async_read_until(client, asio::dynamic_buffer(reply), "fixture response", asio::use_awaitable);
+  EXPECT(reply.starts_with("HTTP/1.1 200"));
+  EXPECT(!signal.aborted());
+  client.close();
+  co_await shutdown(server);
 }
 
 ASYNC_TEST("HTTP unread POST refusal completes its response and server shutdown") {

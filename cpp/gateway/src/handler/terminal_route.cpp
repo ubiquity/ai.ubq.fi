@@ -17,9 +17,11 @@
 #include "uos/responses_handler.hpp"
 #include "uos/rt/console.hpp"
 #include "uos/rt/clock.hpp"
+#include "uos/rt/limits.hpp"
 #include "uos/sentinel/replay_store.hpp"
 #include "uos/systemone/handlers.hpp"
 
+#include <algorithm>
 #include <memory>
 #include <utility>
 #include <variant>
@@ -178,7 +180,16 @@ namespace uos::handler::terminal_route {
       }
       rt::Task<std::optional<rt::Response>> acquireProcessPermit() {
         if (!admissionRoute) co_return std::nullopt;
-        inference_admission::InferenceAdmissionRequest input{.signal = callerSignal, .principal = idempotencyPrincipal};
+        // Streams supplied by an in-process caller have no parser metadata.
+        // Reserve the largest body that this handler would read in that case.
+        const auto opaqueBodyLimit = *admissionRoute == "images.edits"
+          ? std::max(rt::limits::kImageEditJsonBytes, rt::limits::kImageEditMultipartBytes)
+          : rt::limits::kHttpBodyBytes;
+        inference_admission::InferenceAdmissionRequest input{
+          .signal = callerSignal,
+          .principal = idempotencyPrincipal,
+          .bodyBytes = req.bodySizeUpperBound().value_or(opaqueBodyLimit),
+        };
         auto admittedPromise = admission::admissionController().acquire(input);
         auto admitted = co_await admittedPromise.wait();
         if (const auto* granted = std::get_if<inference_admission::InferenceAdmissionGranted>(&admitted)) {

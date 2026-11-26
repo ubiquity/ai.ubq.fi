@@ -1,6 +1,7 @@
 #include "uos/runtime/permissions_linux.hpp"
 
 #include "uos/provider/gemini.hpp"
+#include "uos/rt/admission_resources.hpp"
 #include "uos/rt/error.hpp"
 #include "uos/rt/fs.hpp"
 #include "uos/rt/number.hpp"
@@ -321,7 +322,10 @@ namespace uos::runtime::permissions_linux {
       for (const NativeGrant& grant : grants) {
         const std::uint32_t access = rt::toUint32(grant.access);
         if (access & ~policy.ruleset.handledAccessFs) throw rt::TypeError("Invalid filesystem grant");
-        const int fd = open(boundedPath(grant.path).c_str(), O_PATH | O_CLOEXEC);
+        const bool counter = access == LANDLOCK_ACCESS_FS_READ_FILE && rt::admission_resources::detail::isLinuxReadPath(grant.path);
+        const int fd = counter ? rt::admission_resources::detail::openLinuxReadGrant(grant.path) : open(boundedPath(grant.path).c_str(), O_PATH | O_CLOEXEC);
+        // A masked or replaced counter becomes unavailable to admission.
+        if (fd < 0 && counter) continue;
         if (fd < 0) failure("Landlock path opening");
         struct landlock_path_beneath_attr rule {};
         rule.allowed_access = access;
@@ -382,6 +386,12 @@ namespace uos::runtime::permissions_linux {
         grants.set(path, rt::bitOr(granted != nullptr ? *granted : 0, access));
       };
       for (const auto& input : permissions.read) {
+#if defined(__linux__) && defined(__aarch64__)
+        if (rt::admission_resources::detail::isLinuxReadPath(input)) {
+          add(input, LANDLOCK_ACCESS_FS_READ_FILE);
+          continue;
+        }
+#endif
         const auto path = canonicalize(input);
         const double directoryAccess = rt::fs::statSync(path).isDirectory() ? ((policy.ruleset.handledAccessFs & resolveUnixSocket) != 0 ? 0x10008 : 8) : 0;
         add(path, rt::bitOr(4, directoryAccess));
@@ -439,6 +449,9 @@ namespace uos::runtime::permissions_linux {
                                          "/dev/urandom", "/dev/random", "/proc/self"}) {
       addExisting(gateway, name);
     }
+#if defined(__linux__) && defined(__aarch64__)
+    rt::admission_resources::detail::appendLinuxReadPaths(gateway.read);
+#endif
     if (!provider::gemini::geminiCliConfigured()) return result;
 
     const fs::path home = *rt::env::get("HOME");

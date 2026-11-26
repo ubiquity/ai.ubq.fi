@@ -33,11 +33,16 @@
 //   tests/helpers/counting_kv.cpp tests/helpers/loopback_http.cpp src/runtime/http.cpp src/runtime/http_body.cpp src/runtime/http_upgrade.cpp
 #include "tests/helpers/terminal_log_harness.hpp"
 #include "tests/helpers/loopback_http.hpp"
+#include "tests/helpers/responses_conformance_client.hpp"
+#include "uos/handler/admission.hpp"
 #include "uos/runtime/http.hpp"
 #include "uos/runtime/http_tasks.hpp"
 #include "uos/handler/serve_handler.hpp"
 #include "uos/rt/limits.hpp"
 #include "uos/rt/memory.hpp"
+
+#include <array>
+#include <cstdint>
 
 using namespace uos;
 namespace fixture = tests::helpers::terminal_log_harness;
@@ -132,6 +137,56 @@ ASYNC_TEST("the gateway rejects oversized Chat uploads at the head with the norm
     EXPECT(rt::includes(received, "x-uos-request-id:"));
     EXPECT(rt::includes(received, authenticated ? "invalid_request_error" : "invalid_api_key"));
   }
+  const auto stopped = server.shutdown();
+  co_await stopped.wait();
+}
+
+ASYNC_TEST("native HTTP reserves decoded request bytes at inference admission") {
+  fixture::Isolation isolation;
+  tests::helpers::responses_conformance_client::stageGatewayAssets();
+  const auto savedConfig = config::config;
+  const auto restore = rt::scopeExit([savedConfig] { config::config = savedConfig; });
+  config::config.isDeploy = true;
+  config::config.isProductionTimeline = true;
+  config::config.authTokens = {"fixture-reservation"};
+  kv::setKvForTest(std::make_shared<rt::MemoryKv>(rt::dateNow));
+
+  std::vector<std::uint64_t> bodySizes;
+  inference_admission::InferenceAdmissionController admission;
+  admission.acquire = [&bodySizes](const inference_admission::InferenceAdmissionRequest& request) {
+    bodySizes.push_back(request.bodyBytes);
+    return rt::Promise<inference_admission::InferenceAdmissionResult>::resolve(inference_admission::InferenceAdmissionLocalOverload{.cause = "queue_limit"});
+  };
+  handler::admission::setInferenceAdmissionControllerForTest(std::move(admission));
+  const auto resetAdmission = rt::scopeExit([] { handler::admission::setInferenceAdmissionControllerForTest(std::nullopt); });
+
+  const auto gateway = handler::serve_handler::createServeHandler();
+  const auto server = wire::serveHttp(loopbackOptions(), [gateway](rt::Request request, wire::ServeHandlerInfo info) -> rt::Task<rt::Response> {
+    auto response = co_await gateway(request, std::move(info));
+    EXPECT(!request.bodyUsed());
+    co_return response;
+  });
+  const auto address = co_await server.ready.wait();
+  const std::string headers = " HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nAuthorization: Bearer fixture-reservation\r\n";
+  const std::array requests{
+    "POST /v1/responses" + headers + "Content-Length: 4\r\n\r\nbody",
+    "POST /v1/responses" + headers + "Transfer-Encoding: chunked\r\n\r\n4\r\nbody\r\n0\r\n\r\n",
+    "POST /v1/images/edits/" + headers + "Content-Type: multipart/form-data; boundary=x\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
+    "POST /v1/responses" + headers + "\r\n",
+    "GET /uos/embedding-jobs/fixture" + headers + "\r\n",
+  };
+  for (const auto& request : requests) {
+    const auto closed = rt::withResolvers<void>();
+    const auto reply = std::make_shared<std::string>();
+    const auto socket = RawClient::connect(static_cast<int>(address.port));
+    socket->once("connect", [socket, request](const auto&) { socket->write(request); });
+    socket->on("data", [reply](const auto& part) { *reply += part; });
+    socket->once("close", [closed](const auto&) { closed.resolve(); });
+    co_await closed.promise.wait();
+    EXPECT(reply->starts_with("HTTP/1.1 503"));
+    EXPECT(rt::includes(*reply, "local_inference_overload"));
+  }
+  EXPECT_EQ(bodySizes, (std::vector<std::uint64_t>{4, rt::limits::kHttpBodyBytes, rt::limits::kImageEditMultipartBytes, 0, 0}));
   const auto stopped = server.shutdown();
   co_await stopped.wait();
 }

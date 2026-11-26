@@ -75,8 +75,24 @@ ASYNC_TEST("localOverloadResponse matches Bun for both overload causes") {
     R"({"status":503,"statusText":"","headers":[["content-type","application/json"],["retry-after","5"]],"body":"{\"error\":{\"message\":\"The gateway could not admit this request within 5000ms.\",\"type\":\"server_error\",\"code\":\"local_inference_overload\",\"param\":null}}"})"));
 }
 
+ASYNC_TEST("queue memory pressure returns a retryable OpenAI overload error") {
+  const rt::Response response = admission::localOverloadResponse("queue_memory");
+  EXPECT_EQ(response.status(), 503);
+  EXPECT_EQ(response.headers().get("retry-after"), std::optional<std::string>("5"));
+  const auto body = co_await response.json();
+  const auto* error = rt::get(body, "error");
+  ASSERT(error);
+  EXPECT_EQ(rt::getString(*error, "code"), std::optional<std::string_view>("local_inference_overload"));
+  EXPECT_EQ(rt::getString(*error, "message"),
+            std::optional<std::string_view>("The gateway has insufficient memory headroom to retain this request in its waiting queue."));
+}
+
 ASYNC_TEST("admissionController switches between the shared and the test controller") {
-  EXPECT(same(snapshotOf(admission::admissionController()), R"({"active":0,"waiting":0,"principals":0,"maxActive":512,"maxWaiting":128})"));
+  const auto before = admission::admissionController().snapshot();
+  EXPECT_EQ(before.active, 0.0);
+  EXPECT_EQ(before.waiting, 0.0);
+  EXPECT_EQ(before.maxWaiting, 128.0);
+  EXPECT_EQ(before.limitingResource, "memory_unavailable");
   const inference_admission::InferenceAdmissionController custom =
     inference_admission::createInferenceAdmissionController({.maxActive = 1, .maxWaiting = 2, .maxQueueWaitMs = 50});
   admission::setInferenceAdmissionControllerForTest(custom);
@@ -89,13 +105,11 @@ ASYNC_TEST("admissionController switches between the shared and the test control
   EXPECT(same(snapshotOf(admission::admissionController()), R"({"active":1,"waiting":0,"principals":0,"maxActive":1,"maxWaiting":2})"));
   if (const auto* granted = std::get_if<inference_admission::InferenceAdmissionGranted>(&first)) granted->release();
   admission::setInferenceAdmissionControllerForTest(std::nullopt);
-  EXPECT(same(snapshotOf(admission::admissionController()), R"({"active":0,"waiting":0,"principals":0,"maxActive":512,"maxWaiting":128})"));
-  inference_admission::InferenceAdmissionRequest sharedRequest;
-  const rt::Promise<inference_admission::InferenceAdmissionResult> sharedAcquire = admission::admissionController().acquire(std::move(sharedRequest));
-  const inference_admission::InferenceAdmissionResult shared = co_await sharedAcquire.wait();
-  EXPECT(std::holds_alternative<inference_admission::InferenceAdmissionGranted>(shared));
-  EXPECT(same(snapshotOf(admission::admissionController()), R"({"active":1,"waiting":0,"principals":0,"maxActive":512,"maxWaiting":128})"));
-  if (const auto* granted = std::get_if<inference_admission::InferenceAdmissionGranted>(&shared)) granted->release();
+  const auto after = admission::admissionController().snapshot();
+  EXPECT_EQ(after.active, before.active);
+  EXPECT_EQ(after.maxActive, before.maxActive);
+  EXPECT_EQ(after.maxWaiting, before.maxWaiting);
+  EXPECT_EQ(after.limitingResource, before.limitingResource);
 }
 
 ASYNC_TEST("default admission saturation keeps the ordinary bounded overload response") {

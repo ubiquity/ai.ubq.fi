@@ -6,6 +6,7 @@
 #include "uos/rt/error.hpp"
 #include "uos/rt/test_async.hpp"
 
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -18,6 +19,8 @@ using namespace uos::inference_admission;
 namespace {
   using Admitted = InferenceAdmissionGranted;
   using LocalOverload = InferenceAdmissionLocalOverload;
+  using Headroom = rt::admission_resources::Headroom;
+  constexpr std::uint64_t MiB = 1ULL << 20;
 
   std::string kindOf(const InferenceAdmissionResult& result) {
     if (const auto* overload = std::get_if<InferenceAdmissionLocalOverload>(&result)) return std::string(overload->kind);
@@ -54,6 +57,14 @@ namespace {
   rt::Task<InferenceAdmissionResult> settled(rt::Promise<InferenceAdmissionResult> promise) {
     InferenceAdmissionResult result = co_await promise.wait();
     co_return result;
+  }
+
+  std::size_t grantedCount(const std::vector<rt::Promise<InferenceAdmissionResult>>& attempts) {
+    std::size_t count = 0;
+    for (const auto& attempt : attempts) {
+      if (attempt.fulfilled() && std::holds_alternative<Admitted>(attempt.value())) ++count;
+    }
+    return count;
   }
 
   rt::Task<std::weak_ptr<void>> abandonQueuedAdmission() {
@@ -427,27 +438,338 @@ ASYNC_TEST("admission removes expired principals' empty waiting state") {
   rt::clearTimeout(alive);
 }
 
-ASYNC_TEST("the shared guard admits a 500-stream burst from one principal") {
-  EXPECT_EQ(DEFAULT_INFERENCE_ADMISSION_LIMITS.maxActive, 512.0);
-  EXPECT_EQ(DEFAULT_INFERENCE_ADMISSION_LIMITS.maxWaiting, 128.0);
-  EXPECT_EQ(DEFAULT_INFERENCE_ADMISSION_LIMITS.maxQueueWaitMs, 5'000.0);
-  const InferenceAdmissionSnapshot before = inferenceAdmissionSnapshot();
-  EXPECT_EQ(before.maxActive, DEFAULT_INFERENCE_ADMISSION_LIMITS.maxActive);
-  EXPECT_EQ(before.maxWaiting, DEFAULT_INFERENCE_ADMISSION_LIMITS.maxWaiting);
-  ASSERT(before.maxActive - before.active >= 500);
-
+ASYNC_TEST("healthy adaptive admission grows past 512 permits without sampling the idle loop") {
+  int samples = 0;
+  const auto controller = createAdaptiveInferenceAdmissionController([&] {
+    ++samples;
+    return Headroom{600 * MiB, 2'000};
+  });
+  EXPECT_EQ(controller.snapshot().maxWaiting, 128.0);
+  EXPECT_EQ(controller.snapshot().maxActive, 0.0);
+  EXPECT_EQ(controller.snapshot().estimatedMaxActive, 0.0);
+  EXPECT_EQ(controller.snapshot().resourceMaxActive, 0.0);
+  EXPECT_EQ(rt::loop().timerCount(), 0U);
+  EXPECT_EQ(samples, 0);
   const InferenceAdmissionRequest agent{.principal = "agent-pool"};
   std::vector<Admitted> permits;
-  for (int i = 0; i < 500; ++i) {
-    const auto pending = acquireInferenceAdmission(agent);
-    const auto result = co_await settled(pending);
+  for (int i = 0; i < 550; ++i) {
+    const auto result = co_await acquire(controller, agent);
     permits.push_back(admittedOrThrow(result, "expected every stream in the burst to be admitted"));
     EXPECT_EQ(permits.back().waitedMs, 0.0);
   }
-  EXPECT_EQ(inferenceAdmissionSnapshot().active, before.active + 500);
-  EXPECT_EQ(inferenceAdmissionSnapshot().waiting, before.waiting);
+  EXPECT_EQ(controller.snapshot().active, 550.0);
+  EXPECT_EQ(controller.snapshot().maxActive, 600.0);
+  EXPECT_EQ(controller.snapshot().estimatedMaxActive, 600.0);
+  EXPECT_EQ(controller.snapshot().resourceMaxActive, 600.0);
+  EXPECT(!controller.snapshot().recoveryLimited);
+  EXPECT_EQ(controller.snapshot().waiting, 0.0);
+  EXPECT_EQ(controller.snapshot().limitingResource, "memory");
+  EXPECT_EQ(rt::loop().timerCount(), 1U);
+  EXPECT_EQ(samples, 1);
   for (const auto& permit : permits) permit.release();
-  EXPECT_EQ(inferenceAdmissionSnapshot().active, before.active);
+  co_await rt::sleep(500);
+  EXPECT_EQ(controller.snapshot().active, 0.0);
+  EXPECT_EQ(rt::loop().timerCount(), 0U);
+  EXPECT_EQ(samples, 1);
+}
+
+ASYNC_TEST("two light requests during a brief low reading leave healthy burst capacity available") {
+  Headroom sample{2'000 * MiB, 10'000};
+  const auto controller = createAdaptiveInferenceAdmissionController([&] { return sample; });
+  const auto initial = admittedOrThrow(co_await acquire(controller), "expected a healthy initial grant");
+  initial.release();
+
+  sample.memoryBytes = 48 * MiB;
+  for (int i = 0; i < 2; ++i) {
+    co_await rt::sleep(100);
+    const auto light = admittedOrThrow(co_await acquire(controller), "expected room for a light request");
+    const auto pressure = controller.snapshot();
+    EXPECT_EQ(pressure.resourceMaxActive, 48.0);
+    EXPECT_EQ(pressure.maxActive, 48.0);
+    EXPECT_EQ(pressure.estimatedMaxActive, 2'000.0);
+    light.release();
+  }
+  sample.memoryBytes = 2'000 * MiB;
+  co_await rt::sleep(100);
+  std::vector<rt::Promise<InferenceAdmissionResult>> attempts;
+  for (int i = 0; i < 500; ++i) attempts.push_back(controller.acquire({}));
+  EXPECT_EQ(grantedCount(attempts), 500U);
+  const auto recovered = controller.snapshot();
+  EXPECT_EQ(recovered.resourceMaxActive, 2'000.0);
+  EXPECT_EQ(recovered.estimatedMaxActive, 2'000.0);
+  EXPECT_EQ(recovered.maxActive, 2'000.0);
+  EXPECT(!recovered.recoveryLimited);
+  for (const auto& attempt : attempts) {
+    if (attempt.fulfilled()) admittedOrThrow(attempt.value(), "expected healthy burst admission").release();
+  }
+}
+
+ASYNC_TEST("independent alternating and deadband readings leave the capacity estimate stable") {
+  Headroom sample{2'000 * MiB, 10'000};
+  int samples = 0;
+  const auto controller = createAdaptiveInferenceAdmissionController([&] {
+    ++samples;
+    return sample;
+  });
+  const auto initial = admittedOrThrow(co_await acquire(controller), "expected a healthy initial grant");
+  for (int i = 0; i < 65; ++i) {
+    const auto observed = i < 25 ? (i % 2 == 0 ? 1'400 : 2'600) : (i < 45 ? 2'180 : 1'820);
+    sample.memoryBytes = static_cast<std::uint64_t>(observed) * MiB;
+    co_await rt::sleep(100);
+    const auto light = admittedOrThrow(co_await acquire(controller), "expected room for a light request");
+    EXPECT_EQ(controller.snapshot().resourceMaxActive, static_cast<double>(observed));
+    EXPECT_EQ(controller.snapshot().estimatedMaxActive, 2'000.0);
+    light.release();
+  }
+  EXPECT_EQ(samples, 66);
+  initial.release();
+}
+
+ASYNC_TEST("idle time and repeated health reads earn no capacity growth") {
+  Headroom sample{16 * MiB, 10'000};
+  int samples = 0;
+  const auto controller = createAdaptiveInferenceAdmissionController([&] {
+    ++samples;
+    return sample;
+  });
+  const auto initial = admittedOrThrow(co_await acquire(controller), "expected a low-capacity initial grant");
+  initial.release();
+  sample.memoryBytes = 128 * MiB;
+  co_await rt::sleep(3'600'000);
+  for (int i = 0; i < 128; ++i) EXPECT_EQ(controller.snapshot().estimatedMaxActive, 16.0);
+  EXPECT_EQ(samples, 1);
+  EXPECT_EQ(rt::loop().timerCount(), 0U);
+
+  const rt::AbortController caller;
+  std::vector<rt::Promise<InferenceAdmissionResult>> attempts;
+  for (int i = 0; i < 64; ++i) attempts.push_back(controller.acquire({.signal = caller.signal()}));
+  EXPECT_EQ(grantedCount(attempts), 16U);
+  EXPECT_EQ(samples, 2);
+  const auto reopened = controller.snapshot();
+  EXPECT_EQ(reopened.estimatedMaxActive, 16.0);
+  EXPECT_EQ(reopened.resourceMaxActive, 128.0);
+  EXPECT_EQ(reopened.maxActive, 16.0);
+  EXPECT(reopened.recoveryLimited);
+  caller.abort();
+  for (const auto& attempt : attempts) {
+    if (const auto* permit = std::get_if<Admitted>(&attempt.value())) permit->release();
+  }
+}
+
+ASYNC_TEST("sustained low capacity lowers the estimate and paces actual queued grants on recovery") {
+  Headroom sample{128 * MiB, 10'000};
+  const auto controller = createAdaptiveInferenceAdmissionController([&] { return sample; });
+  const auto initial = admittedOrThrow(co_await acquire(controller), "expected a healthy initial grant");
+  sample.memoryBytes = 16 * MiB;
+  double twoSecondsEarlier = 128;
+  for (int i = 1; i <= 120; ++i) {
+    co_await rt::sleep(100);
+    const auto light = admittedOrThrow(co_await acquire(controller), "expected room at the lower capacity");
+    const auto pressure = controller.snapshot();
+    EXPECT_EQ(pressure.resourceMaxActive, 16.0);
+    EXPECT_EQ(pressure.maxActive, 16.0);
+    if (i <= 10) EXPECT_EQ(pressure.estimatedMaxActive, 128.0);
+    if (i % 20 == 0) {
+      EXPECT(pressure.estimatedMaxActive >= twoSecondsEarlier / 2 - 0.01);
+      twoSecondsEarlier = pressure.estimatedMaxActive;
+    }
+    light.release();
+  }
+  const auto settledPressure = controller.snapshot();
+  EXPECT(settledPressure.estimatedMaxActive >= settledPressure.resourceMaxActive);
+  EXPECT(settledPressure.resourceMaxActive >= settledPressure.estimatedMaxActive * 0.90);
+  initial.release();
+
+  sample.memoryBytes = 128 * MiB;
+  co_await rt::sleep(100);
+  const rt::AbortController caller;
+  std::vector<rt::Promise<InferenceAdmissionResult>> attempts;
+  for (int i = 0; i < 80; ++i) attempts.push_back(controller.acquire({.signal = caller.signal()}));
+  const std::size_t initialGrants = grantedCount(attempts);
+  EXPECT(initialGrants >= 16U && initialGrants <= 17U);
+  EXPECT_EQ(controller.snapshot().resourceMaxActive, 128.0);
+  EXPECT(controller.snapshot().recoveryLimited);
+
+  co_await rt::sleep(1'900);
+  const auto firstWave = grantedCount(attempts);
+  EXPECT(firstWave > initialGrants && firstWave <= 33U);
+  EXPECT_EQ(controller.snapshot().active, static_cast<double>(firstWave));
+  EXPECT_EQ(controller.snapshot().maxActive, static_cast<double>(firstWave));
+  EXPECT(controller.snapshot().recoveryLimited);
+  co_await rt::sleep(2'000);
+  const auto secondWave = grantedCount(attempts);
+  EXPECT(secondWave > firstWave && secondWave <= 2U * firstWave + 2U);
+  EXPECT_EQ(controller.snapshot().active, static_cast<double>(secondWave));
+  EXPECT_EQ(controller.snapshot().maxActive, static_cast<double>(secondWave));
+  EXPECT(controller.snapshot().estimatedMaxActive > settledPressure.estimatedMaxActive);
+  EXPECT(controller.snapshot().recoveryLimited);
+  caller.abort();
+  for (const auto& attempt : attempts) {
+    if (const auto* permit = std::get_if<Admitted>(&attempt.value())) permit->release();
+  }
+}
+
+ASYNC_TEST("zero-capacity recovery bootstraps queued work without opening the whole resource budget") {
+  Headroom sample{0, 10'000};
+  const auto controller = createAdaptiveInferenceAdmissionController([&] { return sample; });
+  std::vector<rt::Promise<InferenceAdmissionResult>> attempts;
+  const rt::AbortController caller;
+  for (int i = 0; i < 16; ++i) attempts.push_back(controller.acquire({.signal = caller.signal()}));
+  EXPECT_EQ(grantedCount(attempts), 0U);
+  EXPECT_EQ(controller.snapshot().resourceMaxActive, 0.0);
+  EXPECT_EQ(controller.snapshot().estimatedMaxActive, 0.0);
+
+  sample.memoryBytes = 64 * MiB;
+  co_await rt::sleep(101);
+  EXPECT_EQ(controller.snapshot().resourceMaxActive, 64.0);
+  EXPECT(controller.snapshot().recoveryLimited);
+  EXPECT(grantedCount(attempts) <= 1U);
+  co_await rt::sleep(1'500);
+  EXPECT(grantedCount(attempts) > 1U);
+  EXPECT(grantedCount(attempts) < attempts.size());
+  caller.abort();
+  for (const auto& attempt : attempts) {
+    if (const auto* permit = std::get_if<Admitted>(&attempt.value())) permit->release();
+  }
+}
+
+ASYNC_TEST("adaptive memory shrink preserves active permits and queued demand recovers on its own") {
+  Headroom sample{4 * MiB, 32};
+  const auto alive = keepAlive();
+  const auto controller = createAdaptiveInferenceAdmissionController([&] { return sample; });
+  const auto first = admittedOrThrow(co_await acquire(controller), "expected first stream");
+  const auto second = admittedOrThrow(co_await acquire(controller), "expected second stream");
+  co_await rt::sleep(100);
+  sample.memoryBytes = MiB;
+  const auto waiting = controller.acquire({});
+  EXPECT_EQ(controller.snapshot().active, 2.0);
+  EXPECT_EQ(controller.snapshot().maxActive, 1.0);
+  EXPECT_EQ(controller.snapshot().resourceMaxActive, 1.0);
+  EXPECT_EQ(controller.snapshot().estimatedMaxActive, 4.0);
+  EXPECT_EQ(controller.snapshot().waiting, 1.0);
+  sample.memoryBytes = 3 * MiB;
+  co_await rt::sleep(101);
+  EXPECT(waiting.pending());
+  EXPECT_EQ(controller.snapshot().resourceMaxActive, 3.0);
+  EXPECT(controller.snapshot().recoveryLimited);
+  const auto third = admittedOrThrow(co_await settled(waiting), "expected recovery without another arrival or release");
+  EXPECT(third.waitedMs > 101.0 && third.waitedMs < 5'000.0);
+  EXPECT_EQ(controller.snapshot().active, 3.0);
+  EXPECT_EQ(controller.snapshot().waiting, 0.0);
+  first.release();
+  second.release();
+  third.release();
+  rt::clearTimeout(alive);
+  EXPECT_EQ(rt::loop().timerCount(), 0U);
+}
+
+ASYNC_TEST("adaptive admission reserves weighted inputs and bounds queued body memory") {
+  Headroom sample{12 * MiB, 64};
+  const auto controller = createAdaptiveInferenceAdmissionController([&] { return sample; });
+  const auto large = admittedOrThrow(co_await acquire(controller, {.bodyBytes = 2 * MiB}), "expected an 8 MiB reservation");
+  EXPECT_EQ(controller.snapshot().maxActive, 5.0);
+  const auto waiting = controller.acquire({.bodyBytes = MiB + MiB / 2});
+  EXPECT_EQ(controller.snapshot().waiting, 1.0);
+  const auto cannotQueue = co_await acquire(controller, {.bodyBytes = 3 * MiB});
+  EXPECT_EQ(localOverloadOrThrow(cannotQueue, "expected the retained bodies to leave too little queue space").cause, "queue_memory");
+  const auto overflow = co_await acquire(controller, {.bodyBytes = std::numeric_limits<std::uint64_t>::max()});
+  EXPECT_EQ(localOverloadOrThrow(overflow, "expected saturated reservation to exceed the memory sample").cause, "queue_memory");
+  large.release();
+  const auto recovered = admittedOrThrow(co_await settled(waiting), "expected transfer from queued body to live reservation");
+  EXPECT_EQ(controller.snapshot().maxActive, 7.0);
+  recovered.release();
+}
+
+ASYNC_TEST("adaptive admission debits descriptors until a fresh sample even after release") {
+  Headroom sample{64 * MiB, 4};
+  const auto alive = keepAlive();
+  const auto controller = createAdaptiveInferenceAdmissionController([&] { return sample; });
+  const auto first = admittedOrThrow(co_await acquire(controller), "expected first FD budget grant");
+  const auto second = admittedOrThrow(co_await acquire(controller), "expected second FD budget grant");
+  const auto waiting = controller.acquire({});
+  first.release();
+  EXPECT_EQ(controller.snapshot().active, 1.0);
+  EXPECT_EQ(controller.snapshot().maxActive, 1.0);
+  EXPECT_EQ(controller.snapshot().waiting, 1.0);
+  EXPECT_EQ(controller.snapshot().limitingResource, "descriptors");
+  sample.descriptors = 3;
+  const auto third = admittedOrThrow(co_await settled(waiting), "expected fresh headroom to reserve one upstream FD and a new stream");
+  EXPECT_EQ(controller.snapshot().active, 2.0);
+  EXPECT_EQ(controller.snapshot().maxActive, 2.0);
+  EXPECT_EQ(third.waitedMs, 100.0);
+  second.release();
+  third.release();
+  rt::clearTimeout(alive);
+}
+
+ASYNC_TEST("missing resources block adaptive grants and recovering resources preserve fair queue turns") {
+  Headroom sample{std::nullopt, 64};
+  const auto alive = keepAlive();
+  const auto controller = createAdaptiveInferenceAdmissionController([&] { return sample; });
+  const auto firstA = controller.acquire({.principal = "a"});
+  const auto secondA = controller.acquire({.principal = "a"});
+  const auto firstB = controller.acquire({.principal = "b"});
+  EXPECT_EQ(controller.snapshot().limitingResource, "memory_unavailable");
+  EXPECT_EQ(controller.snapshot().active, 0.0);
+  sample = {MiB, std::nullopt};
+  co_await rt::sleep(101);
+  EXPECT_EQ(controller.snapshot().limitingResource, "descriptors_unavailable");
+  EXPECT_EQ(controller.snapshot().waiting, 3.0);
+  sample.descriptors = 64;
+  const auto a = admittedOrThrow(co_await settled(firstA), "expected the earliest queued principal");
+  EXPECT_EQ(a.waitedMs, 200.0);
+  a.release();
+  const auto b = admittedOrThrow(co_await settled(firstB), "expected the other principal's fair turn");
+  EXPECT_EQ(b.waitedMs, 200.0);
+  b.release();
+  const auto a2 = admittedOrThrow(co_await settled(secondA), "expected the second request from the first principal");
+  EXPECT_EQ(a2.waitedMs, 200.0);
+  a2.release();
+  rt::clearTimeout(alive);
+  EXPECT_EQ(rt::loop().timerCount(), 0U);
+}
+
+ASYNC_TEST("a late demand probe pauses grants and two healthy probes recover the queue") {
+  const auto alive = keepAlive();
+  const auto controller = createAdaptiveInferenceAdmissionController([] { return Headroom{64 * MiB, 64}; });
+  const auto first = admittedOrThrow(co_await acquire(controller), "expected admission on a healthy loop");
+  holdEventLoopForMs(400);
+  const auto waiting = controller.acquire({});
+  EXPECT_EQ(controller.snapshot().active, 1.0);
+  EXPECT_EQ(controller.snapshot().waiting, 1.0);
+  EXPECT_EQ(controller.snapshot().limitingResource, "event_loop_lag");
+  EXPECT_EQ(controller.snapshot().eventLoopLagMs, 300.0);
+  co_await rt::sleep(101);
+  EXPECT_EQ(controller.snapshot().limitingResource, "event_loop_lag");
+  EXPECT_EQ(controller.snapshot().waiting, 1.0);
+  const auto second = admittedOrThrow(co_await settled(waiting), "expected queue recovery after the second on-time probe");
+  EXPECT_EQ(second.waitedMs, 200.0);
+  EXPECT_EQ(controller.snapshot().eventLoopLagMs, 0.0);
+  first.release();
+  second.release();
+  rt::clearTimeout(alive);
+  EXPECT_EQ(rt::loop().timerCount(), 0U);
+}
+
+ASYNC_TEST("adaptive pressure preserves queue capacity, the deadline, and cancellation") {
+  const auto alive = keepAlive();
+  const auto controller = createAdaptiveInferenceAdmissionController([] { return Headroom{0, 64}; });
+  const rt::AbortController caller;
+  const auto aborted = controller.acquire({.signal = caller.signal()});
+  const auto expires = controller.acquire({});
+  for (int i = 0; i < 126; ++i) (void)controller.acquire({});
+  const auto rejects = co_await acquire(controller);
+  EXPECT_EQ(localOverloadOrThrow(rejects, "expected bounded queue overload").cause, "queue_limit");
+  EXPECT_EQ(controller.snapshot().waiting, 128.0);
+  caller.abort();
+  EXPECT(std::holds_alternative<InferenceAdmissionCallerAborted>(co_await settled(aborted)));
+  const auto expired = localOverloadOrThrow(co_await settled(expires), "expected pressure to honor the wait deadline");
+  EXPECT_EQ(expired.waitedMs, 5'000.0);
+  EXPECT_EQ(expired.cause, "queue_wait_timeout");
+  co_await rt::sleep(1);
+  EXPECT_EQ(controller.snapshot().waiting, 0.0);
+  rt::clearTimeout(alive);
+  EXPECT_EQ(rt::loop().timerCount(), 0U);
 }
 
 TEST("internal construction rejects limits that cannot bound anything") {
