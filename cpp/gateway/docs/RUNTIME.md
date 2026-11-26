@@ -48,9 +48,13 @@ seccomp policy permits `prctl`, `madvise`, `munmap` and `brk` under Landlock.
 
 ### Inference admission
 
-The `admission` object on `GET /health` reports active streams, waiting requests, the estimated capacity for small requests, and the resource currently limiting admission. The estimate can change during a run. Larger prompts reserve more working memory, so they can reduce the number of streams that fit. The gateway lets active requests finish when headroom falls.
+The `admission` object on `GET /health` reports active and waiting requests alongside the most recent admission sample. Reading health leaves the sampler idle. `max_active` estimates how many baseline-sized requests fit under that sample. A request reserves the greater of 1 MiB and four times its input size bound. The 1 MiB baseline rounds up the observed 0.86 MiB per additional stream in the 63 KB Codex burst. Fixed-length uploads use their validated length, buffered inputs use their actual size, and unknown-length uploads use their route's body budget.
 
-Use `memory_headroom_bytes` and `descriptor_headroom` to inspect the available resources after safety reserves. `event_loop_lag_ms` measures local scheduling delay. An upstream model can take longer to respond even when the local event loop is responsive. Excess requests may wait up to five seconds. Clients receive a retryable HTTP 503 when the gateway cannot admit them within its waiting budget.
+The sampler reserves 20% of host memory and of each visible, finite Linux cgroup v2 memory limit. The tightest budget controls admission. It also reserves 32 process descriptors and budgets for client and upstream sockets. `memory_headroom_bytes` and `descriptor_headroom` show the last usable budgets after those reserves. Missing required readings pause new grants. Existing streams retain their permits while the gateway is under pressure.
+
+The controller samples at most once per 100 ms of demand. If its local event-loop probe is at least 250 ms late, it pauses new grants until two probes arrive no more than 100 ms late. `limiting_resource` identifies memory, descriptors, scheduling delay, or a missing reading. `event_loop_lag_ms` measures local scheduling delay independently of provider latency.
+
+Up to 128 requests can wait for five seconds, with an additional memory check for large waiting bodies. Waiting turns rotate across principals and follow arrival order within each principal. A pressured queue rechecks headroom while it has waiters so they can resume without a new arrival. The gateway returns a retryable HTTP 503 if it cannot retain or admit a request within those bounds.
 
 ### Process memory telemetry
 
