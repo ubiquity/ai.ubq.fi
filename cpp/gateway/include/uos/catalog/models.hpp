@@ -38,6 +38,8 @@ namespace uos::catalog::models {
   json::array withLithosModels(json::array models);
   json::array cerebrasCodexModels();
   json::array withCerebrasModels(json::array models);
+  json::array geminiCodexModels();
+  json::array withGeminiModels(json::array models);
   json::array openRouterCodexModels();
   json::array withOpenRouterModels(json::array models);
   rt::OrderedSet<std::string> catalogModelIds(const json::array& models);

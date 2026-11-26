@@ -275,7 +275,7 @@ rt::Task<rt::Response> handleAdminProviderSelectionGet(CatalogDependencies depen
       else if (upstream_auth::followerMode()) setupStatus = "follower";
       else if (provider::gemini::geminiOperatorOptIn()) setupStatus = "cli_unconfigured";
       row["label"] = "Google Antigravity (Gemini)";
-      row["detail"] = "Text-only Gemini models through the Antigravity subscription.";
+      row["detail"] = "Gemini 4 Neon and Gemini 3.8 Flash with Codex tool execution through the Antigravity subscription.";
       row["setup_status"] = setupStatus;
       row["configured"] = configured;
       row["selectable"] = true;

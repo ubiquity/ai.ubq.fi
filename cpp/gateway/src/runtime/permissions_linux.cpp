@@ -461,7 +461,7 @@ namespace uos::runtime::permissions_linux {
     child.allowChildProcess = true;
     child.read = {cliState};
     child.write = {cliState};
-    for (const std::string_view name : {"libc.so.6", "libresolv.so.2", "libpthread.so.0", "libdl.so.2", "librt.so.1"}) {
+    for (const std::string_view name : {"libc.so.6", "libresolv.so.2", "libpthread.so.0", "libdl.so.2", "librt.so.1", "libm.so.6"}) {
       auto library = fs::path("/usr/lib/aarch64-linux-gnu") / name;
       if (!fs::is_regular_file(library)) library = fs::path("/usr/lib") / name;
       if (!fs::is_regular_file(library)) throw rt::JsError("Antigravity CLI host library is unavailable: " + std::string(name));
