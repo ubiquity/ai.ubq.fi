@@ -302,6 +302,58 @@ TEST("a class recovery lease preserves the shorter class and independent model b
   expectOtherBlocks(released->slots.front());
 }
 
+TEST("a successful banked-reset recovery releases its owned Spark class") {
+  CodexRoutingSlot slot;
+  slot.account_id_hash = std::string(64, 'a');
+  slot.credential_version = std::string(64, 'b');
+  slot.quota_blocks_by_class = CodexQuotaBlocksByClass{
+    {"spark", CodexQuotaClassBlock{.blocked_until_ms = 1'700'000'050'000, .source = "body_resets_at",
+                                      .quota_signal_observed_at_ms = 1'699'999'999'995, .observed_reset_at_ms = 1'700'000'050'000,
+                                      .observed_reset_at_is_stable = true}},
+    {"standard", CodexQuotaClassBlock{.blocked_until_ms = 1'700'000'070'000, .source = "body_resets_at",
+                                         .quota_signal_observed_at_ms = 1'699'999'999'997, .observed_reset_at_is_stable = true}},
+    {"unknown", CodexQuotaClassBlock{.blocked_until_ms = 1'700'000'070'000, .source = "header_retry_after", .legacy_fallback = true,
+                                        .quota_signal_observed_at_ms = 1'700'000'000'000, .observed_reset_at_ms = 1'700'000'070'000,
+                                        .observed_reset_at_is_stable = true, .banked_reset_recovery_probe_pending = true}},
+  };
+  slot.quota_blocked_classes = std::vector<std::string>{"spark", "standard", "unknown"};
+  slot.quota_blocked_until_ms = 1'700'000'070'000;
+  slot.quota_block_source = std::string("body_resets_at");
+  slot.quota_signal_observed_at_ms = 1'700'000'000'000;
+  slot.observed_reset_at_ms = 1'700'000'070'000;
+  slot.observed_reset_at_is_stable = true;
+  slot.banked_reset_generation_ambiguous = true;
+  slot.banked_reset_recovery_probe_pending = true;
+  slot.generation = 3;
+  CodexProbeLease lease;
+  lease.token = "held";
+  lease.expires_at_ms = 1'700'000'030'000;
+  lease.generation = 3;
+  lease.circuit = "quota";
+  lease.quota_class = std::string("spark");
+  slot.probe_lease = lease;
+
+  CodexAccountRoutingState state;
+  state.slots.push_back(slot);
+  CodexRoutingAccount account;
+  account.slot = 0;
+  account.accountIdHash = *slot.account_id_hash;
+  account.credentialVersion = slot.credential_version;
+  account.probeGeneration = lease.generation;
+  account.probeToken = lease.token;
+  account.probeCircuit = lease.circuit;
+  account.requestedModel = std::string("gpt-5.3-codex-spark");
+
+  const auto success = markCodexSuccess(state, account, 1'700'000'010'000);
+  ASSERT(success);
+  const CodexRoutingSlot& released = success->slots.front();
+  ASSERT(released.quota_blocks_by_class);
+  EXPECT(!released.quota_blocks_by_class->has("spark"));
+  EXPECT(!released.quota_blocks_by_class->has("unknown"));
+  EXPECT(released.quota_blocks_by_class->has("standard"));
+  EXPECT(!released.probe_lease);
+}
+
 TEST("recoveryProbeTransition throws the TS TypeError for a slot index the state does not hold") {
   CodexAccountRoutingState state;
   state.v = 2;

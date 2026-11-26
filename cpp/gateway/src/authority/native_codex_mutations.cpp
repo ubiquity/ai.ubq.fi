@@ -74,7 +74,8 @@ namespace uos::authority::native_codex_mutations {
       if (routingProbeCircuit(account) != "quota") return current;
       const CodexQuotaClass requestedQuotaClass = quotaClass(account.requestedModel);
       const auto claimed = current.probe_lease->quota_class.toOptional();
-      const bool namedClaim = claimed && isCodexCapacityModelScope(*claimed);
+      const bool namedClaim = claimed &&
+                              (isCodexCapacityModelScope(*claimed) || classAwareCurrent.banked_reset_recovery_probe_pending);
       const auto releasedKey = namedClaim ? *claimed : quotaBlockKeyForClass(classAwareCurrent, requestedQuotaClass).value_or(requestedQuotaClass);
       return withoutQuotaClass(classAwareCurrent, releasedKey);
     }();
