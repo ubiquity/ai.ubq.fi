@@ -596,7 +596,9 @@ namespace uos::sentinel::replay_observation {
       req, [candidate](std::shared_ptr<rt::Bytes> bytes) { candidate->body = std::move(bytes); },
       [candidate](const std::string& reason) {
         candidate->body_omitted_reason = reason;
-        if (reason == "body_invalid" && candidate->body) {
+        const bool invalidMultipart = reason == "body_invalid" && candidate->content_type &&
+                                      rt::startsWith(rt::toLowerCase(*candidate->content_type), "multipart/");
+        if (invalidMultipart && candidate->body) {
           zero(*candidate->body);
           candidate->body = nullptr;
         }
